@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"crypto/cipher"
 	"encoding/hex"
 	"errors"
@@ -17,6 +18,10 @@ const (
 type BlockBuf [MaxBlockSize]byte
 
 type BlockId Sha256Hmac
+
+func (id BlockId) String() string {
+	return hex.EncodeToString(id[:])
+}
 
 const (
 	BlockFlagDeflate = 1
@@ -84,6 +89,13 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 	if err := storage.Init(masterKeyInfo); err != nil {
 		return nil, WrapErrorf(err, "failed to initialize storage")
 	}
+	rootRevisionId := RevisionId{}
+	if !rootRevisionId.IsRoot() {
+		return nil, Errorf("root revision ID is not zero")
+	}
+	if err := storage.WriteRef("head", rootRevisionId); err != nil {
+		return nil, WrapErrorf(err, "failed to write head reference")
+	}
 	return OpenRepository(storage, passphrase)
 }
 
@@ -94,7 +106,11 @@ func OpenRepository(storage Storage, passphrase []byte) (*Repository, error) {
 	}
 	masterKeyInfo := config.MasterKeyInfo
 	if masterKeyInfo.EncryptionVersion != EncryptionVersion {
-		return nil, Errorf("unsupported repository version %d, want %d", masterKeyInfo.EncryptionVersion, EncryptionVersion)
+		return nil, Errorf(
+			"unsupported repository version %d, want %d",
+			masterKeyInfo.EncryptionVersion,
+			EncryptionVersion,
+		)
 	}
 	userKey, err := DeriveUserKey(passphrase, masterKeyInfo.UserKeySalt)
 	if err != nil {
@@ -128,37 +144,41 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (bool, BlockHeader, e
 	if err == nil {
 		return true, readHeader, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to read header of block %s", hex.EncodeToString(blockId[:]))
+		return false, BlockHeader{}, WrapErrorf(err, "failed to read header of block %s", blockId)
 	}
 	dek, err := NewRawKey()
 	if err != nil {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to generate random DEK for block %s", hex.EncodeToString(blockId[:]))
+		return false, BlockHeader{}, WrapErrorf(err, "failed to generate random DEK for block %s", blockId)
 	}
 	var header BlockHeader
 	header.BlockId = blockId
 	header.Flags = 0
 	_, err = Encrypt(dek[:], r.kekCipher, blockId[:], header.EncryptedDEK[:])
 	if err != nil {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to encrypt DEK with KEK for block %s", hex.EncodeToString(blockId[:]))
+		return false, BlockHeader{}, WrapErrorf(err, "failed to encrypt DEK with KEK for block %s", blockId)
 	}
 	dekCypher, err := NewCipher(dek)
 	if err != nil {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from DEK for block %s", hex.EncodeToString(blockId[:]))
+		return false, BlockHeader{}, WrapErrorf(
+			err,
+			"failed to create a XChaCha20Poly1305 cipher from DEK for block %s",
+			blockId,
+		)
 	}
 	encryptedData, err := Encrypt(data, dekCypher, nil, buf[:])
 	if err != nil {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to encrypt data with DEK for block %s", hex.EncodeToString(blockId[:]))
+		return false, BlockHeader{}, WrapErrorf(err, "failed to encrypt data with DEK for block %s", blockId)
 	}
 	header.DataSize = uint32(len(encryptedData)) //nolint:gosec
 	block := Block{Header: header, Data: encryptedData}
 	exists, err := r.storage.WriteBlock(block)
 	if err != nil {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to write block %s", hex.EncodeToString(blockId[:]))
+		return false, BlockHeader{}, WrapErrorf(err, "failed to write block %s", blockId)
 	}
 	if exists {
 		header, err := r.storage.ReadBlockHeader(blockId)
 		if err != nil {
-			return false, BlockHeader{}, WrapErrorf(err, "failed to read header of existing block %s", hex.EncodeToString(blockId[:]))
+			return false, BlockHeader{}, WrapErrorf(err, "failed to read header of existing block %s", blockId)
 		}
 		return true, header, nil
 	}
@@ -168,29 +188,74 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (bool, BlockHeader, e
 func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error) {
 	encryptedData, header, err := r.storage.ReadBlock(blockId, buf)
 	if err != nil {
-		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block %s", hex.EncodeToString(blockId[:]))
+		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block %s", blockId)
 	}
 	dek, err := Decrypt(header.EncryptedDEK[:], r.kekCipher, blockId[:], buf[:])
 	if err != nil {
-		return nil, BlockHeader{}, WrapErrorf(err, "failed to decrypt DEK with KEK for block %s", hex.EncodeToString(blockId[:]))
+		return nil, BlockHeader{}, WrapErrorf(err, "failed to decrypt DEK with KEK for block %s", blockId)
 	}
 	dekCypher, err := NewCipher(RawKey(dek))
 	if err != nil {
-		return nil, BlockHeader{}, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from DEK for block %s", hex.EncodeToString(blockId[:]))
+		return nil, BlockHeader{}, WrapErrorf(
+			err,
+			"failed to create a XChaCha20Poly1305 cipher from DEK for block %s",
+			blockId,
+		)
 	}
 	data, err := Decrypt(encryptedData, dekCypher, nil, buf[:])
 	if err != nil {
-		return nil, BlockHeader{}, WrapErrorf(err, "failed to decrypt data with DEK for block %s", hex.EncodeToString(blockId[:]))
+		return nil, BlockHeader{}, WrapErrorf(err, "failed to decrypt data with DEK for block %s", blockId)
 	}
 	return data, header, nil
 }
 
-func (r *Repository) WriteFileMetadata(fullPath string, file FileRevision) error {
-	return nil
+func (r *Repository) Head() (RevisionId, error) {
+	ref, err := r.storage.ReadRef("head")
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to read head reference")
+	}
+	return ref, nil
 }
 
-func (r *Repository) ReadDir(dir string, dst []string) error {
-	return nil
+func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision, error) {
+	data, _, err := r.ReadBlock(BlockId(revisionId), buf)
+	if err != nil {
+		return Revision{}, WrapErrorf(err, "failed to read revision %s", revisionId)
+	}
+	rev, err := UnmarshalRevision(bytes.NewReader(data))
+	if err != nil {
+		return Revision{}, WrapErrorf(err, "failed to unmarshal revision %s", revisionId)
+	}
+	return *rev, nil
+}
+
+// Write a revision and set it as the current HEAD.
+// A revision can only reference the current head as their parent.
+func (r *Repository) WriteRevision(revision *Revision, buf BlockBuf) (RevisionId, error) {
+	if len(revision.Blocks) == 0 {
+		return RevisionId{}, Errorf("revision is empty")
+	}
+	// todo: we should really lock the repository here.
+	head, err := r.Head()
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to get head revision")
+	}
+	if revision.Parent != head {
+		return RevisionId{}, Errorf("revision parent %s does not match current head %s", revision.Parent, head)
+	}
+	revBuf := bytes.NewBuffer([]byte{})
+	if err := MarshalRevision(revision, revBuf); err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to marshal revision")
+	}
+	_, blockHeader, err := r.WriteBlock(revBuf.Bytes(), buf)
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to write revision block")
+	}
+	revisionId := RevisionId(blockHeader.BlockId)
+	if err := r.storage.WriteRef("head", revisionId); err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to write head reference")
+	}
+	return revisionId, nil
 }
 
 func MarshalBlockHeader(header *BlockHeader, w io.Writer) error {

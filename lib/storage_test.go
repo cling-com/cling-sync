@@ -212,7 +212,9 @@ func TestBlockHeaderMarshalUnmarshal(t *testing.T) {
 func fakeMaserKeyInfo() MasterKeyInfo {
 	return MasterKeyInfo{
 		EncryptionVersion: EncryptionVersion,
-		EncryptedKEK:      EncryptedKey([]byte("the encrypted kek 23456789abcdef0123456789abcdef0123456789abcdef01234567")),
-		UserKeySalt:       Salt([]byte("the user salt ef0123456789abcdef")),
+		EncryptedKEK: EncryptedKey(
+			[]byte("the encrypted kek 23456789abcdef0123456789abcdef0123456789abcdef01234567"),
+		),
+		UserKeySalt: Salt([]byte("the user salt ef0123456789abcdef")),
 	}
 }

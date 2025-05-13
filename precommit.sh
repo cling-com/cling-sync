@@ -1,6 +1,8 @@
 #!/bin/sh
 # Execute everything to make sure we are ready to commit.
 
+set -eu
+
 run() {
     echo "$1: go mod tidy"
     (cd "$1" && go mod tidy)

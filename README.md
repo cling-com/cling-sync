@@ -56,7 +56,7 @@ All integer types are written as little-endian, and all strings are UTF-8 encode
 
 ### Metadata
 
-`FileRevision` is serialized to:
+`FileMetadata` is serialized to:
 
 | Size (bytes)  | Type      | Field             | Description                                   |
 |----------------|-----------|--------------------|-----------------------------------------------|
@@ -97,6 +97,31 @@ All integer types are written as little-endian, and all strings are UTF-8 encode
 | 10            |           | _padding_         | Header padding to 96 bytes                    |
 | N             | uint8     | **Data**          | Encrypted data of the block                   |
 
+## Committing Changes
+
+### Phase 1: Collect Metadata
+
+In this first pass, we scan the whole source folder, calculate content hashes for _all_ files
+and write each entry in chunked metadata files. Each metadata file is sorted by the full path or
+the file or directory.
+
 ## Documentation To-do's
 
 - How deflate is used: https://www.rfc-editor.org/rfc/rfc1951.txt
+
+- Paths:
+
+    Path segments are encoded using a minimal escape scheme inspired by RFC 3986:
+
+    / is encoded as %2f
+
+    % is encoded as %25
+
+    All other characters are stored as-is. Escaping is only applied to path segments, 
+    never across delimiters. This ensures paths remain UTF-8, readable, and safely splittable by /.
+
+    When restoring a file containing escaped characters, `%25` is converted back to `%` but
+    `%2f` is not converted back to `/`. This is to ensure that the path remains valid and
+    does not contain any invalid characters. The `%` character is a valid character in a path.
+
+

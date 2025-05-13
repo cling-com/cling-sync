@@ -35,7 +35,8 @@ key1 = "value1"
 key2 = "value2"
 
 [section2]
-key3 = "value3"`
+key3 = "value3"
+`
 		assert.Equal(expected, output.String())
 		parsed, err := ReadToml(strings.NewReader(output.String()))
 		assert.NoError(err)

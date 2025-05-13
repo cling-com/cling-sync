@@ -80,6 +80,9 @@ func WriteToml(dst io.Writer, headerComment string, toml Toml) error {
 			}
 		}
 	}
+	if _, err := fmt.Fprintf(dst, "\n"); err != nil {
+		return WrapErrorf(err, "failed add trailing newline")
+	}
 	return nil
 }
 
@@ -181,7 +184,7 @@ even print it out and keep it somewhere safe.
 	return nil
 }
 
-func ReadRepositoryConfigFile(fullPath string) (RepositoryConfig, Toml, error) { //nolint:funlen
+func ReadRepositoryConfigFile(fullPath string) (RepositoryConfig, Toml, error) {
 	file, err := os.Open(fullPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

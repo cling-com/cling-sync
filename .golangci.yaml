@@ -10,15 +10,21 @@ formatters:
     - gofmt
     - gofumpt
     - goimports
+    - golines
+  settings:
+    golines:
+      max-len: 120
 linters:
   default: "all"
   disable:
     - cyclop
     - gocognit
+    - gocyclo
     - gomodguard
     - inamedparam
     - lll
     - makezero
+    - maintidx
     - nestif
     - mnd
     - musttag
@@ -34,6 +40,7 @@ linters:
       - path: _test\.go
         linters:
           - funlen
+          - wrapcheck
   settings:
     depguard:
       rules:
@@ -45,6 +52,9 @@ linters:
             - $gostd
             - "golang.org/x/crypto/argon2"
             - "golang.org/x/crypto/chacha20poly1305"
+    funlen:
+      lines: 60
+      statements: 60
     godox:
       keywords:
         - fixme

@@ -1,5 +1,7 @@
 #!/bin/sh
-# Run tests.
+# Run tests
+
+set -eu
 
 if [ $# -ne 1 ]; then
     echo "Usage: $0 project"

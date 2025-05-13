@@ -2,6 +2,7 @@ package lib
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -41,30 +42,24 @@ func (a Assert) Equal(expected, actual any, msg ...any) {
 
 func (a Assert) Greater(x, y any, msg ...any) {
 	a.tb.Helper()
-	at := reflect.TypeOf(x)
-	bt := reflect.TypeOf(y)
-	if at != bt {
-		a.tb.Fatalf("%sexpected same type, got %T and %T", details(msg), x, y)
+	if x == nil || y == nil {
+		a.tb.Fatalf("%snil value passed to Greater: %v > %v", details(msg), x, y)
+	}
+	xv := reflect.ValueOf(x)
+	yv := reflect.ValueOf(y)
+	if xv.Kind() != yv.Kind() {
+		a.tb.Fatalf("%sexpected same type kind, got %T and %T", details(msg), x, y)
 	}
 	isTrue := func() bool {
-		if x == nil || y == nil {
-			return x != y
-		}
-		if x == nil {
-			return false
-		}
-		if y == nil {
-			return true
-		}
-		switch at.Kind() { //nolint:exhaustive
+		switch xv.Kind() { //nolint:exhaustive
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			return x.(int64) > y.(int64) //nolint:forcetypeassert
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			return x.(uint64) > y.(uint64) //nolint:forcetypeassert
+			return xv.Int() > yv.Int()
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			return xv.Uint() > yv.Uint()
 		case reflect.Float32, reflect.Float64:
-			return x.(float64) > y.(float64) //nolint:forcetypeassert
+			return xv.Float() > yv.Float()
 		case reflect.String:
-			return x.(string) > y.(string) //nolint:forcetypeassert
+			return xv.String() > yv.String()
 		default:
 			return false
 		}
@@ -81,6 +76,16 @@ func (a Assert) Error(err error, contains string, msg ...any) {
 	}
 	if contains != "" && !strings.Contains(err.Error(), contains) {
 		a.tb.Fatalf("%sexpected error containing %q, got %v", details(msg), contains, err)
+	}
+}
+
+func (a Assert) ErrorIs(err, target error, msg ...any) {
+	a.tb.Helper()
+	if err == nil {
+		a.tb.Fatalf("%sexpected error, got nil", details(msg))
+	}
+	if !errors.Is(err, target) {
+		a.tb.Fatalf("%sexpected error %v, got %v", details(msg), target, err)
 	}
 }
 
@@ -149,4 +154,8 @@ func fakeEncryptedKey(suffix string) EncryptedKey { //nolint:unparam
 
 func fakeBlockId(suffix string) BlockId {
 	return BlockId([]byte(strings.Repeat("b", 32-len(suffix)) + suffix))
+}
+
+func fakeRevisionId(suffix string) RevisionId { //nolint:unparam
+	return RevisionId([]byte(strings.Repeat("r", 32-len(suffix)) + suffix))
 }

@@ -20,6 +20,8 @@ type Storage interface {
 	ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error)
 	ReadBlockHeader(blockId BlockId) (BlockHeader, error)
 	WriteBlock(block Block) (bool, error)
+	WriteRef(rev string, id RevisionId) error
+	ReadRef(rev string) (RevisionId, error)
 }
 
 type FileStorage struct {
@@ -33,14 +35,15 @@ func NewFileStorage(dir string) (*FileStorage, error) {
 
 func (fs *FileStorage) Init(masterKeyInfo MasterKeyInfo) error {
 	stat, err := os.Stat(fs.Dir)
-	if err != nil && errors.Is(err, os.ErrNotExist) {
-		if err := os.Mkdir(fs.Dir, 0o700); err != nil {
-			return WrapErrorf(err, "failed to create directory %s", fs.Dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.Mkdir(fs.Dir, 0o700); err != nil {
+				return WrapErrorf(err, "failed to create directory %s", fs.Dir)
+			}
+		} else {
+			return WrapErrorf(err, "failed to stat directory %s", fs.Dir)
 		}
-	} else if err != nil {
-		return WrapErrorf(err, "failed to stat directory %s", fs.Dir)
-	}
-	if !stat.IsDir() {
+	} else if !stat.IsDir() {
 		return Errorf("%s is not a directory", fs.Dir)
 	}
 	files, err := os.ReadDir(fs.Dir)
@@ -61,7 +64,7 @@ func (fs *FileStorage) Init(masterKeyInfo MasterKeyInfo) error {
 	if err := mkClingDir(); err != nil {
 		return err
 	}
-	if err := mkClingDir("revisions"); err != nil {
+	if err := mkClingDir("refs"); err != nil {
 		return err
 	}
 	if err := mkClingDir("objects"); err != nil {
@@ -79,7 +82,7 @@ func (fs *FileStorage) Open() (RepositoryConfig, error) {
 	_, err := os.Stat(fs.clingDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return RepositoryConfig{}, Errorf("repository does not exist")
+			return RepositoryConfig{}, Errorf("repository does not exist %s", fs.Dir)
 		}
 		return RepositoryConfig{}, WrapErrorf(err, "failed to stat directory %s", fs.clingDir)
 	}
@@ -103,12 +106,16 @@ func (fs *FileStorage) HasBlock(blockId BlockId) (bool, error) {
 	return true, nil
 }
 
-func (fs *FileStorage) WriteBlock(block Block) (bool, error) {
+func (fs *FileStorage) WriteBlock(block Block) (bool, error) { //nolint:funlen
 	if len(block.Data) > MaxBlockDataSize {
 		return false, Errorf("block data too large: %d bytes, max %d", len(block.Data), MaxBlockDataSize)
 	}
 	if int(block.Header.DataSize) != len(block.Data) {
-		return false, Errorf("block header data size %d does not match block data size %d", block.Header.DataSize, len(block.Data))
+		return false, Errorf(
+			"block header data size %d does not match block data size %d",
+			block.Header.DataSize,
+			len(block.Data),
+		)
 	}
 	targetPath := fs.blockPath(block.Header.BlockId)
 	_, err := os.Stat(targetPath)
@@ -131,36 +138,63 @@ func (fs *FileStorage) WriteBlock(block Block) (bool, error) {
 	}
 	var header bytes.Buffer
 	if err := MarshalBlockHeader(&block.Header, &header); err != nil {
-		return false, WrapErrorf(err, "failed to marshal block header %s", hex.EncodeToString(block.Header.BlockId[:]))
+		return false, WrapErrorf(err, "failed to marshal block header %s", block.Header.BlockId)
 	}
 	headerBytes := header.Bytes()
 	if _, err := file.Write(headerBytes); err != nil {
 		_ = file.Close()
 		// Try to delete the file in case of an error.
 		if err := os.Remove(tmpPath); err != nil {
-			return false, WrapErrorf(err, "failed to write header and failed to remove temporary file %s (it is garbage now)", tmpPath)
+			return false, WrapErrorf(
+				err,
+				"failed to write header and failed to remove temporary file %s (it is garbage now)",
+				tmpPath,
+			)
 		}
-		return false, WrapErrorf(err, "failed to write header of block %s to temporary file %s", hex.EncodeToString(block.Header.BlockId[:]), tmpPath)
+		return false, WrapErrorf(
+			err,
+			"failed to write header of block %s to temporary file %s",
+			block.Header.BlockId,
+			tmpPath,
+		)
 	}
 	if _, err := file.Write(block.Data); err != nil {
 		_ = file.Close()
 		// Try to delete the file in case of an error.
 		if err := os.Remove(tmpPath); err != nil {
-			return false, WrapErrorf(err, "failed to write data and failed to remove temporary file %s (it is garbage now)", tmpPath)
+			return false, WrapErrorf(
+				err,
+				"failed to write data and failed to remove temporary file %s (it is garbage now)",
+				tmpPath,
+			)
 		}
-		return false, WrapErrorf(err, "failed to write data of block %s to temporary file %s", hex.EncodeToString(block.Header.BlockId[:]), tmpPath)
+		return false, WrapErrorf(
+			err,
+			"failed to write data of block %s to temporary file %s",
+			block.Header.BlockId,
+			tmpPath,
+		)
 	}
 	if err := file.Close(); err != nil {
 		// Try to delete the file in case of an error.
 		if err := os.Remove(tmpPath); err != nil {
-			return false, WrapErrorf(err, "failed to close temporary file %s and failed to remove it (it is garbage now)", tmpPath)
+			return false, WrapErrorf(
+				err,
+				"failed to close temporary file %s and failed to remove it (it is garbage now)",
+				tmpPath,
+			)
 		}
-		return false, WrapErrorf(err, "failed to close temporary file %s of block %s", tmpPath, hex.EncodeToString(block.Header.BlockId[:]))
+		return false, WrapErrorf(err, "failed to close temporary file %s of block %s", tmpPath, block.Header.BlockId)
 	}
 	if err := os.Rename(tmpPath, targetPath); err != nil {
 		// Try to delete the file in case of an error.
 		if err := os.Remove(tmpPath); err != nil {
-			return false, WrapErrorf(err, "failed to rename temporary file %s to %s and failed to remove temporary file (it is garbage now)", tmpPath, targetPath)
+			return false, WrapErrorf(
+				err,
+				"failed to rename temporary file %s to %s and failed to remove temporary file (it is garbage now)",
+				tmpPath,
+				targetPath,
+			)
 		}
 		return false, WrapErrorf(err, "failed to rename temporary file %s to %s", tmpPath, targetPath)
 	}
@@ -179,7 +213,12 @@ func (fs *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHe
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block file %s", path)
 	}
 	if bytesRead < BlockHeaderSize {
-		return nil, BlockHeader{}, Errorf("not enough bytes read from block file %s, want at least %d, got %d", path, BlockHeaderSize, bytesRead)
+		return nil, BlockHeader{}, Errorf(
+			"not enough bytes read from block file %s, want at least %d, got %d",
+			path,
+			BlockHeaderSize,
+			bytesRead,
+		)
 	}
 	header, err := UnmarshalBlockHeader(blockId, bytes.NewBuffer(buf[:BlockHeaderSize]))
 	if err != nil {
@@ -207,6 +246,38 @@ func (fs *FileStorage) ReadBlockHeader(blockId BlockId) (BlockHeader, error) {
 		return BlockHeader{}, Errorf("read %d bytes, expected at least %d", n, BlockHeaderSize)
 	}
 	return UnmarshalBlockHeader(blockId, bytes.NewBuffer(buf[:]))
+}
+
+func (fs *FileStorage) ReadRef(rev string) (RevisionId, error) {
+	path := filepath.Join(fs.clingDir, "refs", rev)
+	hexRevisionId, err := os.ReadFile(path)
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to read ref file %s", path)
+	}
+	revisionId, err := hex.DecodeString(string(hexRevisionId))
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to decode ref %s", hexRevisionId)
+	}
+	if len(revisionId) != 32 {
+		return RevisionId{}, Errorf("invalid revision id size: want %d, got %d", 32, len(revisionId))
+	}
+	return RevisionId(revisionId), nil
+}
+
+func (fs *FileStorage) WriteRef(rev string, id RevisionId) error {
+	path := filepath.Join(fs.clingDir, "refs", rev)
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return WrapErrorf(err, "failed to open ref file %s", path)
+	}
+	defer file.Close() //nolint:errcheck
+	if _, err := file.WriteString(hex.EncodeToString(id[:])); err != nil {
+		return WrapErrorf(err, "failed to write ref file %s", path)
+	}
+	if err := file.Close(); err != nil {
+		return WrapErrorf(err, "failed to close ref file %s", path)
+	}
+	return nil
 }
 
 func (fs *FileStorage) blockPath(blockId BlockId) string {

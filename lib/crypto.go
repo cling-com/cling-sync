@@ -74,7 +74,11 @@ func NewCipher(key RawKey) (cryptoCipher.AEAD, error) {
 		return nil, Errorf("invalid cipher nonce size: want %d, got %d", nonceSize, cipher.NonceSize())
 	}
 	if cipher.Overhead() != TotalCipherOverhead-nonceSize {
-		return nil, Errorf("invalid cipher overhead size: want %d, got %d", TotalCipherOverhead-nonceSize, cipher.Overhead())
+		return nil, Errorf(
+			"invalid cipher overhead size: want %d, got %d",
+			TotalCipherOverhead-nonceSize,
+			cipher.Overhead(),
+		)
 	}
 	return cipher, nil
 }
