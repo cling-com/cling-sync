@@ -215,6 +215,9 @@ func fakeMaserKeyInfo() MasterKeyInfo {
 		EncryptedKEK: EncryptedKey(
 			[]byte("the encrypted kek 23456789abcdef0123456789abcdef0123456789abcdef01234567"),
 		),
+		EncryptedBlockIdHmacKey: EncryptedKey(
+			[]byte("the encrypted block id hmac key 23456789abcdef0123456789abcdef0123456789abcdef01234567"),
+		),
 		UserKeySalt: Salt([]byte("the user salt ef0123456789abcdef")),
 	}
 }

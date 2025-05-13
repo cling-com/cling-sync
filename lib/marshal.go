@@ -161,9 +161,10 @@ even print it out and keep it somewhere safe.
 `, "\n ")
 	toml := Toml{
 		"encryption": {
-			"version":       fmt.Sprintf("%d", config.MasterKeyInfo.EncryptionVersion),
-			"encrypted-kek": FormatRecoveryCode(config.MasterKeyInfo.EncryptedKEK[:]),
-			"user-key-salt": FormatRecoveryCode(config.MasterKeyInfo.UserKeySalt[:]),
+			"version":                 fmt.Sprintf("%d", config.MasterKeyInfo.EncryptionVersion),
+			"encrypted-kek":           FormatRecoveryCode(config.MasterKeyInfo.EncryptedKEK[:]),
+			"user-key-salt":           FormatRecoveryCode(config.MasterKeyInfo.UserKeySalt[:]),
+			"encrypted-block-id-hmac": FormatRecoveryCode(config.MasterKeyInfo.EncryptedBlockIdHmacKey[:]),
 		},
 		"storage": {
 			"format":  config.StorageFormat,
@@ -184,7 +185,7 @@ even print it out and keep it somewhere safe.
 	return nil
 }
 
-func ReadRepositoryConfigFile(fullPath string) (RepositoryConfig, Toml, error) {
+func ReadRepositoryConfigFile(fullPath string) (RepositoryConfig, Toml, error) { //nolint:funlen
 	file, err := os.Open(fullPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -243,6 +244,11 @@ func ReadRepositoryConfigFile(fullPath string) (RepositoryConfig, Toml, error) {
 		return RepositoryConfig{}, nil, err
 	}
 	config.MasterKeyInfo.UserKeySalt = Salt(c)
+	c, err = parseRecoveryCode("encryption", "encrypted-block-id-hmac", EncryptedKeySize)
+	if err != nil {
+		return RepositoryConfig{}, nil, err
+	}
+	config.MasterKeyInfo.EncryptedBlockIdHmacKey = EncryptedKey(c)
 	return config, toml, nil
 }
 

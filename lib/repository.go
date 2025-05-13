@@ -48,16 +48,16 @@ type Block struct {
 const EncryptionVersion uint16 = 1
 
 type MasterKeyInfo struct {
-	EncryptionVersion uint16
-	EncryptedKEK      EncryptedKey
-	UserKeySalt       Salt
+	EncryptionVersion       uint16
+	EncryptedKEK            EncryptedKey
+	UserKeySalt             Salt
+	EncryptedBlockIdHmacKey EncryptedKey
 }
 
 type Repository struct {
-	storage         Storage
-	kekCipher       cipher.AEAD
-	metadataHmacKey RawKey
-	blockIdHmacKey  RawKey
+	storage        Storage
+	kekCipher      cipher.AEAD
+	blockIdHmacKey RawKey
 }
 
 func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) {
@@ -85,7 +85,28 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 	if len(encryptedKEK) != EncryptedKeySize {
 		return nil, Errorf("encrypted KEK has wrong size, want %d, got %d", EncryptedKeySize, len(encryptedKEK))
 	}
-	masterKeyInfo := MasterKeyInfo{EncryptionVersion, EncryptedKey(encryptedKEK), userKeySalt}
+	blockIdHmacKey, err := NewRawKey()
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to generate random block id HMAC key")
+	}
+	encryptedBlockIdHmacKey := make([]byte, EncryptedKeySize)
+	encryptedBlockIdHmacKey, err = Encrypt(blockIdHmacKey[:], cipher, userKeySalt[:], encryptedBlockIdHmacKey)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to encrypt block id HMAC key with user-key")
+	}
+	if len(encryptedBlockIdHmacKey) != EncryptedKeySize {
+		return nil, Errorf(
+			"encrypted block id HMAC key has wrong size, want %d, got %d",
+			EncryptedKeySize,
+			len(encryptedBlockIdHmacKey),
+		)
+	}
+	masterKeyInfo := MasterKeyInfo{
+		EncryptionVersion,
+		EncryptedKey(encryptedKEK),
+		userKeySalt,
+		EncryptedKey(encryptedBlockIdHmacKey),
+	}
 	if err := storage.Init(masterKeyInfo); err != nil {
 		return nil, WrapErrorf(err, "failed to initialize storage")
 	}
@@ -129,9 +150,17 @@ func OpenRepository(storage Storage, passphrase []byte) (*Repository, error) {
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from KEK")
 	}
-	metadataHmacKey := RawKey(CalculateSha256(append(kek, []byte("-metadata")...)))
-	blockIdHmacKey := RawKey(CalculateSha256(append(kek, []byte("-blockId")...)))
-	return &Repository{storage, kekCipher, metadataHmacKey, blockIdHmacKey}, nil
+	blockIdHmacKey := make([]byte, RawKeySize)
+	blockIdHmacKey, err = Decrypt(
+		masterKeyInfo.EncryptedBlockIdHmacKey[:],
+		cipher,
+		masterKeyInfo.UserKeySalt[:],
+		blockIdHmacKey,
+	)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to decrypt block id HMAC key with user-key")
+	}
+	return &Repository{storage, kekCipher, RawKey(blockIdHmacKey)}, nil
 }
 
 // Return `true` if the block already existed.
