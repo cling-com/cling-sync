@@ -184,6 +184,7 @@ type RevisionSnapshot struct {
 	RevisionId RevisionId
 	targetFile string
 	tmpDir     string
+	reader     *RevisionSnapshotReader
 }
 
 func CreateRevisionSnapshot(
@@ -215,8 +216,51 @@ func CreateRevisionSnapshot(
 	if err := commitNWayMerge(repository, commits, targetFile); err != nil {
 		return nil, WrapErrorf(err, "failed to commit n-way merge commits")
 	}
+	return &RevisionSnapshot{revision, targetFile, tmpDir, nil}, nil
+}
 
-	return &RevisionSnapshot{revision, targetFile, tmpDir}, nil
+func (rs *RevisionSnapshot) Close() error {
+	defer func() {
+		os.Remove(rs.targetFile) //nolint:errcheck,gosec
+		os.RemoveAll(rs.tmpDir)  //nolint:errcheck,gosec
+	}()
+	if rs.reader != nil {
+		if err := rs.reader.file.Close(); err != nil {
+			return WrapErrorf(err, "failed to close revision snapshot reader")
+		}
+		rs.reader = nil
+	}
+	return nil
+}
+
+func (rs *RevisionSnapshot) Reader() (*RevisionSnapshotReader, error) {
+	if rs.reader != nil {
+		return nil, Errorf("reader already created")
+	}
+	file, err := os.Open(rs.targetFile)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to open revision snapshot")
+	}
+	bufReader := bufio.NewReader(file)
+	rs.reader = &RevisionSnapshotReader{file: file, bufReader: *bufReader}
+	return rs.reader, nil
+}
+
+type RevisionSnapshotReader struct {
+	file      *os.File
+	bufReader bufio.Reader
+}
+
+// Return `io.EOF` if we are done.
+func (rs *RevisionSnapshotReader) Read() (*RevisionEntry, error) {
+	re, err := UnmarshalRevisionEntry(&rs.bufReader)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, io.EOF
+		}
+		return nil, WrapErrorf(err, "failed to read revision snapshot")
+	}
+	return re, nil
 }
 
 func commitNWayMerge(repository *Repository, commits []*Revision, targetFile string) error {

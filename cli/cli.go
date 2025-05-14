@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
@@ -39,7 +40,7 @@ func initCmd(argv []string) error {
 		fmt.Fprintf(os.Stderr, "Usage: %s init <dst>\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Initialize a new repository at <dst>.\n")
 		fmt.Fprintf(os.Stderr, "The destination directory <dst> must not exist or must be empty.\n")
-		fmt.Fprintf(os.Stderr, "\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(argv); err != nil {
@@ -108,7 +109,8 @@ func syncCmd(argv []string) error { //nolint:funlen
 	flags.Func(
 		"ignore",
 		strings.TrimSpace(`
-Ignore paths matching the given pattern (can be used multiple times)
+Ignore paths matching the given pattern (can be used multiple times).
+A pattern must match the full path of the file.
 Pattern syntax:
     **      matches any number of directories
     *       matches any number of characters in a single directory
@@ -126,7 +128,7 @@ Pattern syntax:
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s sync <src> <dst>\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Synchronize files from the source directory <src> to the repository at <dst>.\n")
-		fmt.Fprintf(os.Stderr, "\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(argv); err != nil {
@@ -155,6 +157,71 @@ Pattern syntax:
 	return nil
 }
 
+func lsCmd(argv []string) error {
+	args := struct { //nolint:exhaustruct
+		Help     bool
+		Revision string
+	}{}
+	flags := flag.NewFlagSet("sync", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s ls <dst> [pattern]\n\n", appName)
+		fmt.Fprintf(os.Stderr, "List files in the repository at <dst>.\n\n")
+		fmt.Fprintf(os.Stderr, "  pattern\n")
+		fmt.Fprintf(os.Stderr, "        The pattern syntax is the same as for the `sync --ignore` option.\n")
+		fmt.Fprintf(os.Stderr, "        A pattern must match the full path of the file.\n")
+		fmt.Fprintf(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	if len(flags.Args()) == 0 {
+		return lib.Errorf("one positional argument is required: <dst>")
+	}
+	var pattern *lib.PathPattern
+	if len(flags.Args()) == 2 {
+		p, err := lib.NewPathPattern(flags.Arg(1))
+		if err != nil {
+			return lib.WrapErrorf(err, "invalid pattern: %s", flags.Arg(1))
+		}
+		pattern = &p
+	}
+	if len(flags.Args()) > 2 {
+		return lib.Errorf("too many positional arguments")
+	}
+	repository, err := openRepository(flags.Arg(0))
+	if err != nil {
+		return err
+	}
+	var revisionId lib.RevisionId
+	if strings.ToLower(args.Revision) == "head" {
+		revisionId, err = repository.Head()
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to read head revision")
+		}
+	} else {
+		b, err := hex.DecodeString(args.Revision)
+		if err != nil {
+			return lib.Errorf("invalid revision id: %s", args.Revision)
+		}
+		revisionId = lib.RevisionId(b)
+	}
+	files, err := Ls(repository, revisionId, pattern)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		fmt.Println(file.String())
+	}
+	return nil
+}
+
 func logCmd(argv []string) error {
 	args := struct { //nolint:exhaustruct
 		Help  bool
@@ -166,7 +233,7 @@ func logCmd(argv []string) error {
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s log <dst>\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Show revision log for the repository at <dst>.\n")
-		fmt.Fprintf(os.Stderr, "\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(argv); err != nil {
@@ -235,9 +302,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: %s <command> [command arguments]\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Commands:\n")
 		fmt.Fprintf(os.Stderr, "  init         Initialize a new repository\n")
-		fmt.Fprintf(os.Stderr, "  sync         Synchronize files\n")
+		fmt.Fprintf(os.Stderr, "  ls           List files in the repository\n")
 		fmt.Fprintf(os.Stderr, "  log          Show revision log\n")
 		fmt.Fprintf(os.Stderr, "  status       Show repository status\n")
+		fmt.Fprintf(os.Stderr, "  sync         Synchronize files\n")
 		fmt.Fprintf(os.Stderr, "\nRun '%s <command> --help' for more information on a command.\n", appName)
 	}
 	flag.BoolVar(&args.Help, "help", false, "Show help message")
@@ -247,27 +315,25 @@ func main() {
 		os.Exit(0)
 	}
 	cmd := flag.Arg(0)
+	var err error
 	switch cmd {
 	case "init":
-		if err := initCmd(flag.Args()[1:]); err != nil {
-			printErr(err.Error())
-			os.Exit(1)
-		}
+		err = initCmd(flag.Args()[1:])
 	case "sync":
-		if err := syncCmd(flag.Args()[1:]); err != nil {
-			printErr(err.Error())
-			os.Exit(1)
-		}
+		err = syncCmd(flag.Args()[1:])
 	case "log":
-		if err := logCmd(flag.Args()[1:]); err != nil {
-			printErr(err.Error())
-			os.Exit(1)
-		}
+		err = logCmd(flag.Args()[1:])
+	case "ls":
+		err = lsCmd(flag.Args()[1:])
 	case "":
 		flag.Usage()
 		os.Exit(0)
 	default:
 		printErr("%s is not a valid command. See '%s --help'.", cmd, appName)
+		os.Exit(1)
+	}
+	if err != nil {
+		printErr(err.Error())
 		os.Exit(1)
 	}
 }

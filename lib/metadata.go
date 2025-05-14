@@ -7,7 +7,7 @@ import (
 )
 
 // The lower bits represent attributes (see `Mode` constants).
-// Bits 22 to 32 represent the file permissions.
+// Bits 0 to 8 represent the file permissions.
 type ModeAndPerm uint32
 
 func NewModeAndPerm(fm fs.FileMode) ModeAndPerm {
@@ -30,14 +30,66 @@ func NewModeAndPerm(fm fs.FileMode) ModeAndPerm {
 	return ModeAndPerm(mode)
 }
 
+func (m ModeAndPerm) String() string {
+	const str = "dLugtr"
+	bits := []uint32{ModeDir, ModeSymlink, ModeSetUID, ModeSetGUID, ModeSticky}
+	var buf [14]byte
+	for i, b := range bits {
+		if m&ModeAndPerm(b) != 0 {
+			buf[i] = str[i]
+		} else {
+			buf[i] = '-'
+		}
+	}
+	const rwx = "rwxrwxrwx"
+	for i, c := range rwx {
+		if m&ModeAndPerm(1<<(8-i)) != 0 {
+			buf[i+5] = byte(c)
+		} else {
+			buf[i+5] = '-'
+		}
+	}
+	return string(buf[:])
+}
+
+func (m ModeAndPerm) IsDir() bool {
+	return m&ModeDir != 0
+}
+
+func (m ModeAndPerm) IsSymlink() bool {
+	return m&ModeSymlink != 0
+}
+
+func (m ModeAndPerm) IsRegular() bool {
+	return m&ModeType == 0
+}
+
+func (m ModeAndPerm) IsSticky() bool {
+	return m&ModeSticky != 0
+}
+
+func (m ModeAndPerm) IsSetUID() bool {
+	return m&ModeSetUID != 0
+}
+
+func (m ModeAndPerm) IsSetGUID() bool {
+	return m&ModeSetGUID != 0
+}
+
+func (m ModeAndPerm) Perm() uint32 {
+	return uint32(m & ModePerm)
+}
+
 const MetadataVersion uint16 = 1
 
 const (
-	ModeDir     = 1
-	ModeSymlink = 2
-	ModeSetUID  = 4
-	ModeSetGUID = 8
-	ModeSticky  = 16
+	ModePerm    = 0o777
+	ModeDir     = 1 << 10
+	ModeSymlink = 1 << 11
+	ModeSetUID  = 1 << 12
+	ModeSetGUID = 1 << 13
+	ModeSticky  = 1 << 14
+	ModeType    = ModeDir | ModeSymlink
 )
 
 type FileMetadata struct {
@@ -60,14 +112,6 @@ type FileMetadata struct {
 
 func (fm *FileMetadata) EstimatedSize() int {
 	return 4 + 8 + 4 + 8 + len(fm.FileHash) + 4 + len(fm.BlockIds)*32 + len(fm.SymlinkTarget) + 4 + 4 + 8 + 4
-}
-
-func (fm *FileMetadata) IsDir() bool {
-	return fm.ModeAndPerm&ModeDir != 0
-}
-
-func (fm *FileMetadata) IsSymlink() bool {
-	return fm.ModeAndPerm&ModeSymlink != 0
 }
 
 func (fm *FileMetadata) IsEqual(other *FileMetadata) bool {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -48,7 +49,7 @@ func Sync(src string, repository *lib.Repository, config *SyncConfg) (lib.Revisi
 				return nil
 			}
 		}
-		repoPath := lib.NewPath(filepath.SplitList(path)...)
+		repoPath := lib.NewPath(strings.Split(path, string(os.PathSeparator))...)
 		fileMetadata, err := addContentToRepo(path, d, repository)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to add path %s to repository", path)
