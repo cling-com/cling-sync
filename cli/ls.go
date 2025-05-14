@@ -29,11 +29,10 @@ func (f *LsFile) String() string {
 
 func Ls(repository *lib.Repository, revisionId lib.RevisionId, pattern *lib.PathPattern) ([]LsFile, error) {
 	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("ls-%d", os.Getpid()))
-	snapshotFile := filepath.Join(tmpDir, "snapshot")
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create temporary directory %s", tmpDir)
 	}
-	snapshot, err := lib.CreateRevisionSnapshot(repository, revisionId, snapshotFile, tmpDir)
+	snapshot, err := lib.NewRevisionSnapshot(repository, revisionId, tmpDir)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}

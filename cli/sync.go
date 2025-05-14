@@ -28,12 +28,11 @@ func Sync(src string, repository *lib.Repository, config *SyncConfg) (lib.Revisi
 		_ = os.RemoveAll(tmpDir)
 	}()
 	stagingTmpDir := filepath.Join(tmpDir, "staging")
-	commitTmpDir := filepath.Join(tmpDir, "commit")
-	if err := os.MkdirAll(stagingTmpDir, 0o700); err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create staging directory")
-	}
-	if err := os.MkdirAll(commitTmpDir, 0o700); err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create commit directory")
+	snapshotTmpDir := filepath.Join(tmpDir, "snapshot")
+	for _, d := range []string{stagingTmpDir, snapshotTmpDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to temporary directory %s", d)
+		}
 	}
 	// Stage all files.
 	staging, err := lib.NewStaging(head, stagingTmpDir)
@@ -62,11 +61,14 @@ func Sync(src string, repository *lib.Repository, config *SyncConfg) (lib.Revisi
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to walk directory %s", src)
 	}
+	snapshot, err := lib.NewRevisionSnapshot(repository, head, snapshotTmpDir)
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create revision snapshot")
+	}
 	// Create commit.
-	return lib.CommitStaging( //nolint:wrapcheck
+	return staging.Commit( //nolint:wrapcheck
 		repository,
-		staging,
-		commitTmpDir,
+		snapshot,
 		&lib.CommitInfo{Author: config.Author, Message: config.Message},
 	)
 }
