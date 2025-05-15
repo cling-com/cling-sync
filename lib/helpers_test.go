@@ -36,7 +36,141 @@ func (a Assert) Equal(expected, actual any, msg ...any) {
 		return reflect.DeepEqual(expected, actual)
 	}()
 	if !areEqual {
-		a.tb.Fatalf("%sexpected %v (%T), got: %v (%T)", details(msg), expected, expected, actual, actual)
+		expectedStr := stringify(expected)
+		if strings.Contains(expectedStr, "\n") {
+			expectedStr = "\n" + expectedStr
+		}
+		actualStr := stringify(actual)
+		if strings.Contains(actualStr, "\n") {
+			actualStr = "\n" + actualStr
+		}
+		expectedStr, actualStr = diff(expectedStr, actualStr)
+		a.tb.Fatalf(
+			"%sexpected: %v (%T), got: %v (%T)",
+			details(msg),
+			expectedStr,
+			expected,
+			actualStr,
+			actual,
+		)
+	}
+}
+
+// Just mark different lines.
+func diff(a, b string) (string, string) {
+	if a == b {
+		return a, b
+	}
+	aLines := strings.Split(a, "\n")
+	bLines := strings.Split(b, "\n")
+	for i := 0; i < len(aLines) && i < len(bLines); i++ {
+		if aLines[i] != bLines[i] {
+			aLines[i] = "\033[32m" + aLines[i] + "\033[0m"
+			bLines[i] = "\033[31m" + bLines[i] + "\033[0m"
+		}
+	}
+	// Join the lines back together.
+	a = strings.Join(aLines, "\n")
+	b = strings.Join(bLines, "\n")
+	return a, b
+}
+
+func stringify(v any) string {
+	return stringifyInternal(v, 0)
+}
+
+func stringifyInternal(v any, indent int) string {
+	reflectV := reflect.ValueOf(v)
+	t := reflectV.Type()
+	kind := t.Kind()
+	// Check for byte array or byte slice (including aliases like [32]byte or Sha256).
+	if (kind == reflect.Slice || kind == reflect.Array) && t.Elem().Kind() == reflect.Uint8 {
+		n := reflectV.Len()
+		if n == 0 {
+			return fmt.Sprintf("%s{}", t.String())
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%s{ ", t.String()))
+		for i := range n {
+			if i > 0 {
+				sb.WriteString(" ")
+			}
+			sb.WriteString(fmt.Sprintf("%02x", reflectV.Index(i).Uint()))
+		}
+		sb.WriteString(" }")
+		return sb.String()
+	}
+
+	if reflectV.Kind() == reflect.Ptr {
+		if reflectV.IsNil() {
+			return "nil"
+		}
+		reflectV = reflectV.Elem()
+		t = reflectV.Type()
+		kind = t.Kind()
+	}
+
+	switch kind { //nolint:exhaustive
+	case reflect.Slice, reflect.Array:
+		if reflectV.Len() == 0 {
+			return "[]"
+		}
+		parts := make([]string, reflectV.Len())
+		for i := range reflectV.Len() {
+			parts[i] = stringifyInternal(reflectV.Index(i).Interface(), indent+1)
+		}
+		inline := "[ " + strings.Join(parts, ", ") + " ]"
+		if len(inline)+(indent*2) <= 100 {
+			return inline
+		}
+		var sb strings.Builder
+		sb.WriteString("[\n")
+		for i, part := range parts {
+			sb.WriteString(strings.Repeat("  ", indent+1))
+			sb.WriteString(part)
+			if i < len(parts)-1 {
+				sb.WriteString(",\n")
+			} else {
+				sb.WriteString("\n")
+			}
+		}
+		sb.WriteString(strings.Repeat("  ", indent))
+		sb.WriteString("]")
+		return sb.String()
+
+	case reflect.Struct:
+		numFields := reflectV.NumField()
+		parts := make([]string, 0, numFields)
+		for i := range numFields {
+			field := t.Field(i)
+			if field.PkgPath != "" {
+				continue // unexported
+			}
+			valStr := stringifyInternal(reflectV.Field(i).Interface(), indent+1)
+			parts = append(parts, fmt.Sprintf("%s: %s", field.Name, valStr))
+		}
+		prefix := t.Name() + "{ "
+		inline := prefix + strings.Join(parts, ", ") + " }"
+		if len(inline)+(indent*2) <= 100 {
+			return inline
+		}
+		var sb strings.Builder
+		sb.WriteString(t.Name())
+		sb.WriteString("{\n")
+		for _, part := range parts {
+			sb.WriteString(strings.Repeat("  ", indent+1))
+			sb.WriteString(part)
+			sb.WriteString(",\n")
+		}
+		sb.WriteString(strings.Repeat("  ", indent))
+		sb.WriteString("}")
+		return sb.String()
+
+	case reflect.String:
+		return fmt.Sprintf("%q", reflectV.String())
+
+	default:
+		return fmt.Sprintf("%v", v)
 	}
 }
 
@@ -154,8 +288,4 @@ func fakeEncryptedKey(suffix string) EncryptedKey { //nolint:unparam
 
 func fakeBlockId(suffix string) BlockId {
 	return BlockId([]byte(strings.Repeat("b", 32-len(suffix)) + suffix))
-}
-
-func fakeRevisionId(suffix string) RevisionId { //nolint:unparam
-	return RevisionId([]byte(strings.Repeat("r", 32-len(suffix)) + suffix))
 }

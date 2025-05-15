@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestRepositoryInitAndOpen(t *testing.T) {
@@ -49,10 +50,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 	t.Run("Tampering with UserKeySalt is detected", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		storage, err := NewFileStorage(t.TempDir())
-		assert.NoError(err)
-		_, err = InitNewRepository(storage, userPassphrase)
-		assert.NoError(err)
+		_, storage := testRepository(t)
 
 		// Manipulate the UserKeySalt.
 		configFilePath := filepath.Join(storage.clingDir, repositoryConfigFile)
@@ -70,10 +68,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 	t.Run("Tampering with EncryptedKEK is detected", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		storage, err := NewFileStorage(t.TempDir())
-		assert.NoError(err)
-		_, err = InitNewRepository(storage, userPassphrase)
-		assert.NoError(err)
+		_, storage := testRepository(t)
 
 		// Manipulate the KEK.
 		configFilePath := filepath.Join(storage.clingDir, repositoryConfigFile)
@@ -114,14 +109,10 @@ func TestRepositoryMarshalUnmarshalBlockHeader(t *testing.T) {
 
 func TestRepositoryReadWriteBlock(t *testing.T) {
 	t.Parallel()
-	userPassphrase := []byte("user passphrase")
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		storage, err := NewFileStorage(t.TempDir())
-		assert.NoError(err)
-		repo, err := InitNewRepository(storage, userPassphrase)
-		assert.NoError(err)
+		repo, _ := testRepository(t)
 
 		writeData := []byte("plaintext")
 		existed, writeHeader, err := repo.WriteBlock(writeData, BlockBuf{})
@@ -166,4 +157,57 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Equal("Data", dataField.Name)
 		assert.Equal("[]uint8", dataField.Type.String())
 	})
+}
+
+func TestRepositoryReadWriteRevision(t *testing.T) {
+	t.Parallel()
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		head, err := repo.Head()
+		assert.NoError(err)
+
+		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3}, BlockBuf{})
+		assert.NoError(err)
+
+		revision := Revision{
+			TimestampSec:  time.Now().Unix(),
+			TimestampNSec: 1234,
+			Message:       "test message",
+			Author:        "test author",
+			Blocks:        []BlockId{blockHeader.BlockId},
+			Parent:        head,
+		}
+		revisionId, err := repo.WriteRevision(&revision, BlockBuf{})
+		assert.NoError(err)
+
+		readRevision, err := repo.ReadRevision(revisionId, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(revision, readRevision)
+	})
+	t.Run("Read empty root revision", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		head, err := repo.Head()
+		assert.NoError(err)
+		assert.Equal(true, head.IsRoot())
+
+		_, err = repo.ReadRevision(head, BlockBuf{})
+		assert.Error(err, "root revision cannot be read")
+	})
+}
+
+func testRepository(t *testing.T) (*Repository, *FileStorage) {
+	t.Helper()
+	userPassphrase := []byte("user passphrase")
+	assert := NewAssert(t)
+	storage, err := NewFileStorage(t.TempDir())
+	assert.NoError(err)
+	repo, err := InitNewRepository(storage, userPassphrase)
+	assert.NoError(err)
+	return repo, storage
 }

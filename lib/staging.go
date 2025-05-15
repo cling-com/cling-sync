@@ -1,26 +1,26 @@
 // Staging reflects the current state of the working directory.
 // It can then be used to create a new revision together with a `RevisionSnapshot` of
 // the base revision.
+//
+// After commit the repository reflects the working directory, i.e. files that are not
+// in the working directory will be removed from the repository head revision.
 package lib
 
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 )
 
-const defaultChunkSize = 4 * 1024 * 1024
+var ErrEmptyCommit = Errorf("empty commit")
 
 type Staging struct {
 	BaseRevision RevisionId
 	targetFile   string
-	chunkWriter  *ChunkWriter
+	chunks       *RevisionEntryChunks
 	tmpDir       string
 }
 
@@ -32,7 +32,7 @@ func NewStaging(parent RevisionId, tmpDir string) (*Staging, error) {
 	if len(files) > 0 {
 		return nil, Errorf("temporary directory %s is not empty", tmpDir)
 	}
-	chunkWriter := NewChunkWriter(tmpDir, "staging", defaultChunkSize)
+	chunkWriter := NewRevisionEntryChunks(tmpDir, "staging", defaultChunkSize)
 	return &Staging{parent, filepath.Join(tmpDir, "staging"), chunkWriter, tmpDir}, nil
 }
 
@@ -40,65 +40,24 @@ func (s *Staging) Add(path Path, md *FileMetadata) error {
 	if md == nil {
 		return Errorf("file metadata is nil")
 	}
-	if s.chunkWriter == nil {
+	if s.chunks == nil {
 		return Errorf("staging is closed")
 	}
 	re, err := NewRevisionEntry(path, RevisionEntryAdd, md)
 	if err != nil {
 		return WrapErrorf(err, "failed to create revision entry")
 	}
-	return s.chunkWriter.Write(&re)
+	return s.chunks.Add(&re)
 }
 
-func (s *Staging) MergeChunks() error {
-	if s.chunkWriter == nil {
-		return nil
-	}
-	defer func() { s.chunkWriter = nil }()
-	if err := s.chunkWriter.Close(); err != nil {
-		return err
-	}
-	// Open all chunks with a buffered reader.
-	readers := make([]io.Reader, s.chunkWriter.Chunks())
-	for i := range s.chunkWriter.Chunks() {
-		f, err := s.chunkWriter.ChunkReader(i)
-		if err != nil {
-			return WrapErrorf(err, "failed to open staging chunk file")
-		}
-		defer f.Close() //nolint:errcheck
-		readers[i] = bufio.NewReader(f)
-	}
-	file, err := os.OpenFile(s.targetFile, os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return WrapErrorf(err, "failed to open target file")
-	}
-	writer := bufio.NewWriter(file)
-	defer file.Close() //nolint:errcheck
-	err = nWayMergeSort(
-		readers,
-		writer,
-		UnmarshalRevisionEntry,
-		MarshalRevisionEntry,
-		func(a, b *RevisionEntry) (int, error) {
-			c := strings.Compare(string(a.Path), string(b.Path))
-			if c == 0 {
-				return 0, Errorf("duplicate revision entry path: %s", a.Path)
-			}
-			return c, nil
-		},
-	)
-	if err != nil {
-		return WrapErrorf(err, "failed to sort and merge chunks")
-	}
-	if err := writer.Flush(); err != nil {
-		return WrapErrorf(err, "failed to flush target file")
-	}
-	return nil
-}
-
+// Commit by merging the staging snapshot with the revision snapshot. The new revision will
+// only contain the entries that are in the staging snapshot.
+//
+// Return `ErrEmptyCommit` if there are no changes.
+//
 //nolint:funlen
 func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, info *CommitInfo) (RevisionId, error) {
-	if err := s.MergeChunks(); err != nil {
+	if err := s.mergeChunks(); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to merge staging chunks")
 	}
 	if s.BaseRevision != snapshot.RevisionId {
@@ -129,124 +88,101 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 	}
 	defer stgFile.Close() //nolint:errcheck
 	stgReader := bufio.NewReader(stgFile)
-	stgDone := false
-	revDone := false
-	cw := NewChunkWriter(s.tmpDir, "commit", MaxBlockDataSize)
-	for !stgDone && !revDone {
-		stg, err := UnmarshalRevisionEntry(stgReader)
+	cw := NewRevisionEntryChunks(s.tmpDir, "commit", MaxBlockDataSize)
+	add := func(path Path, typ RevisionEntryType, md *FileMetadata) error {
+		re, err := NewRevisionEntry(path, typ, md)
 		if err != nil {
+			return WrapErrorf(err, "failed to create revision entry for path %s", path.FSString())
+		}
+		if err := cw.Add(&re); err != nil {
+			return WrapErrorf(err, "failed to write revision entry for path %s", path.FSString())
+		}
+		return nil
+	}
+	var stg *RevisionEntry
+	var rev *RevisionEntry
+	for {
+		if stg == nil {
+			// Read the next staging entry.
+			stg, err = UnmarshalRevisionEntry(stgReader)
 			if errors.Is(err, io.EOF) {
-				stgDone = true
-				break
-			}
-			return RevisionId{}, WrapErrorf(err, "failed to read staging snapshot")
-		}
-		rev, err := revReader.Read()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				revDone = true
-				break
-			}
-			return RevisionId{}, WrapErrorf(err, "failed to read revision snapshot")
-		}
-		if stg.Path == rev.Path {
-			if stg.Metadata.IsEqual(rev.Metadata) {
-				// The file is unchanged, skip it.
-				continue
-			}
-			// Write an update.
-			re, err := NewRevisionEntry(stg.Path, RevisionEntryUpdate, stg.Metadata)
-			if err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to create update revision entry for path %s", stg.Path)
-			}
-			if err := cw.Write(&re); err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to write update revision entry for path %s", stg.Path)
-			}
-			continue
-		}
-		if stg.Path < rev.Path {
-			// Write an add and continue to read stg until it is not smaller than rev.
-			for {
-				if err := cw.Write(stg); err != nil {
-					return RevisionId{}, WrapErrorf(err, "failed to write add revision entry for path %s", stg.Path)
-				}
-				stg, err = UnmarshalRevisionEntry(stgReader)
-				if err != nil {
+				// Write a delete for all remaining revision snapshot entries.
+				for {
+					if rev != nil { // The current one might be nil.
+						// Write a delete.
+						if err := add(rev.Path, RevisionEntryDelete, nil); err != nil {
+							return RevisionId{}, err
+						}
+					}
+					rev, err = revReader.Read()
 					if errors.Is(err, io.EOF) {
-						stgDone = true
 						break
 					}
-					return RevisionId{}, WrapErrorf(err, "failed to read staging snapshot")
+					if err != nil {
+						return RevisionId{}, WrapErrorf(err, "failed to read revision snapshot")
+					}
 				}
-				if stg.Path >= rev.Path {
-					break
-				}
-			}
-			continue
-		}
-		// Write a delete and continue to read rev until it is not smaller than stg.
-		for {
-			re, err := NewRevisionEntry(rev.Path, RevisionEntryDelete, nil)
-			if err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to create delete revision entry for path %s", rev.Path)
-			}
-			if err := cw.Write(&re); err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to write delete revision entry for path %s", rev.Path)
-			}
-			rev, err = revReader.Read()
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					revDone = true
-					break
-				}
-				return RevisionId{}, WrapErrorf(err, "failed to read revision snapshot")
-			}
-			if rev.Path >= stg.Path {
-				break
-			}
-		}
-	}
-	if stgDone {
-		// All subsequent entries in `revReader` have been removed.
-		for {
-			rev, err := revReader.Read()
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			if err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to read revision snapshot")
-			}
-			// Write a delete.
-			re, err := NewRevisionEntry(rev.Path, RevisionEntryDelete, nil)
-			if err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to create delete revision entry for path %s", rev.Path)
-			}
-			if err := cw.Write(&re); err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to write delete revision entry for path %s", rev.Path)
-			}
-		}
-	} else if revDone {
-		// All subsequent entries in `stgReader` have been added.
-		for {
-			stg, err := UnmarshalRevisionEntry(stgReader)
-			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {
 				return RevisionId{}, WrapErrorf(err, "failed to read staging snapshot")
 			}
-			// Write an add.
-			re, err := NewRevisionEntry(stg.Path, RevisionEntryAdd, stg.Metadata)
+		}
+		if rev == nil {
+			// Read the next revision snapshot entry.
+			rev, err = revReader.Read()
+			if errors.Is(err, io.EOF) {
+				// Write an add for all remaining staging entries.
+				for {
+					if stg != nil { // The current one might be nil.
+						if err := add(stg.Path, RevisionEntryAdd, stg.Metadata); err != nil {
+							return RevisionId{}, err
+						}
+					}
+					stg, err = UnmarshalRevisionEntry(stgReader)
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					if err != nil {
+						return RevisionId{}, WrapErrorf(err, "failed to read staging snapshot")
+					}
+				}
+				break
+			}
 			if err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to create add revision entry for path %s", stg.Path)
+				return RevisionId{}, WrapErrorf(err, "failed to read revision snapshot")
 			}
-			if err := cw.Write(&re); err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to write add revision entry for path %s", stg.Path)
+		}
+		if stg.Path == rev.Path { //nolint:gocritic
+			if !stg.Metadata.IsEqual(rev.Metadata) {
+				// Write an update.
+				if err := add(stg.Path, RevisionEntryUpdate, stg.Metadata); err != nil {
+					return RevisionId{}, err
+				}
 			}
+			stg = nil
+			rev = nil
+		} else if stg.Path < rev.Path {
+			// Write an add.
+			if err := add(stg.Path, RevisionEntryAdd, stg.Metadata); err != nil {
+				return RevisionId{}, err
+			}
+			stg = nil
+			continue
+		} else {
+			// Write a delete.
+			if err := add(rev.Path, RevisionEntryDelete, nil); err != nil {
+				return RevisionId{}, err
+			}
+			rev = nil
+			continue
 		}
 	}
 	if err := cw.Close(); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to close revision chunk writer")
+	}
+	if cw.Chunks() == 0 {
+		return RevisionId{}, ErrEmptyCommit
 	}
 	// Create Blocks out of each chunk.
 	now := time.Now()
@@ -283,145 +219,35 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 	return revisionId, nil
 }
 
-type ChunkWriter struct {
-	tmpDir       string
-	filePrefix   string
-	chunk        []*RevisionEntry
-	chunkSize    int
-	chunkIndex   int
-	maxChunkSize int
-}
-
-func NewChunkWriter(tmpDir string, filePrefix string, maxChunkSize int) *ChunkWriter {
-	return &ChunkWriter{tmpDir: tmpDir, filePrefix: filePrefix, maxChunkSize: maxChunkSize} //nolint:exhaustruct
-}
-
-func (cw *ChunkWriter) Write(re *RevisionEntry) error {
-	size := re.EstimatedSize()
-	if cw.chunkSize > 0 && cw.chunkSize+size > cw.maxChunkSize {
-		if err := cw.rotateChunk(); err != nil {
-			return err
-		}
+func (s *Staging) mergeChunks() error {
+	if s.chunks == nil {
+		return nil
 	}
-	cw.chunk = append(cw.chunk, re)
-	cw.chunkSize += re.EstimatedSize()
-	return nil
-}
-
-func (cw *ChunkWriter) Chunks() int {
-	return cw.chunkIndex
-}
-
-func (cw *ChunkWriter) ChunkReader(index int) (io.ReadCloser, error) {
-	if index < 0 || index >= cw.chunkIndex {
-		return nil, Errorf("chunk index out of range")
-	}
-	f, err := os.Open(cw.chunkFilename(index))
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to open chunk file")
-	}
-	return f, nil
-}
-
-func (cw *ChunkWriter) Close() error {
-	if len(cw.chunk) != 0 {
-		return cw.rotateChunk()
-	}
-	return nil
-}
-
-func (cw *ChunkWriter) chunkFilename(index int) string {
-	return filepath.Join(cw.tmpDir, fmt.Sprintf("%s-%d", cw.filePrefix, index))
-}
-
-// Sort the current chunk and write it to disk.
-func (cw *ChunkWriter) rotateChunk() error {
-	var err error
-	slices.SortFunc(cw.chunk, func(a, b *RevisionEntry) int {
-		c := strings.Compare(string(a.Path), string(b.Path))
-		if c == 0 {
-			err = Errorf("duplicate revision entry path: %s", a.Path)
-		}
-		return c
-	})
-	if err != nil {
+	defer func() { s.chunks = nil }()
+	if err := s.chunks.Close(); err != nil {
 		return err
 	}
-	// todo: encrypt the data before writing to disk.
-	file, err := os.OpenFile(cw.chunkFilename(cw.chunkIndex), os.O_CREATE|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(s.targetFile, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return WrapErrorf(err, "failed to open chunk file")
+		return WrapErrorf(err, "failed to open target file")
 	}
 	defer file.Close() //nolint:errcheck
-	w := bufio.NewWriter(file)
-	for _, entry := range cw.chunk {
-		if err := MarshalRevisionEntry(entry, w); err != nil {
-			return WrapErrorf(err, "failed to write to chunk file")
+	fileBuf := bufio.NewWriter(file)
+	write := func(re *RevisionEntry) error {
+		if err := MarshalRevisionEntry(re, fileBuf); err != nil {
+			return WrapErrorf(err, "failed to write revision entry")
 		}
+		return nil
 	}
-	if err := w.Flush(); err != nil {
-		return WrapErrorf(err, "failed to flush chunk file")
+	err = s.chunks.MergeChunks(write)
+	if err != nil {
+		return WrapErrorf(err, "failed to sort and merge chunks")
+	}
+	if err := fileBuf.Flush(); err != nil {
+		return WrapErrorf(err, "failed to flush target file")
 	}
 	if err := file.Close(); err != nil {
-		return WrapErrorf(err, "failed to close chunk file")
-	}
-	cw.chunk = nil
-	cw.chunkSize = 0
-	cw.chunkIndex += 1
-	return nil
-}
-
-func nWayMergeSort[T any](
-	readers []io.Reader,
-	writer io.Writer,
-	unmarshal func(r io.Reader) (T, error),
-	marshal func(v T, w io.Writer) error,
-	compare func(a, b T) (int, error),
-) error {
-	type entry struct {
-		value      T
-		chunkIndex int
-	}
-	// First, read the first entry of each file.
-	entries := make([]*entry, 0, len(readers))
-	for i, r := range readers {
-		// todo(perf): We should not need to unmarshal and the marshal all entries.
-		value, err := unmarshal(r)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				continue
-			}
-			return WrapErrorf(err, "failed to read from chunk %d", i)
-		}
-		entries = append(entries, &entry{value, i})
-	}
-	for len(entries) > 0 {
-		// Find the "smallest" FileMetadata.
-		minIndex := 0
-		for i := 1; i < len(entries); i++ {
-			c, err := compare(entries[i].value, entries[minIndex].value)
-			if err != nil {
-				return err
-			}
-			if c < 0 {
-				minIndex = i
-			}
-		}
-		// Write the "smallest" value.
-		if err := marshal(entries[minIndex].value, writer); err != nil {
-			return WrapErrorf(err, "failed to write to target file")
-		}
-		// Read next value from the same chunk.
-		chunkIdx := entries[minIndex].chunkIndex
-		value, err := unmarshal(readers[chunkIdx])
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				entries = slices.Delete(entries, minIndex, minIndex+1)
-				continue
-			}
-			return WrapErrorf(err, "failed to read next from chunk %d", chunkIdx)
-		}
-		entries[minIndex] = &entry{value, chunkIdx}
+		return WrapErrorf(err, "failed to close target file")
 	}
 	return nil
 }

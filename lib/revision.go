@@ -1,11 +1,16 @@
 package lib
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
-	"time"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 )
 
 const revisionMarshalMagick = "cling-rev"
@@ -25,17 +30,29 @@ func (id RevisionId) Long() string {
 }
 
 func (id RevisionId) IsRoot() bool {
-	// fimxe: test
 	return id == (RevisionId)(BlockId{})
 }
 
-type RevisionEntryType = uint8
+type RevisionEntryType uint8
 
 const (
-	RevisionEntryAdd    = 0
-	RevisionEntryUpdate = 1
-	RevisionEntryDelete = 2
+	RevisionEntryAdd    RevisionEntryType = 0
+	RevisionEntryUpdate RevisionEntryType = 1
+	RevisionEntryDelete RevisionEntryType = 2
 )
+
+func (t RevisionEntryType) String() string {
+	switch t {
+	case RevisionEntryAdd:
+		return "add"
+	case RevisionEntryUpdate:
+		return "update"
+	case RevisionEntryDelete:
+		return "delete"
+	default:
+		return fmt.Sprintf("unknown(%d)", t)
+	}
+}
 
 type Revision struct {
 	TimestampSec  int64
@@ -150,55 +167,6 @@ func UnmarshalRevisionEntry(r io.Reader) (*RevisionEntry, error) {
 	return &re, nil
 }
 
-type RevisionBuilder struct {
-	buf    bytes.Buffer
-	parent RevisionId
-}
-
-func NewRevisionBuilder(repo *Repository) (*RevisionBuilder, error) {
-	head, err := repo.Head()
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to get head revision")
-	}
-	return &RevisionBuilder{parent: head}, nil //nolint:exhaustruct
-}
-
-func (rb *RevisionBuilder) Add(re *RevisionEntry) error {
-	if rb.buf.Len()+(re.EstimatedSize()*2) > MaxBlockDataSize {
-		return Errorf("revision entry is too large")
-	}
-	err := MarshalRevisionEntry(re, &rb.buf)
-	if err != nil {
-		return WrapErrorf(err, "failed to marshal revision entry")
-	}
-	return nil
-}
-
-type CommitInfo struct {
-	Author  string
-	Message string
-}
-
-func (rb *RevisionBuilder) Commit(repo *Repository, blockBuf BlockBuf, info *CommitInfo) (RevisionId, error) {
-	if rb.buf.Len() == 0 {
-		return RevisionId{}, Errorf("revision is empty")
-	}
-	_, blockHeader, err := repo.WriteBlock(rb.buf.Bytes(), blockBuf)
-	if err != nil {
-		return RevisionId{}, WrapErrorf(err, "failed to write revision block")
-	}
-	now := time.Now()
-	commit := &Revision{
-		TimestampSec:  now.Unix(),
-		TimestampNSec: int32(now.Nanosecond()), //nolint:gosec
-		Message:       info.Message,
-		Author:        info.Author,
-		Parent:        rb.parent,
-		Blocks:        []BlockId{blockHeader.BlockId},
-	}
-	return repo.WriteRevision(commit, blockBuf)
-}
-
 type RevisionReader struct {
 	revision   *Revision
 	repository *Repository
@@ -207,9 +175,9 @@ type RevisionReader struct {
 	blockBuf   BlockBuf
 }
 
-func NewRevisionReader(repository *Repository, commit *Revision, blockBuf BlockBuf) *RevisionReader {
+func NewRevisionReader(repository *Repository, revision *Revision, blockBuf BlockBuf) *RevisionReader {
 	return &RevisionReader{
-		revision:   commit,
+		revision:   revision,
 		repository: repository,
 		blockIndex: 0,
 		current:    nil,
@@ -217,6 +185,7 @@ func NewRevisionReader(repository *Repository, commit *Revision, blockBuf BlockB
 	}
 }
 
+// Return `io.EOF` if we are done.
 func (rr *RevisionReader) Read() (*RevisionEntry, error) {
 	if rr.current == nil {
 		if rr.blockIndex >= len(rr.revision.Blocks) {
@@ -240,4 +209,161 @@ func (rr *RevisionReader) Read() (*RevisionEntry, error) {
 		return nil, WrapErrorf(err, "failed to unmarshal revision entry")
 	}
 	return re, nil
+}
+
+type RevisionEntryChunks struct {
+	tmpDir       string
+	filePrefix   string
+	chunk        []*RevisionEntry
+	chunkSize    int
+	chunkIndex   int
+	maxChunkSize int
+}
+
+func NewRevisionEntryChunks(tmpDir string, filePrefix string, maxChunkSize int) *RevisionEntryChunks {
+	return &RevisionEntryChunks{tmpDir: tmpDir, filePrefix: filePrefix, maxChunkSize: maxChunkSize} //nolint:exhaustruct
+}
+
+func (c *RevisionEntryChunks) Add(re *RevisionEntry) error {
+	size := re.EstimatedSize()
+	if c.chunkSize > 0 && c.chunkSize+size > c.maxChunkSize {
+		if err := c.rotateChunk(); err != nil {
+			return err
+		}
+	}
+	c.chunk = append(c.chunk, re)
+	c.chunkSize += re.EstimatedSize()
+	return nil
+}
+
+func (c *RevisionEntryChunks) Chunks() int {
+	return c.chunkIndex
+}
+
+func (c *RevisionEntryChunks) ChunkReader(index int) (io.ReadCloser, error) {
+	if index < 0 || index >= c.chunkIndex {
+		return nil, Errorf("chunk index out of range")
+	}
+	f, err := os.Open(c.chunkFilename(index))
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to open chunk file")
+	}
+	return f, nil
+}
+
+func (c *RevisionEntryChunks) Close() error {
+	if len(c.chunk) != 0 {
+		return c.rotateChunk()
+	}
+	return nil
+}
+
+func (c *RevisionEntryChunks) MergeChunks(write func(re *RevisionEntry) error) error {
+	if err := c.Close(); err != nil {
+		return WrapErrorf(err, "failed to close chunk writer")
+	}
+	// Open all chunks with a buffered reader.
+	readers := make([]io.Reader, c.Chunks())
+	for i := range c.Chunks() {
+		f, err := c.ChunkReader(i)
+		if err != nil {
+			return WrapErrorf(err, "failed to open staging chunk file")
+		}
+		defer f.Close() //nolint:errcheck
+		readers[i] = bufio.NewReader(f)
+	}
+	type entry struct {
+		value      *RevisionEntry
+		chunkIndex int
+	}
+	// First, read the first entry of each file.
+	entries := make([]*entry, 0, len(readers))
+	for i, r := range readers {
+		// todo(perf): We should not need to unmarshal and the marshal all entries.
+		value, err := UnmarshalRevisionEntry(r)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				continue
+			}
+			return WrapErrorf(err, "failed to read from chunk %d", i)
+		}
+		entries = append(entries, &entry{value, i})
+	}
+	compare := func(a, b *RevisionEntry) (int, error) {
+		c := strings.Compare(string(a.Path), string(b.Path))
+		if c == 0 {
+			return 0, Errorf("duplicate revision entry path: %s", a.Path)
+		}
+		return c, nil
+	}
+	for len(entries) > 0 {
+		// Find the "smallest" FileMetadata.
+		minIndex := 0
+		for i := 1; i < len(entries); i++ {
+			c, err := compare(entries[i].value, entries[minIndex].value)
+			if err != nil {
+				return err
+			}
+			if c < 0 {
+				minIndex = i
+			}
+		}
+		// Write the "smallest" value.
+		if err := write(entries[minIndex].value); err != nil {
+			return WrapErrorf(err, "failed to write to target file")
+		}
+		// Read next value from the same chunk.
+		chunkIdx := entries[minIndex].chunkIndex
+		value, err := UnmarshalRevisionEntry(readers[chunkIdx])
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				entries = slices.Delete(entries, minIndex, minIndex+1)
+				continue
+			}
+			return WrapErrorf(err, "failed to read next from chunk %d", chunkIdx)
+		}
+		entries[minIndex] = &entry{value, chunkIdx}
+	}
+	return nil
+}
+
+func (c *RevisionEntryChunks) chunkFilename(index int) string {
+	return filepath.Join(c.tmpDir, fmt.Sprintf("%s-%d", c.filePrefix, index))
+}
+
+// Sort the current chunk and write it to disk.
+func (c *RevisionEntryChunks) rotateChunk() error {
+	var err error
+	slices.SortFunc(c.chunk, func(a, b *RevisionEntry) int {
+		c := strings.Compare(string(a.Path), string(b.Path))
+		if c == 0 {
+			err = Errorf("duplicate revision entry path: %s", a.Path)
+		}
+		return c
+	})
+	if err != nil {
+		return err
+	}
+	// todo: encrypt the data before writing to disk.
+	file, err := os.OpenFile(c.chunkFilename(c.chunkIndex), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return WrapErrorf(err, "failed to open chunk file")
+	}
+	defer file.Close() //nolint:errcheck
+	w := bufio.NewWriter(file)
+	for _, entry := range c.chunk {
+		if err := MarshalRevisionEntry(entry, w); err != nil {
+			return WrapErrorf(err, "failed to write to chunk file")
+		}
+	}
+	if err := w.Flush(); err != nil {
+		return WrapErrorf(err, "failed to flush chunk file")
+	}
+	if err := file.Close(); err != nil {
+		return WrapErrorf(err, "failed to close chunk file")
+	}
+	c.chunk = nil
+	c.chunkSize = 0
+	c.chunkIndex += 1
+	return nil
 }

@@ -47,6 +47,8 @@ type Block struct {
 
 const EncryptionVersion uint16 = 1
 
+var ErrRootRevision = errors.New("root revision cannot be read")
+
 type MasterKeyInfo struct {
 	EncryptionVersion       uint16
 	EncryptedKEK            EncryptedKey
@@ -246,7 +248,11 @@ func (r *Repository) Head() (RevisionId, error) {
 	return ref, nil
 }
 
+// Return `ErrRootRevision` if revisionId is the root revisionId.
 func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision, error) {
+	if revisionId.IsRoot() {
+		return Revision{}, ErrRootRevision
+	}
 	data, _, err := r.ReadBlock(BlockId(revisionId), buf)
 	if err != nil {
 		return Revision{}, WrapErrorf(err, "failed to read revision %s", revisionId)
@@ -263,6 +269,15 @@ func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision
 func (r *Repository) WriteRevision(revision *Revision, buf BlockBuf) (RevisionId, error) {
 	if len(revision.Blocks) == 0 {
 		return RevisionId{}, Errorf("revision is empty")
+	}
+	for _, blockId := range revision.Blocks {
+		exists, err := r.storage.HasBlock(blockId)
+		if err != nil {
+			return RevisionId{}, WrapErrorf(err, "failed to check if block %s exists", blockId)
+		}
+		if !exists {
+			return RevisionId{}, Errorf("block %s does not exist", blockId)
+		}
 	}
 	// todo: we should really lock the repository here.
 	head, err := r.Head()

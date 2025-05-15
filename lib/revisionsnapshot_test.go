@@ -1,98 +1,113 @@
 package lib
 
 import (
-	"bytes"
-	"encoding/binary"
 	"errors"
 	"io"
-	"math/rand/v2"
 	"testing"
 )
 
-func TestRevisionNWayMergeSort(t *testing.T) {
+func TestRevisionSnapshot(t *testing.T) {
 	t.Parallel()
-	type Item struct {
-		Value int
+	assert := NewAssert(t)
+	repo, _ := testRepository(t)
+	root, err := repo.Head()
+	assert.NoError(err)
+
+	revId1, err := testCommit(
+		t,
+		repo,
+		fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+		fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+		fakeRevisionEntry("a/3.txt", RevisionEntryAdd),
+		fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+	)
+	assert.NoError(err)
+
+	revId2, err := testCommit(
+		t,
+		repo,
+		fakeRevisionEntry("b/1.txt", RevisionEntryAdd),
+		fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
+		// Delete an entry.
+		fakeRevisionEntry("a/2.txt", RevisionEntryDelete),
+		// Update an entry.
+		fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
+		// Delete another entry to update it in the next revision.
+		fakeRevisionEntry("a/4.txt", RevisionEntryDelete),
+	)
+	assert.NoError(err)
+
+	revId3, err := testCommit(
+		t,
+		repo,
+		fakeRevisionEntry("b/1.txt", RevisionEntryDelete),
+		fakeRevisionEntry("c/1.txt", RevisionEntryAdd),
+		fakeRevisionEntry("a/1.txt", RevisionEntryUpdate),
+		// Re-add a deleted file.
+		fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+	)
+	assert.NoError(err)
+
+	entries := readRevisionSnapshot(t, repo, revId3)
+	assert.Equal([]*RevisionEntry{
+		fakeRevisionEntry("a/1.txt", RevisionEntryUpdate),
+		fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
+		fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+		fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
+		fakeRevisionEntry("c/1.txt", RevisionEntryAdd),
+	}, entries)
+
+	entries = readRevisionSnapshot(t, repo, revId2)
+	assert.Equal([]*RevisionEntry{
+		fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+		fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
+		fakeRevisionEntry("b/1.txt", RevisionEntryAdd),
+		fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
+	}, entries)
+
+	entries = readRevisionSnapshot(t, repo, revId1)
+	assert.Equal([]*RevisionEntry{
+		fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+		fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+		fakeRevisionEntry("a/3.txt", RevisionEntryAdd),
+		fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+	}, entries)
+
+	// Root revision should be empty.
+	entries = readRevisionSnapshot(t, repo, root)
+	assert.Equal([]*RevisionEntry{}, entries)
+}
+
+func testCommit(t *testing.T, repo *Repository, entries ...*RevisionEntry) (RevisionId, error) {
+	t.Helper()
+	commit, err := NewCommit(repo, t.TempDir())
+	if err != nil {
+		return RevisionId{}, err
 	}
-	marshal := func(i Item, w io.Writer) error {
-		return binary.Write(w, binary.LittleEndian, int64(i.Value))
-	}
-	unmarshal := func(r io.Reader) (Item, error) {
-		var v int64
-		err := binary.Read(r, binary.LittleEndian, &v)
-		return Item{int(v)}, err
-	}
-	compare := func(a, b Item) (int, error) {
-		return a.Value - b.Value, nil
-	}
-	t.Run("Happy path", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		chunks := [][]int{
-			{1, 4, 7},
-			{2, 5, 8},
-			{3, 6, 9},
+	for _, entry := range entries {
+		if err := commit.Add(entry); err != nil {
+			return RevisionId{}, err
 		}
-		var readers []io.Reader
-		for _, chunk := range chunks {
-			buf := &bytes.Buffer{}
-			for _, val := range chunk {
-				_ = marshal(Item{val}, buf)
-			}
-			readers = append(readers, buf)
+	}
+	return commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+}
+
+func readRevisionSnapshot(t *testing.T, repo *Repository, revisionId RevisionId) []*RevisionEntry {
+	t.Helper()
+	assert := NewAssert(t)
+	snapshot, err := NewRevisionSnapshot(repo, revisionId, t.TempDir())
+	assert.NoError(err)
+	defer snapshot.Close() //nolint:errcheck
+	reader, err := snapshot.Reader()
+	assert.NoError(err)
+	entries := []*RevisionEntry{}
+	for {
+		entry, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
 		}
-		out := &bytes.Buffer{}
-		err := nWayMergeSort[Item](readers, out, unmarshal, marshal, compare)
 		assert.NoError(err)
-		var values []int
-		for {
-			it, err := unmarshal(out)
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			assert.NoError(err)
-			values = append(values, it.Value)
-		}
-		assert.Equal([]int{1, 2, 3, 4, 5, 6, 7, 8, 9}, values)
-	})
-	t.Run("Fuzzing", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		chunks := make([]bytes.Buffer, 5)
-		numValues := len(chunks) * 100
-		for i := range numValues {
-			// Bias towards lower indexes. This creates an uneven distribution
-			// of entries across chunks.
-			chunkIndex := int(rand.ExpFloat64()) % len(chunks)
-			err := marshal(Item{Value: i}, &chunks[chunkIndex])
-			assert.NoError(err)
-		}
-		readers := make([]io.Reader, len(chunks))
-		for i, c := range chunks {
-			readers[i] = &c
-		}
-		out := &bytes.Buffer{}
-		err := nWayMergeSort(readers, out, unmarshal, marshal, compare)
-		assert.NoError(err)
-		for i := range numValues {
-			it, err := unmarshal(out)
-			assert.NoError(err)
-			assert.Equal(i, it.Value)
-		}
-		_, err = unmarshal(out)
-		assert.ErrorIs(err, io.EOF)
-	})
-	t.Run("Compare function error is propagated", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		buf1 := &bytes.Buffer{}
-		buf2 := &bytes.Buffer{}
-		_ = marshal(Item{1}, buf1)
-		_ = marshal(Item{2}, buf2)
-		badCompare := func(a, b Item) (int, error) {
-			return 0, Errorf("Boom")
-		}
-		err := nWayMergeSort([]io.Reader{buf1, buf2}, &bytes.Buffer{}, unmarshal, marshal, badCompare)
-		assert.Error(err, "Boom")
-	})
+		entries = append(entries, entry)
+	}
+	return entries
 }
