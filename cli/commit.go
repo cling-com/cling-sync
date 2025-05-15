@@ -12,13 +12,13 @@ import (
 	"github.com/flunderpero/cling-sync/lib"
 )
 
-type SyncConfg struct {
+type CommitConfig struct {
 	Ignore  []lib.PathPattern
 	Author  string
 	Message string
 }
 
-func Sync(src string, repository *lib.Repository, config *SyncConfg) (lib.RevisionId, error) {
+func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.RevisionId, error) {
 	head, err := repository.Head()
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get head")

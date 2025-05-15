@@ -87,7 +87,7 @@ func initCmd(argv []string) error {
 	return nil
 }
 
-func syncCmd(argv []string) error { //nolint:funlen
+func commitCmd(argv []string) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
 		Help    bool
 		Add     bool
@@ -101,7 +101,7 @@ func syncCmd(argv []string) error { //nolint:funlen
 		defaultAuthor = whoami.Username
 	}
 	defaultMessage := "Synced with cling-sync"
-	flags := flag.NewFlagSet("sync", flag.ExitOnError)
+	flags := flag.NewFlagSet("commit", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Add, "add", false, "Add new files only")
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
@@ -126,8 +126,9 @@ Pattern syntax:
 		},
 	)
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s sync <src> <dst>\n\n", appName)
-		fmt.Fprintf(os.Stderr, "Synchronize files from the source directory <src> to the repository at <dst>.\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s commit <src> <dst>\n\n", appName)
+		fmt.Fprintf(os.Stderr, "Synchronize all local changes in <src> to the repository at <dst>.\n")
+		fmt.Fprintf(os.Stderr, "All files not present in <src> will be removed in the revision.\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -145,10 +146,10 @@ Pattern syntax:
 	if err != nil {
 		return err
 	}
-	revisionId, err := Sync(
+	revisionId, err := Commit(
 		flags.Arg(0),
 		repository,
-		&SyncConfg{Ignore: args.Ignore, Author: args.Author, Message: args.Message},
+		&CommitConfig{Ignore: args.Ignore, Author: args.Author, Message: args.Message},
 	)
 	if err != nil {
 		return err
@@ -162,14 +163,14 @@ func lsCmd(argv []string) error {
 		Help     bool
 		Revision string
 	}{}
-	flags := flag.NewFlagSet("sync", flag.ExitOnError)
+	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s ls <dst> [pattern]\n\n", appName)
 		fmt.Fprintf(os.Stderr, "List files in the repository at <dst>.\n\n")
 		fmt.Fprintf(os.Stderr, "  pattern\n")
-		fmt.Fprintf(os.Stderr, "        The pattern syntax is the same as for the `sync --ignore` option.\n")
+		fmt.Fprintf(os.Stderr, "        The pattern syntax is the same as for the `commit --ignore` option.\n")
 		fmt.Fprintf(os.Stderr, "        A pattern must match the full path of the file.\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
@@ -227,7 +228,7 @@ func logCmd(argv []string) error {
 		Help  bool
 		Short bool
 	}{}
-	flags := flag.NewFlagSet("sync", flag.ExitOnError)
+	flags := flag.NewFlagSet("log", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Show short log")
 	flags.Usage = func() {
@@ -301,11 +302,11 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s <command> [command arguments]\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Commands:\n")
+		fmt.Fprintf(os.Stderr, "  commit       Synchronize local changes to the repository\n")
 		fmt.Fprintf(os.Stderr, "  init         Initialize a new repository\n")
 		fmt.Fprintf(os.Stderr, "  ls           List files in the repository\n")
 		fmt.Fprintf(os.Stderr, "  log          Show revision log\n")
 		fmt.Fprintf(os.Stderr, "  status       Show repository status\n")
-		fmt.Fprintf(os.Stderr, "  sync         Synchronize files\n")
 		fmt.Fprintf(os.Stderr, "\nRun '%s <command> --help' for more information on a command.\n", appName)
 	}
 	flag.BoolVar(&args.Help, "help", false, "Show help message")
@@ -319,8 +320,8 @@ func main() {
 	switch cmd {
 	case "init":
 		err = initCmd(flag.Args()[1:])
-	case "sync":
-		err = syncCmd(flag.Args()[1:])
+	case "commit":
+		err = commitCmd(flag.Args()[1:])
 	case "log":
 		err = logCmd(flag.Args()[1:])
 	case "ls":
