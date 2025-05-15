@@ -1,5 +1,5 @@
 //nolint:godot // It is strange but godot complains about the comment to `RevisionLog.Short`.
-package main
+package workspace
 
 import (
 	"fmt"

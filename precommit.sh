@@ -15,7 +15,7 @@ run() {
 }
 
 if [ $# -eq 0 ]; then
-    for mod in lib cli; do
+    for mod in lib workspace cli; do
         run "$mod"
     done
 else

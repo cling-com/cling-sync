@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/flunderpero/cling-sync/lib"
+	"github.com/flunderpero/cling-sync/workspace"
 	"golang.org/x/term"
 )
 
@@ -146,13 +147,13 @@ Pattern syntax:
 	if err != nil {
 		return err
 	}
-	revisionId, err := Commit(
+	revisionId, err := workspace.Commit(
 		flags.Arg(0),
 		repository,
-		&CommitConfig{Ignore: args.Ignore, Author: args.Author, Message: args.Message},
+		&workspace.CommitConfig{Ignore: args.Ignore, Author: args.Author, Message: args.Message},
 	)
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck
 	}
 	fmt.Printf("Revision %s\n", revisionId)
 	return nil
@@ -213,9 +214,9 @@ func lsCmd(argv []string) error {
 		}
 		revisionId = lib.RevisionId(b)
 	}
-	files, err := Ls(repository, revisionId, pattern)
+	files, err := workspace.Ls(repository, revisionId, pattern)
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck
 	}
 	for _, file := range files {
 		fmt.Println(file.String())
@@ -251,9 +252,9 @@ func logCmd(argv []string) error {
 	if err != nil {
 		return err
 	}
-	logs, err := Log(repository)
+	logs, err := workspace.Log(repository)
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck
 	}
 	if len(logs) == 0 {
 		fmt.Println("Empty repository")
