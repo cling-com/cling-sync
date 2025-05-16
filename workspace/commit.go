@@ -20,15 +20,17 @@ type CommitConfig struct {
 
 // Commit all changes in the local directory.
 // `.cling` is always ignored.
-func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.RevisionId, error) {
+func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.RevisionId, error) { //nolint:funlen
 	head, err := repository.Head()
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get head")
 	}
-	tmpDir := filepath.Join(os.TempDir(), "cling-sync")
-	defer func() {
-		_ = os.RemoveAll(tmpDir)
-	}()
+	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync")
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create temporary directory")
+	}
+	_ = os.RemoveAll(tmpDir)
+	defer os.RemoveAll(tmpDir) //nolint:errcheck
 	stagingTmpDir := filepath.Join(tmpDir, "staging")
 	snapshotTmpDir := filepath.Join(tmpDir, "snapshot")
 	for _, d := range []string{stagingTmpDir, snapshotTmpDir} {
@@ -41,24 +43,29 @@ func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.R
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create staging")
 	}
-	// todo: Always ignore .cling directories.
-	// 		 I think we should switch to prefix matching, i.e. the ignore patterns
-	//		 must match the prefix of the path.
-	//		 While at it, we should rename `ignore` to `exclude` and add `include`
+	// todo: We should rename `ignore` to `exclude` and add `include`
 	//		 patterns that override the exclude patterns.
+	clingPattern, err := lib.NewPathPattern(".cling")
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create path pattern")
+	}
 	ignore := config.Ignore
+	ignore = append(ignore, clingPattern)
 	err = filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		relPath, err := filepath.Rel(src, path)
 		for _, pattern := range ignore {
-			if pattern.Match(path) {
+			if pattern.Match(relPath) {
 				return nil
 			}
 		}
-		relPath, err := filepath.Rel(src, path)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get relative path for %s", path)
+		}
+		if relPath == "." {
+			return nil
 		}
 		// todo: test that relPath is used
 		repoPath := lib.NewPath(strings.Split(relPath, string(os.PathSeparator))...)

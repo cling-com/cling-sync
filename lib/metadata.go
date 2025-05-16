@@ -22,7 +22,7 @@ func NewModeAndPerm(fm fs.FileMode) ModeAndPerm {
 		mode |= ModeSetUID
 	}
 	if fm&fs.ModeSetgid != 0 {
-		mode |= ModeSetGUID
+		mode |= ModeSetGID
 	}
 	if fm&fs.ModeSticky != 0 {
 		mode |= ModeSticky
@@ -32,7 +32,7 @@ func NewModeAndPerm(fm fs.FileMode) ModeAndPerm {
 
 func (m ModeAndPerm) String() string {
 	const str = "dLugtr"
-	bits := []uint32{ModeDir, ModeSymlink, ModeSetUID, ModeSetGUID, ModeSticky}
+	bits := []uint32{ModeDir, ModeSymlink, ModeSetUID, ModeSetGID, ModeSticky}
 	var buf [14]byte
 	for i, b := range bits {
 		if m&ModeAndPerm(b) != 0 {
@@ -73,7 +73,7 @@ func (m ModeAndPerm) IsSetUID() bool {
 }
 
 func (m ModeAndPerm) IsSetGUID() bool {
-	return m&ModeSetGUID != 0
+	return m&ModeSetGID != 0
 }
 
 func (m ModeAndPerm) Perm() uint32 {
@@ -87,7 +87,7 @@ const (
 	ModeDir     = 1 << 10
 	ModeSymlink = 1 << 11
 	ModeSetUID  = 1 << 12
-	ModeSetGUID = 1 << 13
+	ModeSetGID  = 1 << 13
 	ModeSticky  = 1 << 14
 	ModeType    = ModeDir | ModeSymlink
 )

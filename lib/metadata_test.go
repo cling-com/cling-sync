@@ -30,7 +30,7 @@ func TestFileMetadata(t *testing.T) {
 		assert.Equal("dLu-----------", m.String())
 
 		assert.Equal(false, m.IsSetGUID())
-		m |= ModeSetGUID
+		m |= ModeSetGID
 		assert.Equal(true, m.IsSetGUID())
 		assert.Equal("dLug----------", m.String())
 
@@ -71,9 +71,9 @@ func TestFileMetadata(t *testing.T) {
 		fsm |= fs.ModeSetuid
 		assert.Equal(ModeSetUID|ModeSymlink|ModeDir, int(NewModeAndPerm(fsm)))
 		fsm |= fs.ModeSetgid
-		assert.Equal(ModeSetGUID|ModeSetUID|ModeSymlink|ModeDir, int(NewModeAndPerm(fsm)))
+		assert.Equal(ModeSetGID|ModeSetUID|ModeSymlink|ModeDir, int(NewModeAndPerm(fsm)))
 		fsm |= fs.ModeSticky
-		assert.Equal(ModeSticky|ModeSetGUID|ModeSetUID|ModeSymlink|ModeDir, int(NewModeAndPerm(fsm)))
+		assert.Equal(ModeSticky|ModeSetGID|ModeSetUID|ModeSymlink|ModeDir, int(NewModeAndPerm(fsm)))
 		// These are ignored.
 		for _, ignored := range []fs.FileMode{fs.ModeTemporary, fs.ModeNamedPipe, fs.ModeSocket, fs.ModeIrregular, fs.ModeCharDevice, fs.ModeAppend, fs.ModeExclusive} {
 			assert.Equal(0, int(NewModeAndPerm(ignored)))
