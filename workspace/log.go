@@ -25,7 +25,7 @@ func (l *RevisionLog) Long() string {
 	r := l.Revision
 	date := time.Unix(r.TimestampSec, int64(r.TimestampNSec)).Format(time.RFC1123)
 	return fmt.Sprintf(
-		"Revision: %s\nAuthor:   %s\nDate:    %s\n\n    %s",
+		"Revision: %s\nAuthor:   %s\nDate:     %s\n\n    %s",
 		l.RevisionId.Long(),
 		strings.ReplaceAll(r.Author, "\n", " "),
 		date,

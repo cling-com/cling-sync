@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strings"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -28,15 +29,17 @@ func printErr(msg string, args ...any) {
 	fmt.Fprintf(os.Stderr, s+msg+"\n", args...)
 }
 
-func initCmd(argv []string) error {
+func initCmd(argv []string) error { //nolint:funlen
 	if !isTerm(os.Stdin) {
 		return lib.Errorf("a new repository can only be created in an interactive terminal session")
 	}
 	args := struct { //nolint:exhaustruct
-		Help bool
+		Help                bool
+		AllowUnsafePassword bool
 	}{}
 	flags := flag.NewFlagSet("init", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.BoolVar(&args.AllowUnsafePassword, "allow-unsafe-password", false, "Allow unsafe password")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s init <dst>\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Initialize a new repository at <dst>.\n")
@@ -63,7 +66,11 @@ func initCmd(argv []string) error {
 	}
 	_, _ = fmt.Fprintln(os.Stdout)
 	if err := lib.CheckPassphraseStrength(passphrase); err != nil {
-		return err //nolint:wrapcheck
+		if args.AllowUnsafePassword {
+			fmt.Fprintf(os.Stderr, "\nWarning: %s\n", err.Error())
+		} else {
+			return err //nolint:wrapcheck
+		}
 	}
 	_, err = fmt.Fprint(os.Stdout, "Repeat passphrase: ")
 	if err != nil {
@@ -76,19 +83,30 @@ func initCmd(argv []string) error {
 	if string(passphrase) != string(passphraseRepeat) {
 		return lib.Errorf("passphrases do not match")
 	}
-	storage, err := lib.NewFileStorage(flags.Arg(0))
+	repositoryPath, err := filepath.Abs(flags.Arg(0))
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
+	}
+	storage, err := lib.NewFileStorage(repositoryPath)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create storage")
 	}
-	repository, err := lib.InitNewRepository(storage, passphrase)
+	_, err = lib.InitNewRepository(storage, passphrase)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to initialize repository")
 	}
-	_ = repository
+	_, err = workspace.NewWorkspace(".", workspace.RemoteRepository(repositoryPath))
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to create workspace")
+	}
 	return nil
 }
 
 func commitCmd(argv []string) error { //nolint:funlen
+	ws, err := workspace.OpenWorkspace(".")
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open workspace")
+	}
 	args := struct { //nolint:exhaustruct
 		Help    bool
 		Add     bool
@@ -128,8 +146,8 @@ Pattern syntax:
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s commit <src> <dst>\n\n", appName)
-		fmt.Fprintf(os.Stderr, "Synchronize all local changes in <src> to the repository at <dst>.\n")
-		fmt.Fprintf(os.Stderr, "All files not present in <src> will be removed in the revision.\n")
+		fmt.Fprintf(os.Stderr, "Synchronize all local changes to the repository.\n")
+		fmt.Fprintf(os.Stderr, "All files not present will be removed in the revision.\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -140,15 +158,15 @@ Pattern syntax:
 		flags.Usage()
 		return nil
 	}
-	if len(flags.Args()) != 2 {
-		return lib.Errorf("two positional arguments are required: <src> <dst>")
+	if len(flags.Args()) != 0 {
+		return lib.Errorf("no positional arguments are required")
 	}
-	repository, err := openRepository(flags.Arg(1))
+	repository, err := openRepository(ws)
 	if err != nil {
 		return err
 	}
 	revisionId, err := workspace.Commit(
-		flags.Arg(0),
+		ws.WorkspacePath,
 		repository,
 		&workspace.CommitConfig{Ignore: args.Ignore, Author: args.Author, Message: args.Message},
 	)
@@ -160,6 +178,10 @@ Pattern syntax:
 }
 
 func lsCmd(argv []string) error {
+	ws, err := workspace.OpenWorkspace(".")
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open workspace")
+	}
 	args := struct { //nolint:exhaustruct
 		Help     bool
 		Revision string
@@ -168,8 +190,8 @@ func lsCmd(argv []string) error {
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s ls <dst> [pattern]\n\n", appName)
-		fmt.Fprintf(os.Stderr, "List files in the repository at <dst>.\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s ls [pattern]\n\n", appName)
+		fmt.Fprintf(os.Stderr, "List files in the repository.\n\n")
 		fmt.Fprintf(os.Stderr, "  pattern\n")
 		fmt.Fprintf(os.Stderr, "        The pattern syntax is the same as for the `commit --ignore` option.\n")
 		fmt.Fprintf(os.Stderr, "        A pattern must match the full path of the file.\n")
@@ -183,21 +205,18 @@ func lsCmd(argv []string) error {
 		flags.Usage()
 		return nil
 	}
-	if len(flags.Args()) == 0 {
-		return lib.Errorf("one positional argument is required: <dst>")
-	}
 	var pattern *lib.PathPattern
-	if len(flags.Args()) == 2 {
-		p, err := lib.NewPathPattern(flags.Arg(1))
+	if len(flags.Args()) == 1 {
+		p, err := lib.NewPathPattern(flags.Arg(0))
 		if err != nil {
-			return lib.WrapErrorf(err, "invalid pattern: %s", flags.Arg(1))
+			return lib.WrapErrorf(err, "invalid pattern: %s", flags.Arg(0))
 		}
 		pattern = &p
 	}
-	if len(flags.Args()) > 2 {
+	if len(flags.Args()) > 1 {
 		return lib.Errorf("too many positional arguments")
 	}
-	repository, err := openRepository(flags.Arg(0))
+	repository, err := openRepository(ws)
 	if err != nil {
 		return err
 	}
@@ -225,6 +244,10 @@ func lsCmd(argv []string) error {
 }
 
 func logCmd(argv []string) error {
+	ws, err := workspace.OpenWorkspace(".")
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open workspace")
+	}
 	args := struct { //nolint:exhaustruct
 		Help  bool
 		Short bool
@@ -234,7 +257,7 @@ func logCmd(argv []string) error {
 	flags.BoolVar(&args.Short, "short", false, "Show short log")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s log <dst>\n\n", appName)
-		fmt.Fprintf(os.Stderr, "Show revision log for the repository at <dst>.\n")
+		fmt.Fprintf(os.Stderr, "Show revision log.n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -245,10 +268,10 @@ func logCmd(argv []string) error {
 		flags.Usage()
 		return nil
 	}
-	if len(flags.Args()) != 1 {
-		return lib.Errorf("one positional argument is required: <dst>")
+	if len(flags.Args()) != 0 {
+		return lib.Errorf("no positional arguments are required")
 	}
-	repository, err := openRepository(flags.Arg(0))
+	repository, err := openRepository(ws)
 	if err != nil {
 		return err
 	}
@@ -272,7 +295,7 @@ func logCmd(argv []string) error {
 	return nil
 }
 
-func openRepository(path string) (*lib.Repository, error) {
+func openRepository(workspace *workspace.Workspace) (*lib.Repository, error) {
 	if !isTerm(os.Stdin) {
 		return nil, lib.Errorf("this command can only be run in an interactive terminal session")
 	}
@@ -285,7 +308,7 @@ func openRepository(path string) (*lib.Repository, error) {
 		return nil, lib.WrapErrorf(err, "failed to read passphrase")
 	}
 	_, _ = fmt.Fprintln(os.Stdout)
-	storage, err := lib.NewFileStorage(path)
+	storage, err := lib.NewFileStorage(string(workspace.RemoteRepository))
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
 	}

@@ -18,6 +18,8 @@ type CommitConfig struct {
 	Message string
 }
 
+// Commit all changes in the local directory.
+// `.cling` is always ignored.
 func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.RevisionId, error) {
 	head, err := repository.Head()
 	if err != nil {
@@ -39,16 +41,27 @@ func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.R
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create staging")
 	}
+	// todo: Always ignore .cling directories.
+	// 		 I think we should switch to prefix matching, i.e. the ignore patterns
+	//		 must match the prefix of the path.
+	//		 While at it, we should rename `ignore` to `exclude` and add `include`
+	//		 patterns that override the exclude patterns.
+	ignore := config.Ignore
 	err = filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		for _, pattern := range config.Ignore {
+		for _, pattern := range ignore {
 			if pattern.Match(path) {
 				return nil
 			}
 		}
-		repoPath := lib.NewPath(strings.Split(path, string(os.PathSeparator))...)
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to get relative path for %s", path)
+		}
+		// todo: test that relPath is used
+		repoPath := lib.NewPath(strings.Split(relPath, string(os.PathSeparator))...)
 		fileMetadata, err := addContentToRepo(path, d, repository)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to add path %s to repository", path)
