@@ -79,7 +79,7 @@ func stringify(v any) string {
 	return stringifyInternal(v, 0)
 }
 
-func stringifyInternal(v any, indent int) string {
+func stringifyInternal(v any, indent int) string { //nolint:funlen
 	reflectV := reflect.ValueOf(v)
 	t := reflectV.Type()
 	kind := t.Kind()
