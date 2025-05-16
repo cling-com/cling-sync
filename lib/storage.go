@@ -6,11 +6,18 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
 	repositoryConfigFile        = "repository.txt"
 	StorageVersion       uint16 = 1
+)
+
+type ControlFileSection string
+
+const (
+	ControlFileSectionRefs ControlFileSection = "refs"
 )
 
 type Storage interface {
@@ -20,8 +27,8 @@ type Storage interface {
 	ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error)
 	ReadBlockHeader(blockId BlockId) (BlockHeader, error)
 	WriteBlock(block Block) (bool, error)
-	WriteRef(rev string, id RevisionId) error
-	ReadRef(rev string) (RevisionId, error)
+	ReadControlFile(section ControlFileSection, name string) ([]byte, error)
+	WriteControlFile(section ControlFileSection, name string, data []byte) error
 }
 
 type FileStorage struct {
@@ -248,39 +255,38 @@ func (fs *FileStorage) ReadBlockHeader(blockId BlockId) (BlockHeader, error) {
 	return UnmarshalBlockHeader(blockId, bytes.NewBuffer(buf[:]))
 }
 
-func (fs *FileStorage) ReadRef(rev string) (RevisionId, error) {
-	path := filepath.Join(fs.clingDir, "refs", rev)
-	hexRevisionId, err := os.ReadFile(path)
+func (fs *FileStorage) WriteControlFile(section ControlFileSection, name string, data []byte) error {
+	path, err := fs.controlFilePath(section, name)
 	if err != nil {
-		return RevisionId{}, WrapErrorf(err, "failed to read ref file %s", path)
+		return err
 	}
-	revisionId, err := hex.DecodeString(string(hexRevisionId))
-	if err != nil {
-		return RevisionId{}, WrapErrorf(err, "failed to decode ref %s", hexRevisionId)
-	}
-	if len(revisionId) != 32 {
-		return RevisionId{}, Errorf("invalid revision id size: want %d, got %d", 32, len(revisionId))
-	}
-	return RevisionId(revisionId), nil
-}
-
-func (fs *FileStorage) WriteRef(rev string, id RevisionId) error {
-	path := filepath.Join(fs.clingDir, "refs", rev)
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return WrapErrorf(err, "failed to open ref file %s", path)
-	}
-	defer file.Close() //nolint:errcheck
-	if _, err := file.WriteString(hex.EncodeToString(id[:])); err != nil {
-		return WrapErrorf(err, "failed to write ref file %s", path)
-	}
-	if err := file.Close(); err != nil {
-		return WrapErrorf(err, "failed to close ref file %s", path)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return WrapErrorf(err, "failed to write control file %s", path)
 	}
 	return nil
+}
+
+func (fs *FileStorage) ReadControlFile(section ControlFileSection, name string) ([]byte, error) {
+	path, err := fs.controlFilePath(section, name)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to read control file %s", path)
+	}
+	return data, nil
 }
 
 func (fs *FileStorage) blockPath(blockId BlockId) string {
 	hexPath := hex.EncodeToString(blockId[:])
 	return filepath.Join(fs.clingDir, "objects", hexPath[:2], hexPath[2:4], hexPath[4:])
+}
+
+func (fs *FileStorage) controlFilePath(section ControlFileSection, name string) (string, error) {
+	name = filepath.Clean(name)
+	if strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, "..") || len(name) == 0 {
+		return "", Errorf("invalid file name %s", name)
+	}
+	return filepath.Join(fs.clingDir, string(section), name), nil
 }

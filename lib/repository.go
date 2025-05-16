@@ -116,7 +116,7 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 	if !rootRevisionId.IsRoot() {
 		return nil, Errorf("root revision ID is not zero")
 	}
-	if err := storage.WriteRef("head", rootRevisionId); err != nil {
+	if err := writeRef(storage, "head", rootRevisionId); err != nil {
 		return nil, WrapErrorf(err, "failed to write head reference")
 	}
 	return OpenRepository(storage, passphrase)
@@ -241,7 +241,7 @@ func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHead
 }
 
 func (r *Repository) Head() (RevisionId, error) {
-	ref, err := r.storage.ReadRef("head")
+	ref, err := readRef(r.storage, "head")
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to read head reference")
 	}
@@ -296,10 +296,32 @@ func (r *Repository) WriteRevision(revision *Revision, buf BlockBuf) (RevisionId
 		return RevisionId{}, WrapErrorf(err, "failed to write revision block")
 	}
 	revisionId := RevisionId(blockHeader.BlockId)
-	if err := r.storage.WriteRef("head", revisionId); err != nil {
+	if err := writeRef(r.storage, "head", revisionId); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write head reference")
 	}
 	return revisionId, nil
+}
+
+func writeRef(storage Storage, name string, revisionId RevisionId) error {
+	if err := storage.WriteControlFile(ControlFileSectionRefs, name, []byte(hex.EncodeToString(revisionId[:]))); err != nil {
+		return WrapErrorf(err, "failed to write reference %s", name)
+	}
+	return nil
+}
+
+func readRef(storage Storage, name string) (RevisionId, error) {
+	data, err := storage.ReadControlFile(ControlFileSectionRefs, name)
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to read reference %s", name)
+	}
+	data, err = hex.DecodeString(string(data))
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to decode reference %s", name)
+	}
+	if len(data) != 32 {
+		return RevisionId{}, Errorf("invalid reference size for %s: want %d, got %d", name, 32, len(data))
+	}
+	return RevisionId(data), nil
 }
 
 func MarshalBlockHeader(header *BlockHeader, w io.Writer) error {
