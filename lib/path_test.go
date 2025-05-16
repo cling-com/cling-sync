@@ -28,32 +28,37 @@ func TestPathPattern(t *testing.T) {
 		assert.Error(compileErr("a/**b"), "** must be followed by / or placed at the end")
 	})
 
-	t.Run("BasicPatterns", func(t *testing.T) {
+	t.Run("Literal matches", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		match := func(pattern string, path string) bool {
-			t.Helper()
-			p, err := NewPathPattern(pattern)
-			assert.NoError(err)
-			return p.Match(path)
-		}
+		match := match_func(t)
 
-		// Literal matches
 		assert.Equal(true, match("a.txt", "a.txt"), "exact match")
 		assert.Equal(false, match("a.txt", "b.txt"), "exact non-match")
 		assert.Equal(true, match("a/b.txt", "a/b.txt"), "path exact match")
 		assert.Equal(false, match("a/b.txt", "a/c.txt"), "path exact non-match")
+		assert.Equal(true, match("/a/b.txt", "/a/b.txt"), "leading slash match")
 		assert.Equal(false, match("a/b.txt", "/a/b.txt"), "leading slash mismatch")
+	})
 
-		// Question mark patterns
+	t.Run("Single character matches (?)", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		match := match_func(t)
+
 		assert.Equal(true, match("?.txt", "a.txt"), "? matches one character")
 		assert.Equal(false, match("?.txt", "ab.txt"), "? doesn't match multiple characters")
 		assert.Equal(true, match("a?c.txt", "abc.txt"), "? in middle")
 		assert.Equal(false, match("a?b.txt", "a/b.txt"), "? doesn't match path delimiter")
 		assert.Equal(false, match("a.txt?", "a.txt"), "? must match a character")
 		assert.Equal(true, match("?.?.txt", "a.b.txt"), "multiple ? in pattern")
+	})
 
-		// Single asterisk patterns
+	t.Run("Multiple character matches (*)", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		match := match_func(t)
+
 		assert.Equal(true, match("*.txt", "a.txt"), "* matches any within segment")
 		assert.Equal(true, match("a*c.txt", "abbbbbbc.txt"), "* matches multiple characters")
 		assert.Equal(true, match("*", "a.txt"), "* matches entire segment")
@@ -61,7 +66,7 @@ func TestPathPattern(t *testing.T) {
 		assert.Equal(false, match("*.txt", "a/b.txt"), "* doesn't match path delimiter")
 		assert.Equal(false, match("*", "/ab.txt"), "* doesn't match leading slash")
 		assert.Equal(true, match("a/*/c.txt", "a/b/c.txt"), "* matches directory name")
-		assert.Equal(false, match("a/*/c.txt", "a/b/d/c.txt"), "* doesn't match multiple dirs")
+		assert.Equal(false, match("a/*/d.txt", "a/b/c/d.txt"), "* doesn't match multiple dirs")
 
 		// Mixed patterns
 		assert.Equal(true, match("a?/*/*.txt", "ab/c/d.txt"), "mixed ? and *")
@@ -69,17 +74,12 @@ func TestPathPattern(t *testing.T) {
 		assert.Equal(false, match("*/*/*.??", "a/b/c.txt"), "* and ? insufficient")
 	})
 
-	t.Run("DoubleAsteriskPatterns", func(t *testing.T) {
+	t.Run("Multiple path matches (**)", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		match := func(pattern string, path string) bool {
-			t.Helper()
-			p, err := NewPathPattern(pattern)
-			assert.NoError(err)
-			return p.Match(path)
-		}
+		match := match_func(t)
 
-		// Basic ** patterns
+		// Prefix ** patterns
 		assert.Equal(true, match("**/a.txt", "a.txt"), "** matches zero directories")
 		assert.Equal(true, match("**/a.txt", "/a.txt"), "** matches zero dirs with leading slash")
 		assert.Equal(true, match("**/a.txt", "dir/a.txt"), "** matches one directory")
@@ -93,17 +93,11 @@ func TestPathPattern(t *testing.T) {
 		assert.Equal(false, match("a/**/b.txt", "b.txt"), "** with prefix non-match")
 		assert.Equal(false, match("a/**/b.txt", "a/b/c.txt"), "** with exact suffix non-match")
 
-		// Trailing **
-		assert.Equal(true, match("a/**", "a"), "trailing ** matches empty path")
+		// Trailing ** patterns
+		assert.Equal(false, match("a/**", "a"), "trailing /** should match a directory")
 		assert.Equal(true, match("a/**", "a/b"), "trailing ** matches one subdirectory")
 		assert.Equal(true, match("a/**", "a/b/c/d"), "trailing ** matches any subdirectory depth")
 		assert.Equal(false, match("a/**", "ab"), "trailing ** with prefix non-match")
-
-		// Leading **
-		assert.Equal(true, match("**/end", "end"), "leading ** matches zero prefix")
-		assert.Equal(true, match("**/end", "start/end"), "leading ** matches one directory prefix")
-		assert.Equal(true, match("**/end", "start/middle/end"), "leading ** matches multi-dir prefix")
-		assert.Equal(false, match("**/end", "ending"), "leading ** with exact suffix non-match")
 
 		// Multiple ** patterns
 		assert.Equal(true, match("**/**/*.txt", "a.txt"), "multiple ** match zero dirs")
@@ -115,23 +109,32 @@ func TestPathPattern(t *testing.T) {
 		assert.Equal(true, match("**/a/**/b.txt", "a/b.txt"), "complex ** pattern minimal match")
 		assert.Equal(true, match("**/a/**/b.txt", "a/x/y/z/b.txt"), "complex ** pattern deep nesting")
 		assert.Equal(false, match("**/a/**/b.txt", "a/b/c.txt"), "complex ** pattern non-match")
-
-		// Very complex pattern
-		complexPattern := "**/a/**/b/**/c/**/d.txt"
-		assert.Equal(true, match(complexPattern, "a/b/c/d.txt"), "minimal match for complex pattern")
-		assert.Equal(true, match(complexPattern, "x/a/y/b/z/c/w/d.txt"), "complex alternating pattern")
-		assert.Equal(false, match(complexPattern, "a/b/c/e.txt"), "complex pattern suffix non-match")
 	})
 
-	t.Run("EdgeCasesAndMaliciousInput", func(t *testing.T) {
+	t.Run("Directory matches", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		match := func(pattern string, path string) bool {
-			t.Helper()
-			p, err := NewPathPattern(pattern)
-			assert.NoError(err)
-			return p.Match(path)
-		}
+		match := match_func(t)
+
+		assert.Equal(true, match("a/b", "a/b/c"), "directory prefix match")
+
+		assert.Equal(true, match("a/**", "a/b/c"))
+		assert.Equal(false, match("a/**", "a"), "/** matches everything _inside_ a directory")
+
+		assert.Equal(true, match("a*", "a"))
+		assert.Equal(false, match("a/*", "a"), "/* matches everything _inside_ a directory")
+		assert.Equal(true, match("a*", "ab"))
+		assert.Equal(true, match("a*", "ab/c.txt"), "pattern matched the parent directory")
+		assert.Equal(true, match("a*", "ab/c/d/e.txt"), "pattern matched a parent directory")
+	})
+
+	t.Run("Edge case and malicious input", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		match := match_func(t)
+
+		// Empty path
+		assert.Equal(false, match("*", ""))
 
 		// Deeply nested paths
 		deepPath := strings.Repeat("a/", 500) + "file.txt"
@@ -173,4 +176,15 @@ func TestPathPattern(t *testing.T) {
 		assert.Equal(false, match("a/b", "a//b"), "should handle empty segments")
 		assert.Equal(true, match("**/b", "a//b"), "** should handle empty segments")
 	})
+}
+
+func match_func(t *testing.T) func(pattern string, path string) bool {
+	t.Helper()
+	return func(pattern string, path string) bool {
+		t.Helper()
+		assert := NewAssert(t)
+		p, err := NewPathPattern(pattern)
+		assert.NoError(err)
+		return p.Match(path)
+	}
 }

@@ -101,68 +101,77 @@ func NewPathPattern(pattern string) (PathPattern, error) {
 }
 
 func (pp PathPattern) Match(p string) bool {
+	if p == "" {
+		return false
+	}
 	return match(p, pp.parts)
 }
 
-func match(p string, parts []string) bool {
-	pi := 0
-	i := 0
-	for pi < len(parts) && i < len(p) {
-		part := parts[pi]
+func match(path string, parts []string) bool { //nolint:funlen
+	partIndex := 0
+	pathIndex := 0
+	for partIndex < len(parts) && pathIndex < len(path) {
+		part := parts[partIndex]
 		switch part {
 		case "?":
-			if p[i] == '/' {
+			if path[pathIndex] == '/' {
 				// `?` should not match the path delimiter.
 				return false
 			}
-			i += 1
+			pathIndex += 1
 		case "*":
-			if pi == len(parts)-1 {
-				// `*` is the last part, so it can match anything.
-				return !strings.Contains(p[i:], "/")
+			if partIndex == len(parts)-1 {
+				// `*` is the last part, so it can match anything,
+				// except if we are at the beginning and the first character is a `/`.
+				return pathIndex > 0 || path[0] != '/'
 			}
-			subparts := parts[pi+1:]
-			for i < len(p) && p[i] != '/' {
-				if match(p[i:], subparts) {
+			subparts := parts[partIndex+1:]
+			for pathIndex < len(path) && path[pathIndex] != '/' {
+				if match(path[pathIndex:], subparts) {
 					return true
 				}
-				i += 1
+				pathIndex += 1
 			}
-			return match(p[i:], subparts)
+			return match(path[pathIndex:], subparts)
 		case "**":
-			if i > 0 && p[i] != '/' {
+			if pathIndex > 0 && path[pathIndex] != '/' {
 				return false
 			}
-			subparts := parts[pi+1:]
+			subparts := parts[partIndex+1:]
 			if len(subparts) == 0 {
 				return true
 			}
-			for i < len(p) {
-				if match(p[i:], subparts) {
+			for pathIndex < len(path) {
+				if match(path[pathIndex:], subparts) {
 					return true
 				}
 				// Skip to next delimiter.
-				for i < len(p) && p[i] != '/' {
-					i += 1
+				for pathIndex < len(path) && path[pathIndex] != '/' {
+					pathIndex += 1
 				}
-				i += 1
+				pathIndex += 1
 			}
 			return false
 		default:
-			if !strings.HasPrefix(p[i:], part) {
+			if !strings.HasPrefix(path[pathIndex:], part) {
 				return false
 			}
-			i += len(part)
+			pathIndex += len(part)
 		}
-		pi += 1
+		partIndex += 1
 	}
-	if i != len(p) {
+	if partIndex < len(parts) {
+		if partIndex == len(parts)-1 && parts[partIndex] == "*" {
+			return true
+		}
 		return false
 	}
-	if pi == len(parts) {
+	if pathIndex == len(path) {
+		// This is a full match.
 		return true
 	}
-	if pi == len(parts)-1 && parts[pi][0] == '*' {
+	if path[pathIndex] == '/' {
+		// This is a directory match. Everything below will match.
 		return true
 	}
 	return false
