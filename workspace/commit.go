@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -38,11 +39,6 @@ func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.R
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to temporary directory %s", d)
 		}
 	}
-	// Stage all files.
-	staging, err := lib.NewStaging(head, stagingTmpDir)
-	if err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create staging")
-	}
 	// todo: We should rename `ignore` to `exclude` and add `include`
 	//		 patterns that override the exclude patterns.
 	clingPattern, err := lib.NewPathPattern(".cling")
@@ -51,15 +47,21 @@ func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.R
 	}
 	ignore := config.Ignore
 	ignore = append(ignore, clingPattern)
+
+	// Stage all files.
+	staging, err := lib.NewStaging(head, ignore, stagingTmpDir)
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create staging")
+	}
 	err = filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		relPath, err := filepath.Rel(src, path)
-		for _, pattern := range ignore {
-			if pattern.Match(relPath) {
-				return nil
-			}
+		// Even though files are filtered out in Staging.Add, we still
+		// want to eagerly exclude them to avoid unnecessary work (encryption/file hash).
+		if slices.IndexFunc(ignore, func(p lib.PathPattern) bool { return p.Match(relPath) }) != -1 {
+			return nil
 		}
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get relative path for %s", path)
@@ -67,13 +69,12 @@ func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.R
 		if relPath == "." {
 			return nil
 		}
-		// todo: test that relPath is used
 		repoPath := lib.NewPath(strings.Split(relPath, string(os.PathSeparator))...)
 		fileMetadata, err := addContentToRepo(path, d, repository)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to add path %s to repository", path)
 		}
-		if err := staging.Add(repoPath, &fileMetadata); err != nil {
+		if _, err := staging.Add(repoPath, &fileMetadata); err != nil {
 			return lib.WrapErrorf(err, "failed to add path %s to staging", path)
 		}
 		return nil
@@ -144,7 +145,6 @@ func addContentToRepo(path string, d os.DirEntry, repo *lib.Repository) (lib.Fil
 		birthtimeNSec = int32(stat.Birthtimespec.Nsec) //nolint:gosec
 	}
 	md := lib.FileMetadata{
-		// todo: make sure they are compatible.
 		ModeAndPerm: lib.NewModeAndPerm(fileInfo.Mode()),
 		MTimeSec:    mtime.Unix(),
 		MTimeNSec:   int32(mtime.Nanosecond()), //nolint:gosec

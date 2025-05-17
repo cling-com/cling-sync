@@ -61,7 +61,7 @@ func (rs *RevisionSnapshot) Close() error {
 	return nil
 }
 
-func (rs *RevisionSnapshot) Reader() (*RevisionSnapshotReader, error) {
+func (rs *RevisionSnapshot) Reader(ignore []PathPattern) (*RevisionSnapshotReader, error) {
 	if rs.reader != nil {
 		return nil, Errorf("reader already created")
 	}
@@ -70,25 +70,31 @@ func (rs *RevisionSnapshot) Reader() (*RevisionSnapshotReader, error) {
 		return nil, WrapErrorf(err, "failed to open revision snapshot")
 	}
 	bufReader := bufio.NewReader(file)
-	rs.reader = &RevisionSnapshotReader{file: file, bufReader: *bufReader}
+	rs.reader = &RevisionSnapshotReader{file: file, bufReader: *bufReader, ignore: ignore}
 	return rs.reader, nil
 }
 
 type RevisionSnapshotReader struct {
 	file      *os.File
 	bufReader bufio.Reader
+	ignore    []PathPattern
 }
 
 // Return `io.EOF` if we are done.
 func (rs *RevisionSnapshotReader) Read() (*RevisionEntry, error) {
-	re, err := UnmarshalRevisionEntry(&rs.bufReader)
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			return nil, io.EOF
+	for {
+		re, err := UnmarshalRevisionEntry(&rs.bufReader)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil, io.EOF
+			}
+			return nil, WrapErrorf(err, "failed to read revision snapshot")
 		}
-		return nil, WrapErrorf(err, "failed to read revision snapshot")
+		if slices.IndexFunc(rs.ignore, func(p PathPattern) bool { return p.Match(re.Path.FSString()) }) != -1 {
+			continue
+		}
+		return re, nil
 	}
-	return re, nil
 }
 
 func revisionNWayMerge(repository *Repository, revisions []*Revision, targetFile string) error {

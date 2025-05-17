@@ -37,7 +37,7 @@ func Ls(repository *lib.Repository, revisionId lib.RevisionId, pattern *lib.Path
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
 	defer snapshot.Close() //nolint:errcheck
-	reader, err := snapshot.Reader()
+	reader, err := snapshot.Reader(nil)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open revision snapshot reader")
 	}

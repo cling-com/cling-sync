@@ -8,74 +8,101 @@ import (
 
 func TestRevisionSnapshot(t *testing.T) {
 	t.Parallel()
-	assert := NewAssert(t)
-	repo, _ := testRepository(t)
-	root, err := repo.Head()
-	assert.NoError(err)
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
 
-	revId1, err := testCommit(
-		t,
-		repo,
-		fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-		fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
-		fakeRevisionEntry("a/3.txt", RevisionEntryAdd),
-		fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
-	)
-	assert.NoError(err)
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+		root, err := repo.Head()
+		assert.NoError(err)
 
-	revId2, err := testCommit(
-		t,
-		repo,
-		fakeRevisionEntry("b/1.txt", RevisionEntryAdd),
-		fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
-		// Delete an entry.
-		fakeRevisionEntry("a/2.txt", RevisionEntryDelete),
-		// Update an entry.
-		fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
-		// Delete another entry to update it in the next revision.
-		fakeRevisionEntry("a/4.txt", RevisionEntryDelete),
-	)
-	assert.NoError(err)
+		revId1, err := testCommit(
+			t,
+			repo,
+			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/3.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+		)
+		assert.NoError(err)
 
-	revId3, err := testCommit(
-		t,
-		repo,
-		fakeRevisionEntry("b/1.txt", RevisionEntryDelete),
-		fakeRevisionEntry("c/1.txt", RevisionEntryAdd),
-		fakeRevisionEntry("a/1.txt", RevisionEntryUpdate),
-		// Re-add a deleted file.
-		fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
-	)
-	assert.NoError(err)
+		revId2, err := testCommit(
+			t,
+			repo,
+			fakeRevisionEntry("b/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
+			// Delete an entry.
+			fakeRevisionEntry("a/2.txt", RevisionEntryDelete),
+			// Update an entry.
+			fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
+			// Delete another entry to update it in the next revision.
+			fakeRevisionEntry("a/4.txt", RevisionEntryDelete),
+		)
+		assert.NoError(err)
 
-	entries := readRevisionSnapshot(t, repo, revId3)
-	assert.Equal([]*RevisionEntry{
-		fakeRevisionEntry("a/1.txt", RevisionEntryUpdate),
-		fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
-		fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
-		fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
-		fakeRevisionEntry("c/1.txt", RevisionEntryAdd),
-	}, entries)
+		revId3, err := testCommit(
+			t,
+			repo,
+			fakeRevisionEntry("b/1.txt", RevisionEntryDelete),
+			fakeRevisionEntry("c/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/1.txt", RevisionEntryUpdate),
+			// Re-add a deleted file.
+			fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+		)
+		assert.NoError(err)
 
-	entries = readRevisionSnapshot(t, repo, revId2)
-	assert.Equal([]*RevisionEntry{
-		fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-		fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
-		fakeRevisionEntry("b/1.txt", RevisionEntryAdd),
-		fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
-	}, entries)
+		entries := readRevisionSnapshot(t, repo, revId3, nil)
+		assert.Equal([]*RevisionEntry{
+			fakeRevisionEntry("a/1.txt", RevisionEntryUpdate),
+			fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
+			fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+			fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
+			fakeRevisionEntry("c/1.txt", RevisionEntryAdd),
+		}, entries)
 
-	entries = readRevisionSnapshot(t, repo, revId1)
-	assert.Equal([]*RevisionEntry{
-		fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-		fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
-		fakeRevisionEntry("a/3.txt", RevisionEntryAdd),
-		fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
-	}, entries)
+		entries = readRevisionSnapshot(t, repo, revId2, nil)
+		assert.Equal([]*RevisionEntry{
+			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
+			fakeRevisionEntry("b/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
+		}, entries)
 
-	// Root revision should be empty.
-	entries = readRevisionSnapshot(t, repo, root)
-	assert.Equal([]*RevisionEntry{}, entries)
+		entries = readRevisionSnapshot(t, repo, revId1, nil)
+		assert.Equal([]*RevisionEntry{
+			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/3.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+		}, entries)
+
+		// Root revision should be empty.
+		entries = readRevisionSnapshot(t, repo, root, nil)
+		assert.Equal([]*RevisionEntry{}, entries)
+	})
+
+	t.Run("Ignored paths", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		revId1, err := testCommit(
+			t,
+			repo,
+			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/b/3.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/b/4.txt", RevisionEntryAdd),
+		)
+		assert.NoError(err)
+		ignoreB, err := NewPathPattern("a/b")
+		assert.NoError(err)
+		snapshot := readRevisionSnapshot(t, repo, revId1, []PathPattern{ignoreB})
+		assert.Equal([]*RevisionEntry{
+			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+		}, snapshot)
+	})
 }
 
 func testCommit(t *testing.T, repo *Repository, entries ...*RevisionEntry) (RevisionId, error) {
@@ -92,13 +119,18 @@ func testCommit(t *testing.T, repo *Repository, entries ...*RevisionEntry) (Revi
 	return commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
 }
 
-func readRevisionSnapshot(t *testing.T, repo *Repository, revisionId RevisionId) []*RevisionEntry {
+func readRevisionSnapshot(
+	t *testing.T,
+	repo *Repository,
+	revisionId RevisionId,
+	ignore []PathPattern,
+) []*RevisionEntry {
 	t.Helper()
 	assert := NewAssert(t)
 	snapshot, err := NewRevisionSnapshot(repo, revisionId, t.TempDir())
 	assert.NoError(err)
 	defer snapshot.Close() //nolint:errcheck
-	reader, err := snapshot.Reader()
+	reader, err := snapshot.Reader(ignore)
 	assert.NoError(err)
 	entries := []*RevisionEntry{}
 	for {

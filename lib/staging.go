@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -19,12 +20,13 @@ var ErrEmptyCommit = Errorf("empty commit")
 
 type Staging struct {
 	BaseRevision RevisionId
+	Ignore       []PathPattern
 	targetFile   string
 	chunks       *RevisionEntryChunks
 	tmpDir       string
 }
 
-func NewStaging(parent RevisionId, tmpDir string) (*Staging, error) {
+func NewStaging(parent RevisionId, ignore []PathPattern, tmpDir string) (*Staging, error) {
 	files, err := os.ReadDir(tmpDir)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read temporary directory %s", tmpDir)
@@ -33,21 +35,28 @@ func NewStaging(parent RevisionId, tmpDir string) (*Staging, error) {
 		return nil, Errorf("temporary directory %s is not empty", tmpDir)
 	}
 	chunkWriter := NewRevisionEntryChunks(tmpDir, "staging", defaultChunkSize)
-	return &Staging{parent, filepath.Join(tmpDir, "staging"), chunkWriter, tmpDir}, nil
+	return &Staging{parent, ignore, filepath.Join(tmpDir, "staging"), chunkWriter, tmpDir}, nil
 }
 
-func (s *Staging) Add(path Path, md *FileMetadata) error {
+// Return `true` if the file was added, `false` if it was ignored.
+func (s *Staging) Add(path Path, md *FileMetadata) (bool, error) {
 	if md == nil {
-		return Errorf("file metadata is nil")
+		return false, Errorf("file metadata is nil")
 	}
 	if s.chunks == nil {
-		return Errorf("staging is closed")
+		return false, Errorf("staging is closed")
+	}
+	if slices.IndexFunc(s.Ignore, func(p PathPattern) bool { return p.Match(path.FSString()) }) != -1 {
+		return false, nil
 	}
 	re, err := NewRevisionEntry(path, RevisionEntryAdd, md)
 	if err != nil {
-		return WrapErrorf(err, "failed to create revision entry")
+		return false, WrapErrorf(err, "failed to create revision entry")
 	}
-	return s.chunks.Add(&re)
+	if err := s.chunks.Add(&re); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Commit by merging the staging snapshot with the revision snapshot. The new revision will
@@ -78,7 +87,7 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 			head,
 		)
 	}
-	revReader, err := snapshot.Reader()
+	revReader, err := snapshot.Reader(s.Ignore)
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to open revision snapshot")
 	}

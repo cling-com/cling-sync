@@ -25,7 +25,7 @@ func TestCommit(t *testing.T) {
 		rt.AddLocal("c/d/2.txt", "....")
 		revId, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig())
 		assert.NoError(err)
-		rt.VerifyRevision(revId, []FileInfo{
+		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
 			{"a.txt", 1},
 			{"b.txt", 2},
 			{"c", 0},
@@ -39,7 +39,7 @@ func TestCommit(t *testing.T) {
 		rt.AddLocal("e.txt", ".....")
 		revId, err = Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig())
 		assert.NoError(err)
-		rt.VerifyRevision(revId, []FileInfo{
+		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
 			{"a.txt", 1},
 			{"c", 0},
 			{"c/1.txt", 3},
@@ -67,11 +67,51 @@ func TestCommit(t *testing.T) {
 			&CommitConfig{Ignore: []lib.PathPattern{ignoreTxt, ignoreDirE}, Author: "author", Message: "message"},
 		)
 		assert.NoError(err)
-		rt.VerifyRevision(revId, []FileInfo{
+		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
 			{"b.md", 2},
 			{"c", 0},
 			{"c/d", 0},
 			{"c/d/2.md", 4},
+		})
+
+		// Ignoring `c` should not delete `c` from the repository and should not commit
+		// changes to `c` to the repository.
+		rt.AddLocal("c/3.md", "......")
+		rt.AddLocal("b.nfo", ".......")
+		ignoreDirC, err := lib.NewPathPattern("c")
+		assert.NoError(err)
+		revId, err = Commit(
+			rt.WorkspacePath,
+			rt.Repository,
+			&CommitConfig{
+				Ignore:  []lib.PathPattern{ignoreTxt, ignoreDirC, ignoreDirE},
+				Author:  "author",
+				Message: "message",
+			},
+		)
+		assert.NoError(err)
+		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
+			{"b.md", 2},
+			{"b.nfo", 7},
+			{"c", 0},
+			{"c/d", 0},
+			{"c/d/2.md", 4},
+		})
+
+		// Commit without ignoring any files.
+		revId, err = Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig())
+		assert.NoError(err)
+		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
+			{"a.txt", 1},
+			{"b.md", 2},
+			{"b.nfo", 7},
+			{"c", 0},
+			{"c/1.txt", 3},
+			{"c/3.md", 6},
+			{"c/d", 0},
+			{"c/d/2.md", 4},
+			{"c/e", 0},
+			{"c/e/3.md", 5},
 		})
 	})
 
@@ -84,7 +124,7 @@ func TestCommit(t *testing.T) {
 			assert.NoError(os.Chmod(rt.LocalPath(path), fileMode))
 			revId, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig())
 			assert.NoError(err)
-			entries := rt.RevisionSnapshot(revId)
+			entries := rt.RevisionSnapshot(revId, nil)
 			assert.Equal(2, len(entries))
 			entryIndex := slices.IndexFunc(
 				entries,
@@ -123,7 +163,7 @@ func TestCommit(t *testing.T) {
 		assert.NoError(err)
 		revId, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig())
 		assert.NoError(err)
-		entries := rt.RevisionSnapshot(revId)
+		entries := rt.RevisionSnapshot(revId, nil)
 		assert.Equal(2, len(entries))
 		entry := entries[1]
 		md := entries[1].Metadata
@@ -198,19 +238,23 @@ func (rt *RepositoryTest) RemoveLocal(path string) {
 	rt.assert.NoError(err)
 }
 
-func (rt *RepositoryTest) VerifyRevision(revisionId lib.RevisionId, files []FileInfo) {
+func (rt *RepositoryTest) VerifyRevisionSnapshot(
+	revisionId lib.RevisionId,
+	ignore []lib.PathPattern,
+	files []FileInfo,
+) {
 	rt.t.Helper()
-	entries := rt.RevisionSnapshot(revisionId)
+	entries := rt.RevisionSnapshot(revisionId, ignore)
 	for i, entry := range entries {
 		rt.assert.Equal(true, i < len(files), "not enough files, expected entry: %v", entry)
 		file := files[i]
-		rt.assert.Equal(entry.Path.FSString(), file.Path, "path")
-		rt.assert.Equal(entry.Metadata.Size, int64(file.Size), "size")
+		rt.assert.Equal(entry.Path.FSString(), file.Path, "path of %s", entry.Path.FSString())
+		rt.assert.Equal(entry.Metadata.Size, int64(file.Size), "size of %s", entry.Path.FSString())
 	}
 	rt.assert.Equal(len(files), len(entries), "not enough revision entries, expected file: %v", files[len(entries)-1])
 }
 
-func (rt *RepositoryTest) RevisionSnapshot(revisionId lib.RevisionId) []*lib.RevisionEntry {
+func (rt *RepositoryTest) RevisionSnapshot(revisionId lib.RevisionId, ignore []lib.PathPattern) []*lib.RevisionEntry {
 	rt.t.Helper()
 	tmpDir := filepath.Join(rt.t.TempDir(), "revision-snapshot")
 	defer os.RemoveAll(tmpDir) //nolint:errcheck
@@ -218,7 +262,7 @@ func (rt *RepositoryTest) RevisionSnapshot(revisionId lib.RevisionId) []*lib.Rev
 	snapshot, err := lib.NewRevisionSnapshot(rt.Repository, revisionId, tmpDir)
 	rt.assert.NoError(err)
 	defer snapshot.Close() //nolint:errcheck
-	reader, err := snapshot.Reader()
+	reader, err := snapshot.Reader(ignore)
 	rt.assert.NoError(err)
 	entries := []*lib.RevisionEntry{}
 	for {

@@ -21,7 +21,7 @@ func TestStagingCommit(t *testing.T) {
 		assert.NoError(err)
 
 		// First commit
-		rev1, err := commitStaging(t, repo, head, []testFile{
+		rev1, err := commitStaging(t, repo, head, nil, []testFile{
 			// Add paths in random order to test that they are sorted.
 			{"a/3.txt", 0, RevisionEntryAdd},
 			{"a/1.txt", 0, RevisionEntryAdd},
@@ -35,7 +35,7 @@ func TestStagingCommit(t *testing.T) {
 		})
 
 		// Second commit
-		rev2, err := commitStaging(t, repo, rev1, []testFile{
+		rev2, err := commitStaging(t, repo, rev1, nil, []testFile{
 			{"a/4.txt", 0, RevisionEntryAdd},     // new
 			{"a/1.txt", 42, RevisionEntryUpdate}, // updated
 			{"a/2.txt", 0, RevisionEntryUpdate},  // same (but staged again)
@@ -47,6 +47,7 @@ func TestStagingCommit(t *testing.T) {
 			{"a/4.txt", 0, RevisionEntryAdd},
 		})
 	})
+
 	t.Run("Empty staging deletes all files in the repository", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -55,7 +56,7 @@ func TestStagingCommit(t *testing.T) {
 		assert.NoError(err)
 
 		// First commit
-		rev1, err := commitStaging(t, repo, head, []testFile{
+		rev1, err := commitStaging(t, repo, head, nil, []testFile{
 			{"a/3.txt", 0, RevisionEntryAdd},
 			{"a/1.txt", 0, RevisionEntryAdd},
 			{"a/2.txt", 0, RevisionEntryAdd},
@@ -68,7 +69,7 @@ func TestStagingCommit(t *testing.T) {
 		})
 
 		// Second commit
-		rev2, err := commitStaging(t, repo, rev1, []testFile{})
+		rev2, err := commitStaging(t, repo, rev1, nil, []testFile{})
 		assert.NoError(err)
 		checkRevision(t, repo, rev2, rev1, []testFile{
 			{"a/1.txt", 0, RevisionEntryDelete},
@@ -76,6 +77,7 @@ func TestStagingCommit(t *testing.T) {
 			{"a/3.txt", 0, RevisionEntryDelete},
 		})
 	})
+
 	t.Run("More revision entries than staging entries", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -84,7 +86,7 @@ func TestStagingCommit(t *testing.T) {
 		assert.NoError(err)
 
 		// First commit
-		rev1, err := commitStaging(t, repo, head, []testFile{
+		rev1, err := commitStaging(t, repo, head, nil, []testFile{
 			{"a/3.txt", 0, RevisionEntryAdd},
 			{"a/1.txt", 0, RevisionEntryAdd},
 			{"a/2.txt", 0, RevisionEntryAdd},
@@ -97,7 +99,7 @@ func TestStagingCommit(t *testing.T) {
 		})
 
 		// Second commit
-		rev2, err := commitStaging(t, repo, rev1, []testFile{
+		rev2, err := commitStaging(t, repo, rev1, nil, []testFile{
 			{"a/1.txt", 42, RevisionEntryAdd}, // updated
 		})
 		assert.NoError(err)
@@ -107,6 +109,7 @@ func TestStagingCommit(t *testing.T) {
 			{"a/3.txt", 0, RevisionEntryDelete},
 		})
 	})
+
 	t.Run("No changes", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -115,7 +118,7 @@ func TestStagingCommit(t *testing.T) {
 		assert.NoError(err)
 
 		// First commit
-		rev1, err := commitStaging(t, repo, head, []testFile{
+		rev1, err := commitStaging(t, repo, head, nil, []testFile{
 			{"a/3.txt", 0, RevisionEntryAdd},
 			{"a/1.txt", 0, RevisionEntryAdd},
 			{"a/2.txt", 0, RevisionEntryAdd},
@@ -128,13 +131,14 @@ func TestStagingCommit(t *testing.T) {
 		})
 
 		// Second commit
-		_, err = commitStaging(t, repo, rev1, []testFile{
+		_, err = commitStaging(t, repo, rev1, nil, []testFile{
 			{"a/3.txt", 0, RevisionEntryAdd},
 			{"a/1.txt", 0, RevisionEntryAdd},
 			{"a/2.txt", 0, RevisionEntryAdd},
 		})
 		assert.Error(err, "empty commit")
 	})
+
 	t.Run("Duplicate paths", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -142,11 +146,33 @@ func TestStagingCommit(t *testing.T) {
 		head, err := repo.Head()
 		assert.NoError(err)
 
-		_, err = commitStaging(t, repo, head, []testFile{
+		_, err = commitStaging(t, repo, head, nil, []testFile{
 			{"a.txt", 0, RevisionEntryAdd},
 			{"a.txt", 0, RevisionEntryAdd},
 		})
 		assert.Error(err, "duplicate revision entry path: a.txt")
+	})
+
+	t.Run("Ignored paths", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+		head, err := repo.Head()
+		assert.NoError(err)
+
+		ignoreB, err := NewPathPattern("a/b")
+		assert.NoError(err)
+		rev1, err := commitStaging(t, repo, head, []PathPattern{ignoreB}, []testFile{
+			{"a/1.txt", 0, RevisionEntryAdd},
+			{"a/2.txt", 0, RevisionEntryAdd},
+			{"a/b/3.txt", 0, RevisionEntryAdd},
+			{"a/b/4.txt", 0, RevisionEntryAdd},
+		})
+		assert.NoError(err)
+		checkRevision(t, repo, rev1, head, []testFile{
+			{"a/1.txt", 0, RevisionEntryAdd},
+			{"a/2.txt", 0, RevisionEntryAdd},
+		})
 	})
 }
 
@@ -175,6 +201,7 @@ func fuzzTesting(t *testing.T, randSeed uint64, debug bool) {
 		steps             = 20
 		maxFilesPerCommit = 50
 		numUniqueFiles    = 100
+		numIgnored        = 10
 	)
 	// Create a reproducible RNG.
 	r := rand.New(rand.NewPCG(randSeed, 0)) //nolint:gosec
@@ -216,6 +243,12 @@ func fuzzTesting(t *testing.T, randSeed uint64, debug bool) {
 				staged[path] = fakeFileMetadata(0)
 			}
 		}
+		ignore := []PathPattern{}
+		for i := range numIgnored {
+			pattern, err := NewPathPattern(fmt.Sprintf("a/%03d.txt", i))
+			assert.NoError(err)
+			ignore = append(ignore, pattern)
+		}
 		files := make([]testFile, 0, len(staged))
 		for path, md := range staged {
 			files = append(files, testFile{path: path, mode: uint32(md.ModeAndPerm), typ: RevisionEntryAdd})
@@ -227,15 +260,24 @@ func fuzzTesting(t *testing.T, randSeed uint64, debug bool) {
 				fmt.Printf("%3d: %s %s\n", i, file.path, ModeAndPerm(file.mode))
 			}
 		}
-		nextRevId, err := commitStaging(t, repo, revId, files)
+		nextRevId, err := commitStaging(t, repo, revId, ignore, files)
 		if errors.Is(err, ErrEmptyCommit) {
 			assert.Equal(0, len(repoState), "repository should be empty")
 			assert.Equal(0, len(staged), "no files should have been staged")
 			continue
 		}
 
+		// Filter out the ignored paths from staged.
+		filteredStaged := map[string]*FileMetadata{}
+		for path, md := range staged {
+			if slices.IndexFunc(ignore, func(p PathPattern) bool { return p.Match(path) }) == -1 {
+				filteredStaged[path] = md
+			}
+		}
+		staged = filteredStaged
+
 		// Compare our current model with the real world.
-		entries := readRevisionSnapshot(t, repo, nextRevId)
+		entries := readRevisionSnapshot(t, repo, nextRevId, nil)
 		if debug {
 			fmt.Println("Revision")
 			for i, entry := range entries {
@@ -266,17 +308,23 @@ func (tf testFile) String() string {
 func addFiles(t *testing.T, st *Staging, files []testFile) {
 	t.Helper()
 	for _, f := range files {
-		err := st.Add(NewPath(strings.Split(f.path, "/")...), fakeFileMetadata(ModeAndPerm(f.mode)))
+		_, err := st.Add(NewPath(strings.Split(f.path, "/")...), fakeFileMetadata(ModeAndPerm(f.mode)))
 		if err != nil {
 			t.Fatalf("Add failed for %s: %v", f.path, err)
 		}
 	}
 }
 
-func commitStaging(t *testing.T, repo *Repository, base RevisionId, files []testFile) (RevisionId, error) {
+func commitStaging(
+	t *testing.T,
+	repo *Repository,
+	base RevisionId,
+	ignore []PathPattern,
+	files []testFile,
+) (RevisionId, error) {
 	t.Helper()
 	assert := NewAssert(t)
-	st, err := NewStaging(base, t.TempDir())
+	st, err := NewStaging(base, ignore, t.TempDir())
 	assert.NoError(err)
 	addFiles(t, st, files)
 
