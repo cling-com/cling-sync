@@ -52,6 +52,53 @@ func (m ModeAndPerm) String() string {
 	return string(buf[:])
 }
 
+// Return a string in the style of `ls -l`.
+func (m ModeAndPerm) ShortString() string {
+	var buf [10]byte
+	buf[0] = '-'
+	const rwx = "rwxrwxrwx"
+	for i, c := range rwx {
+		if m&ModeAndPerm(1<<(8-i)) != 0 {
+			buf[i+1] = byte(c)
+		} else {
+			buf[i+1] = '-'
+		}
+	}
+	if m&ModeSymlink != 0 {
+		buf[0] = 'l'
+	} else if m&ModeDir != 0 {
+		buf[0] = 'd'
+	}
+	const ownerExecMask ModeAndPerm = 1 << 6
+	const groupExecMask ModeAndPerm = 1 << 3
+	const othersExecMask ModeAndPerm = 1 << 0
+	// SetUID (modifies owner execute at index 3).
+	if m&ModeSetUID != 0 {
+		if m&ownerExecMask != 0 {
+			buf[3] = 's'
+		} else {
+			buf[3] = 'S'
+		}
+	}
+	// SetGID (modifies group execute at index 6).
+	if m&ModeSetGID != 0 {
+		if m&groupExecMask != 0 {
+			buf[6] = 's'
+		} else {
+			buf[6] = 'S'
+		}
+	}
+	// Sticky (modifies others execute at index 9).
+	if m&ModeSticky != 0 {
+		if m&othersExecMask != 0 {
+			buf[9] = 't'
+		} else {
+			buf[9] = 'T'
+		}
+	}
+	return string(buf[:])
+}
+
 func (m ModeAndPerm) IsDir() bool {
 	return m&ModeDir != 0
 }

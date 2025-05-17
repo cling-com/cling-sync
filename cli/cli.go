@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
 	"github.com/flunderpero/cling-sync/workspace"
@@ -124,11 +125,6 @@ func commitCmd(argv []string) error { //nolint:funlen
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
-	// todo: Ignore patterns must be respected by the revision snapshot too or
-	//       otherwise you will delete files that match the ignore patters and
-	//		 are in the repository.
-	//		 Put differently, we want ignore to ignore paths from being processed
-	//		 during the commit at all.
 	flags.Func(
 		"exclude",
 		// todo: Centralize this description or add it everywhere patterns are used.
@@ -205,7 +201,7 @@ when determining whether a path should be included in the commit.
 	return nil
 }
 
-func lsCmd(argv []string) error {
+func lsCmd(argv []string) error { //nolint:funlen
 	ws, err := workspace.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
@@ -213,10 +209,14 @@ func lsCmd(argv []string) error {
 	args := struct { //nolint:exhaustruct
 		Help     bool
 		Revision string
+		Short    bool
+		Human    bool
 	}{}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
+	flags.BoolVar(&args.Short, "short", false, "Show short listing")
+	flags.BoolVar(&args.Human, "human", false, "Show human readable file sizes")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s ls [pattern]\n\n", appName)
 		fmt.Fprintf(os.Stderr, "List files in the repository.\n\n")
@@ -265,8 +265,31 @@ func lsCmd(argv []string) error {
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	for _, file := range files {
-		fmt.Println(file.String())
+	timestampFormat := time.RFC3339
+	if args.Short {
+		timestampFormat = "relative"
+	}
+	format := &workspace.LsFormat{
+		FullPath:          !args.Short,
+		FullMode:          !args.Short,
+		TimestampFormat:   timestampFormat,
+		HumanReadableSize: args.Human,
+	}
+	dirFormat := *format
+	dirFormat.FullPath = true
+	for i, file := range files {
+		if args.Short {
+			if file.Metadata.ModeAndPerm.IsDir() {
+				if i > 0 {
+					fmt.Println()
+				}
+				fmt.Println(file.Format(&dirFormat))
+				continue
+			}
+			fmt.Println(file.Format(format))
+		} else {
+			fmt.Println(file.Format(format))
+		}
 	}
 	return nil
 }
@@ -367,17 +390,18 @@ func main() {
 		flag.Usage()
 		os.Exit(0)
 	}
+	argv := flag.Args()[1:]
 	cmd := flag.Arg(0)
 	var err error
 	switch cmd {
 	case "init":
-		err = initCmd(flag.Args()[1:])
+		err = initCmd(argv)
 	case "commit":
-		err = commitCmd(flag.Args()[1:])
+		err = commitCmd(argv)
 	case "log":
-		err = logCmd(flag.Args()[1:])
+		err = logCmd(argv)
 	case "ls":
-		err = lsCmd(flag.Args()[1:])
+		err = lsCmd(argv)
 	case "":
 		flag.Usage()
 		os.Exit(0)

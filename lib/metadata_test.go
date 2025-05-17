@@ -13,50 +13,74 @@ func TestFileMetadata(t *testing.T) {
 		assert := NewAssert(t)
 		m := ModeAndPerm(0)
 		assert.Equal("--------------", m.String())
+		assert.Equal("----------", m.ShortString())
 
 		assert.Equal(false, m.IsDir())
 		m |= ModeDir
 		assert.Equal(true, m.IsDir())
 		assert.Equal("d-------------", m.String())
+		assert.Equal("d---------", m.ShortString())
 
 		assert.Equal(false, m.IsSymlink())
 		m |= ModeSymlink
 		assert.Equal(true, m.IsSymlink())
 		assert.Equal("dL------------", m.String())
+		assert.Equal("l---------", m.ShortString())
 
 		assert.Equal(false, m.IsSetUID())
 		m |= ModeSetUID
 		assert.Equal(true, m.IsSetUID())
 		assert.Equal("dLu-----------", m.String())
+		assert.Equal("l--S------", m.ShortString())
 
 		assert.Equal(false, m.IsSetGUID())
 		m |= ModeSetGID
 		assert.Equal(true, m.IsSetGUID())
 		assert.Equal("dLug----------", m.String())
+		assert.Equal("l--S--S---", m.ShortString())
 
 		assert.Equal(false, m.IsSticky())
 		m |= ModeSticky
 		assert.Equal(true, m.IsSticky())
 		assert.Equal("dLugt---------", m.String())
+		assert.Equal("l--S--S--T", m.ShortString())
 
+		// Test all permission bits.
 		m |= 1
 		assert.Equal("dLugt--------x", m.String())
+		assert.Equal("l--S--S--t", m.ShortString())
+
 		m |= 2
 		assert.Equal("dLugt-------wx", m.String())
+		assert.Equal("l--S--S-wt", m.ShortString())
+
 		m |= 4
 		assert.Equal("dLugt------rwx", m.String())
+		assert.Equal("l--S--Srwt", m.ShortString())
+
 		m |= 8
 		assert.Equal("dLugt-----xrwx", m.String())
+		assert.Equal("l--S--srwt", m.ShortString())
+
 		m |= 16
 		assert.Equal("dLugt----wxrwx", m.String())
+		assert.Equal("l--S-wsrwt", m.ShortString())
+
 		m |= 32
 		assert.Equal("dLugt---rwxrwx", m.String())
+		assert.Equal("l--Srwsrwt", m.ShortString())
+
 		m |= 64
 		assert.Equal("dLugt--xrwxrwx", m.String())
+		assert.Equal("l--srwsrwt", m.ShortString())
+
 		m |= 128
 		assert.Equal("dLugt-wxrwxrwx", m.String())
+		assert.Equal("l-wsrwsrwt", m.ShortString())
+
 		m |= 256
 		assert.Equal("dLugtrwxrwxrwx", m.String())
+		assert.Equal("lrwsrwsrwt", m.ShortString())
 	})
 
 	t.Run("NewModeAndPerm", func(t *testing.T) {
