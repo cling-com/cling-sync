@@ -176,3 +176,65 @@ func match(path string, parts []string) bool { //nolint:funlen
 	}
 	return false
 }
+
+type PathFilter interface {
+	Include(p string) bool
+}
+
+// A PathFilter that can exclude paths.
+// A path is excluded if it matches any of the exclude patterns and none of the include patterns.
+// So the include patterns are only used to override exclude patterns.
+type PathExclusionFilter struct {
+	Excludes []PathPattern
+	Includes []PathPattern
+}
+
+// Parse the exclude and include patterns and create a PathFilter.
+func NewPathExclusionFilter(excludes []string, includes []string) (*PathExclusionFilter, error) {
+	e := []PathPattern{}
+	for _, pattern := range excludes {
+		pp, err := NewPathPattern(pattern)
+		if err != nil {
+			return nil, err
+		}
+		e = append(e, pp)
+	}
+	i := []PathPattern{}
+	for _, pattern := range includes {
+		pp, err := NewPathPattern(pattern)
+		if err != nil {
+			return nil, err
+		}
+		i = append(i, pp)
+	}
+	return &PathExclusionFilter{Excludes: e, Includes: i}, nil
+}
+
+func (pef *PathExclusionFilter) Include(p string) bool {
+	for _, exclude := range pef.Excludes {
+		if exclude.Match(p) {
+			for _, include := range pef.Includes {
+				if include.Match(p) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return true
+}
+
+// A PathFilter that combines multiple PathFilters.
+// It returns true if *all* of the PathFilters returns true.
+type AllPathFilter struct {
+	Filters []PathFilter
+}
+
+func (cpf *AllPathFilter) Include(p string) bool {
+	for _, filter := range cpf.Filters {
+		if !filter.Include(p) {
+			return false
+		}
+	}
+	return true
+}

@@ -178,6 +178,33 @@ func TestPathPattern(t *testing.T) {
 	})
 }
 
+func TestPathExclusionFilter(t *testing.T) {
+	t.Parallel()
+	assert := NewAssert(t)
+	sut, err := NewPathExclusionFilter([]string{"etc", "**/*.txt"}, []string{"etc/host.conf", "opt/test.txt"})
+	assert.NoError(err)
+	assert.Equal(true, sut.Include("etc/host.conf"))
+	assert.Equal(false, sut.Include("etc/passwd"))
+	assert.Equal(false, sut.Include("home/user/file.txt"))
+	assert.Equal(true, sut.Include("opt/test.txt"))
+}
+
+func TestAllPathFilter(t *testing.T) {
+	t.Parallel()
+	assert := NewAssert(t)
+	exclude1, err := NewPathExclusionFilter([]string{"etc"}, []string{"etc/host.conf"})
+	assert.NoError(err)
+	// Even though exclude2 allows "etc", exclude1 should still exclude it.
+	// Filters are evaluated separately.
+	exclude2, err := NewPathExclusionFilter([]string{"**/*.txt"}, []string{"opt/test.txt", "etc"})
+	assert.NoError(err)
+	sut := AllPathFilter{Filters: []PathFilter{exclude1, exclude2}}
+	assert.Equal(true, sut.Include("etc/host.conf"))
+	assert.Equal(false, sut.Include("etc/passwd"))
+	assert.Equal(false, sut.Include("home/user/file.txt"))
+	assert.Equal(true, sut.Include("opt/test.txt"))
+}
+
 func match_func(t *testing.T) func(pattern string, path string) bool {
 	t.Helper()
 	return func(pattern string, path string) bool {

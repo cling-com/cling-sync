@@ -95,9 +95,10 @@ func TestRevisionSnapshot(t *testing.T) {
 			fakeRevisionEntry("a/b/4.txt", RevisionEntryAdd),
 		)
 		assert.NoError(err)
-		ignoreB, err := NewPathPattern("a/b")
 		assert.NoError(err)
-		snapshot := readRevisionSnapshot(t, repo, revId1, []PathPattern{ignoreB})
+		filter, err := NewPathExclusionFilter([]string{"a/b"}, []string{})
+		assert.NoError(err)
+		snapshot := readRevisionSnapshot(t, repo, revId1, filter)
 		assert.Equal([]*RevisionEntry{
 			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
 			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
@@ -123,14 +124,14 @@ func readRevisionSnapshot(
 	t *testing.T,
 	repo *Repository,
 	revisionId RevisionId,
-	ignore []PathPattern,
+	pathFilter PathFilter,
 ) []*RevisionEntry {
 	t.Helper()
 	assert := NewAssert(t)
 	snapshot, err := NewRevisionSnapshot(repo, revisionId, t.TempDir())
 	assert.NoError(err)
 	defer snapshot.Close() //nolint:errcheck
-	reader, err := snapshot.Reader(ignore)
+	reader, err := snapshot.Reader(pathFilter)
 	assert.NoError(err)
 	entries := []*RevisionEntry{}
 	for {

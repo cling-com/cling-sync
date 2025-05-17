@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"time"
 )
 
@@ -20,13 +19,13 @@ var ErrEmptyCommit = Errorf("empty commit")
 
 type Staging struct {
 	BaseRevision RevisionId
-	Ignore       []PathPattern
+	PathFilter   PathFilter
 	targetFile   string
 	chunks       *RevisionEntryChunks
 	tmpDir       string
 }
 
-func NewStaging(parent RevisionId, ignore []PathPattern, tmpDir string) (*Staging, error) {
+func NewStaging(parent RevisionId, pathFilter PathFilter, tmpDir string) (*Staging, error) {
 	files, err := os.ReadDir(tmpDir)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read temporary directory %s", tmpDir)
@@ -35,7 +34,7 @@ func NewStaging(parent RevisionId, ignore []PathPattern, tmpDir string) (*Stagin
 		return nil, Errorf("temporary directory %s is not empty", tmpDir)
 	}
 	chunkWriter := NewRevisionEntryChunks(tmpDir, "staging", defaultChunkSize)
-	return &Staging{parent, ignore, filepath.Join(tmpDir, "staging"), chunkWriter, tmpDir}, nil
+	return &Staging{parent, pathFilter, filepath.Join(tmpDir, "staging"), chunkWriter, tmpDir}, nil
 }
 
 // Return `true` if the file was added, `false` if it was ignored.
@@ -46,7 +45,7 @@ func (s *Staging) Add(path Path, md *FileMetadata) (bool, error) {
 	if s.chunks == nil {
 		return false, Errorf("staging is closed")
 	}
-	if slices.IndexFunc(s.Ignore, func(p PathPattern) bool { return p.Match(path.FSString()) }) != -1 {
+	if s.PathFilter != nil && !s.PathFilter.Include(path.FSString()) {
 		return false, nil
 	}
 	re, err := NewRevisionEntry(path, RevisionEntryAdd, md)
@@ -87,7 +86,7 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 			head,
 		)
 	}
-	revReader, err := snapshot.Reader(s.Ignore)
+	revReader, err := snapshot.Reader(s.PathFilter)
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to open revision snapshot")
 	}

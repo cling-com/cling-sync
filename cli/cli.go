@@ -109,10 +109,10 @@ func commitCmd(argv []string) error { //nolint:funlen
 	}
 	args := struct { //nolint:exhaustruct
 		Help    bool
-		Add     bool
 		Message string
 		Author  string
-		Ignore  []lib.PathPattern
+		Exclude []lib.PathPattern
+		Include []lib.PathPattern
 	}{}
 	defaultAuthor := "<anonymous>"
 	whoami, err := user.Current()
@@ -122,14 +122,21 @@ func commitCmd(argv []string) error { //nolint:funlen
 	defaultMessage := "Synced with cling-sync"
 	flags := flag.NewFlagSet("commit", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
-	flags.BoolVar(&args.Add, "add", false, "Add new files only")
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
+	// todo: Ignore patterns must be respected by the revision snapshot too or
+	//       otherwise you will delete files that match the ignore patters and
+	//		 are in the repository.
+	//		 Put differently, we want ignore to ignore paths from being processed
+	//		 during the commit at all.
 	flags.Func(
-		"ignore",
+		"exclude",
+		// todo: Centralize this description or add it everywhere patterns are used.
+		// todo: Add examples.
 		strings.TrimSpace(`
-Ignore paths matching the given pattern (can be used multiple times).
-A pattern must match the full path of the file.
+Exclude paths matching the given pattern (can be used multiple times).
+A pattern must match the full path or a directory within the path.
+Include patterns (see --include) can be used to override exclude patterns.
 Pattern syntax:
     **      matches any number of directories
     *       matches any number of characters in a single directory
@@ -140,12 +147,29 @@ Pattern syntax:
 			if err != nil {
 				return lib.WrapErrorf(err, "invalid pattern: %s", pattern)
 			}
-			args.Ignore = append(args.Ignore, p)
+			args.Exclude = append(args.Exclude, p)
+			return nil
+		},
+	)
+	flags.Func(
+		"include",
+		// todo: Centralize this description or add it everywhere patterns are used.
+		// todo: Add examples.
+		strings.TrimSpace(`
+Include patterns are used to override exclude patterns. They are not evaluated
+when determining whether a path should be included in the commit.
+		`),
+		func(pattern string) error {
+			p, err := lib.NewPathPattern(pattern)
+			if err != nil {
+				return lib.WrapErrorf(err, "invalid pattern: %s", pattern)
+			}
+			args.Include = append(args.Include, p)
 			return nil
 		},
 	)
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s commit <src> <dst>\n\n", appName)
+		fmt.Fprintf(os.Stderr, "Usage: %s commit\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Synchronize all local changes to the repository.\n")
 		fmt.Fprintf(os.Stderr, "All files not present will be removed in the revision.\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
@@ -161,14 +185,18 @@ Pattern syntax:
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("no positional arguments are required")
 	}
+	if len(args.Exclude) == 0 && len(args.Include) > 0 {
+		return lib.Errorf("include patterns can only be used with exclude patterns")
+	}
 	repository, err := openRepository(ws)
 	if err != nil {
 		return err
 	}
+	pathFilter := &lib.PathExclusionFilter{Excludes: args.Exclude, Includes: args.Include}
 	revisionId, err := workspace.Commit(
 		ws.WorkspacePath,
 		repository,
-		&workspace.CommitConfig{Ignore: args.Ignore, Author: args.Author, Message: args.Message},
+		&workspace.CommitConfig{PathFilter: pathFilter, Author: args.Author, Message: args.Message},
 	)
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -256,7 +284,7 @@ func logCmd(argv []string) error {
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Show short log")
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s log <dst>\n\n", appName)
+		fmt.Fprintf(os.Stderr, "Usage: %s log\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Show revision log.n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()

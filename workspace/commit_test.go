@@ -56,15 +56,13 @@ func TestCommit(t *testing.T) {
 		rt.AddLocal("c/1.txt", "...")
 		rt.AddLocal("c/d/2.md", "....")
 		rt.AddLocal("c/e/3.md", ".....")
-		ignoreTxt, err := lib.NewPathPattern("**/*.txt")
-		assert.NoError(err)
-		ignoreDirE, err := lib.NewPathPattern("**/e")
+		pathFilter, err := lib.NewPathExclusionFilter([]string{"**/*.txt", "**/e"}, []string{})
 		assert.NoError(err)
 
 		revId, err := Commit(
 			rt.WorkspacePath,
 			rt.Repository,
-			&CommitConfig{Ignore: []lib.PathPattern{ignoreTxt, ignoreDirE}, Author: "author", Message: "message"},
+			&CommitConfig{PathFilter: pathFilter, Author: "author", Message: "message"},
 		)
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
@@ -78,16 +76,12 @@ func TestCommit(t *testing.T) {
 		// changes to `c` to the repository.
 		rt.AddLocal("c/3.md", "......")
 		rt.AddLocal("b.nfo", ".......")
-		ignoreDirC, err := lib.NewPathPattern("c")
+		pathFilter, err = lib.NewPathExclusionFilter([]string{"**/*.txt", "**/e", "c"}, []string{})
 		assert.NoError(err)
 		revId, err = Commit(
 			rt.WorkspacePath,
 			rt.Repository,
-			&CommitConfig{
-				Ignore:  []lib.PathPattern{ignoreTxt, ignoreDirC, ignoreDirE},
-				Author:  "author",
-				Message: "message",
-			},
+			&CommitConfig{PathFilter: pathFilter, Author: "author", Message: "message"},
 		)
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
@@ -240,11 +234,11 @@ func (rt *RepositoryTest) RemoveLocal(path string) {
 
 func (rt *RepositoryTest) VerifyRevisionSnapshot(
 	revisionId lib.RevisionId,
-	ignore []lib.PathPattern,
+	pathFilter lib.PathFilter,
 	files []FileInfo,
 ) {
 	rt.t.Helper()
-	entries := rt.RevisionSnapshot(revisionId, ignore)
+	entries := rt.RevisionSnapshot(revisionId, pathFilter)
 	for i, entry := range entries {
 		rt.assert.Equal(true, i < len(files), "not enough files, expected entry: %v", entry)
 		file := files[i]
@@ -254,7 +248,7 @@ func (rt *RepositoryTest) VerifyRevisionSnapshot(
 	rt.assert.Equal(len(files), len(entries), "not enough revision entries, expected file: %v", files[len(entries)-1])
 }
 
-func (rt *RepositoryTest) RevisionSnapshot(revisionId lib.RevisionId, ignore []lib.PathPattern) []*lib.RevisionEntry {
+func (rt *RepositoryTest) RevisionSnapshot(revisionId lib.RevisionId, pathFilter lib.PathFilter) []*lib.RevisionEntry {
 	rt.t.Helper()
 	tmpDir := filepath.Join(rt.t.TempDir(), "revision-snapshot")
 	defer os.RemoveAll(tmpDir) //nolint:errcheck
@@ -262,7 +256,7 @@ func (rt *RepositoryTest) RevisionSnapshot(revisionId lib.RevisionId, ignore []l
 	snapshot, err := lib.NewRevisionSnapshot(rt.Repository, revisionId, tmpDir)
 	rt.assert.NoError(err)
 	defer snapshot.Close() //nolint:errcheck
-	reader, err := snapshot.Reader(ignore)
+	reader, err := snapshot.Reader(pathFilter)
 	rt.assert.NoError(err)
 	entries := []*lib.RevisionEntry{}
 	for {
@@ -282,7 +276,7 @@ type FileInfo struct {
 }
 
 func fakeCommitConfig() *CommitConfig {
-	return &CommitConfig{Ignore: nil, Author: "author", Message: "message"}
+	return &CommitConfig{PathFilter: nil, Author: "author", Message: "message"}
 }
 
 func testRepository(t *testing.T, dir string) (*lib.Repository, *lib.FileStorage) {

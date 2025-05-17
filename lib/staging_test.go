@@ -160,9 +160,9 @@ func TestStagingCommit(t *testing.T) {
 		head, err := repo.Head()
 		assert.NoError(err)
 
-		ignoreB, err := NewPathPattern("a/b")
+		filter, err := NewPathExclusionFilter([]string{"a/b"}, []string{})
 		assert.NoError(err)
-		rev1, err := commitStaging(t, repo, head, []PathPattern{ignoreB}, []testFile{
+		rev1, err := commitStaging(t, repo, head, filter, []testFile{
 			{"a/1.txt", 0, RevisionEntryAdd},
 			{"a/2.txt", 0, RevisionEntryAdd},
 			{"a/b/3.txt", 0, RevisionEntryAdd},
@@ -243,11 +243,11 @@ func fuzzTesting(t *testing.T, randSeed uint64, debug bool) {
 				staged[path] = fakeFileMetadata(0)
 			}
 		}
-		ignore := []PathPattern{}
+		pathFilter := &PathExclusionFilter{nil, nil}
 		for i := range numIgnored {
 			pattern, err := NewPathPattern(fmt.Sprintf("a/%03d.txt", i))
 			assert.NoError(err)
-			ignore = append(ignore, pattern)
+			pathFilter.Excludes = append(pathFilter.Excludes, pattern)
 		}
 		files := make([]testFile, 0, len(staged))
 		for path, md := range staged {
@@ -260,7 +260,7 @@ func fuzzTesting(t *testing.T, randSeed uint64, debug bool) {
 				fmt.Printf("%3d: %s %s\n", i, file.path, ModeAndPerm(file.mode))
 			}
 		}
-		nextRevId, err := commitStaging(t, repo, revId, ignore, files)
+		nextRevId, err := commitStaging(t, repo, revId, pathFilter, files)
 		if errors.Is(err, ErrEmptyCommit) {
 			assert.Equal(0, len(repoState), "repository should be empty")
 			assert.Equal(0, len(staged), "no files should have been staged")
@@ -270,7 +270,7 @@ func fuzzTesting(t *testing.T, randSeed uint64, debug bool) {
 		// Filter out the ignored paths from staged.
 		filteredStaged := map[string]*FileMetadata{}
 		for path, md := range staged {
-			if slices.IndexFunc(ignore, func(p PathPattern) bool { return p.Match(path) }) == -1 {
+			if pathFilter.Include(path) {
 				filteredStaged[path] = md
 			}
 		}
@@ -319,12 +319,12 @@ func commitStaging(
 	t *testing.T,
 	repo *Repository,
 	base RevisionId,
-	ignore []PathPattern,
+	pathFilter PathFilter,
 	files []testFile,
 ) (RevisionId, error) {
 	t.Helper()
 	assert := NewAssert(t)
-	st, err := NewStaging(base, ignore, t.TempDir())
+	st, err := NewStaging(base, pathFilter, t.TempDir())
 	assert.NoError(err)
 	addFiles(t, st, files)
 

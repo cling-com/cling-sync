@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 
@@ -14,9 +13,9 @@ import (
 )
 
 type CommitConfig struct {
-	Ignore  []lib.PathPattern
-	Author  string
-	Message string
+	PathFilter lib.PathFilter
+	Author     string
+	Message    string
 }
 
 // Commit all changes in the local directory.
@@ -45,11 +44,16 @@ func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.R
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create path pattern")
 	}
-	ignore := config.Ignore
-	ignore = append(ignore, clingPattern)
+	clingFilter := &lib.PathExclusionFilter{Excludes: []lib.PathPattern{clingPattern}, Includes: nil}
+	var pathFilter lib.PathFilter
+	if config.PathFilter != nil {
+		pathFilter = &lib.AllPathFilter{Filters: []lib.PathFilter{config.PathFilter, clingFilter}}
+	} else {
+		pathFilter = clingFilter
+	}
 
 	// Stage all files.
-	staging, err := lib.NewStaging(head, ignore, stagingTmpDir)
+	staging, err := lib.NewStaging(head, pathFilter, stagingTmpDir)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create staging")
 	}
@@ -60,7 +64,7 @@ func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.R
 		relPath, err := filepath.Rel(src, path)
 		// Even though files are filtered out in Staging.Add, we still
 		// want to eagerly exclude them to avoid unnecessary work (encryption/file hash).
-		if slices.IndexFunc(ignore, func(p lib.PathPattern) bool { return p.Match(relPath) }) != -1 {
+		if !pathFilter.Include(relPath) {
 			return nil
 		}
 		if err != nil {
