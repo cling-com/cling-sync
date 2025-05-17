@@ -97,7 +97,7 @@ func (rs *RevisionSnapshotReader) Read() (*RevisionEntry, error) {
 	}
 }
 
-func revisionNWayMerge(repository *Repository, revisions []*Revision, targetFile string) error {
+func revisionNWayMerge(repository *Repository, revisions []*Revision, targetFile string) error { //nolint:funlen
 	file, err := os.OpenFile(targetFile, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return WrapErrorf(err, "failed to open target file for writing")
@@ -119,13 +119,18 @@ func revisionNWayMerge(repository *Repository, revisions []*Revision, targetFile
 	}
 	// We are done if the heap only contains `nil` values.
 	for slices.IndexFunc(heap, func(e *RevisionEntry) bool { return e != nil }) != -1 {
-		// Find the smallest fullPath.
-		fullPath := Path("")
+		// Find the smallest revision entry (by path).
+		// Making sure to use RevisionEntryPathCompare to guarantee our established sorting order.
+		smallest := heap[0]
 		for _, re := range heap {
-			if re != nil && (fullPath == "" || re.Path < fullPath) {
-				fullPath = re.Path
+			if re == nil {
+				continue
+			}
+			if smallest == nil || RevisionEntryPathCompare(re, smallest) == -1 {
+				smallest = re
 			}
 		}
+		fullPath := smallest.Path
 		// Find the newest entry and read the next entries for all revisions
 		// that match the fullPath
 		var newest *RevisionEntry

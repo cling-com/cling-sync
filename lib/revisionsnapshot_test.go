@@ -81,6 +81,48 @@ func TestRevisionSnapshot(t *testing.T) {
 		assert.Equal([]*RevisionEntry{}, entries)
 	})
 
+	t.Run("Sort order is files, directories, and subdirectories", func(t *testing.T) {
+		// This basically makes sure that we always use `RevisionEntryPathCompare`.
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		_, err := testCommit(
+			t,
+			repo,
+			fakeRevisionEntryMode("a", RevisionEntryAdd, ModeDir),
+			fakeRevisionEntry("z.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/b/3.txt", RevisionEntryAdd),
+		)
+		assert.NoError(err)
+		_, err = testCommit(
+			t,
+			repo,
+			fakeRevisionEntryMode("a", RevisionEntryAdd, ModeDir),
+			fakeRevisionEntryMode("a/b", RevisionEntryAdd, ModeDir),
+		)
+		assert.NoError(err)
+		revId3, err := testCommit(
+			t,
+			repo,
+			fakeRevisionEntry("a.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+		)
+		assert.NoError(err)
+
+		entries := readRevisionSnapshot(t, repo, revId3, nil)
+		assert.Equal([]*RevisionEntry{
+			fakeRevisionEntry("a.txt", RevisionEntryAdd),
+			fakeRevisionEntry("z.txt", RevisionEntryAdd),
+			fakeRevisionEntryMode("a", RevisionEntryAdd, ModeDir),
+			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+			fakeRevisionEntryMode("a/b", RevisionEntryAdd, ModeDir),
+			fakeRevisionEntry("a/b/3.txt", RevisionEntryAdd),
+		}, entries)
+	})
+
 	t.Run("Ignored paths", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

@@ -41,9 +41,9 @@ func TestCommit(t *testing.T) {
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
 			{"a.txt", 1},
+			{"e.txt", 5},
 			{"c", 0},
 			{"c/1.txt", 3},
-			{"e.txt", 5},
 		})
 	})
 

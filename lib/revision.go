@@ -103,6 +103,39 @@ func UnmarshalRevision(r io.Reader) (*Revision, error) {
 	return &c, br.Err
 }
 
+// Compare two revision entries by their full path.
+//
+// The sorting order is:
+//   - directory
+//   - files inside the directory
+//   - sub-directory
+//   - files inside the sub-directory
+//   - ...
+//
+// Example:
+//   - a.txt
+//   - z.txt
+//   - sub/
+//   - sub/a.txt
+//   - sub/z.txt
+//   - sub/sub/
+//   - sub/sub/a.txt
+//   - sub/sub/z.txt
+func RevisionEntryPathCompare(a, b *RevisionEntry) int {
+	key := func(e *RevisionEntry) string {
+		p := strings.ReplaceAll(string(e.Path), "/", "/1")
+		if e.Metadata != nil && e.Metadata.ModeAndPerm.IsDir() {
+			return p
+		}
+		lastSlash := strings.LastIndex(p, "/")
+		if lastSlash == -1 || lastSlash == len(p)-1 {
+			return "0" + p
+		}
+		return p[:lastSlash] + "/0" + p[lastSlash+2:]
+	}
+	return strings.Compare(key(a), key(b))
+}
+
 type RevisionEntry struct {
 	Path     Path
 	Type     RevisionEntryType
@@ -211,6 +244,8 @@ func (rr *RevisionReader) Read() (*RevisionEntry, error) {
 	return re, nil
 }
 
+// Create a sorted list (by `Path`) of revision entries using file based merge sort.
+// It is guaranteed that directory entries are sorted together with their contents.
 type RevisionEntryChunks struct {
 	tmpDir       string
 	filePrefix   string
@@ -290,7 +325,7 @@ func (c *RevisionEntryChunks) MergeChunks(write func(re *RevisionEntry) error) e
 		entries = append(entries, &entry{value, i})
 	}
 	compare := func(a, b *RevisionEntry) (int, error) {
-		c := strings.Compare(string(a.Path), string(b.Path))
+		c := RevisionEntryPathCompare(a, b)
 		if c == 0 {
 			return 0, Errorf("duplicate revision entry path: %s", a.Path)
 		}
@@ -335,7 +370,7 @@ func (c *RevisionEntryChunks) chunkFilename(index int) string {
 func (c *RevisionEntryChunks) rotateChunk() error {
 	var err error
 	slices.SortFunc(c.chunk, func(a, b *RevisionEntry) int {
-		c := strings.Compare(string(a.Path), string(b.Path))
+		c := RevisionEntryPathCompare(a, b)
 		if c == 0 {
 			err = Errorf("duplicate revision entry path: %s", a.Path)
 		}

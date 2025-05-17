@@ -161,7 +161,8 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 				return RevisionId{}, WrapErrorf(err, "failed to read revision snapshot")
 			}
 		}
-		if stg.Path == rev.Path { //nolint:gocritic
+		c := RevisionEntryPathCompare(stg, rev)
+		if c == 0 { //nolint:gocritic
 			if !stg.Metadata.IsEqual(rev.Metadata) {
 				// Write an update.
 				if err := add(stg.Path, RevisionEntryUpdate, stg.Metadata); err != nil {
@@ -170,7 +171,7 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 			}
 			stg = nil
 			rev = nil
-		} else if stg.Path < rev.Path {
+		} else if c < 0 {
 			// Write an add.
 			if err := add(stg.Path, RevisionEntryAdd, stg.Metadata); err != nil {
 				return RevisionId{}, err

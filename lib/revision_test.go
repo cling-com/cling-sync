@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,48 @@ func TestRevisionEntry(t *testing.T) {
 		test(RevisionEntryAdd)
 		test(RevisionEntryUpdate)
 		test(RevisionEntryDelete)
+	})
+
+	t.Run("RevisionPathCompare", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		dirEntry := func(path string) *RevisionEntry {
+			t.Helper()
+			entry := fakeRevisionEntry(path, RevisionEntryAdd)
+			entry.Metadata = fakeFileMetadata(ModeDir)
+			return entry
+		}
+		fileEntry := func(path string) *RevisionEntry {
+			t.Helper()
+			return fakeRevisionEntry(path, RevisionEntryAdd)
+		}
+		entries := []*RevisionEntry{
+			fileEntry("/a.zip"),
+			fileEntry("/abcd.txt"),
+			dirEntry("/a"),
+			fileEntry("/a/1.md"),
+			fileEntry("/a/2.md"),
+			dirEntry("/abc"),
+			fileEntry("/abc/1.md"),
+		}
+		// Randomize the order of the entries.
+		rand.Shuffle(len(entries), func(i, j int) { entries[i], entries[j] = entries[j], entries[i] })
+		actual := make([]*RevisionEntry, len(entries))
+		copy(actual, entries)
+		slices.SortFunc(actual, RevisionEntryPathCompare)
+		actualPaths := make([]string, len(actual))
+		for i, entry := range actual {
+			actualPaths[i] = string(entry.Path)
+		}
+		assert.Equal([]string{
+			"/a.zip",
+			"/abcd.txt",
+			"/a",
+			"/a/1.md",
+			"/a/2.md",
+			"/abc",
+			"/abc/1.md",
+		}, actualPaths)
 	})
 }
 
@@ -92,6 +135,58 @@ func TestRevisionEntryChunks(t *testing.T) {
 		assert.Equal("/some/dir2/filea", string(merged[7].Path))
 		assert.Equal("/some/dir2/filec", string(merged[8].Path))
 	})
+
+	t.Run("Sort order is files, directories, and subdirectories", func(t *testing.T) {
+		// This basically makes sure that we always use `RevisionEntryPathCompare`.
+		t.Parallel()
+		assert := NewAssert(t)
+		dir := t.TempDir()
+		// Use a small chunk size to force rotation.
+		sut := NewRevisionEntryChunks(dir, "chunk", 700)
+
+		add := func(path string, mode ModeAndPerm) {
+			err := sut.Add(&RevisionEntry{Path(path), RevisionEntryAdd, fakeFileMetadata(mode)})
+			assert.NoError(err)
+		}
+
+		add("sub", ModeDir)
+		add("sub/sub", ModeDir)
+		add(".a.txt", 0)
+		add("a.txt", 0)
+		add("z.txt", 0)
+		add("sub/.a.txt", 0)
+		add("sub/a.txt", 0)
+		add("sub/z.txt", 0)
+		add("sub/sub/.a.txt", 0)
+		add("sub/sub/a.txt", 0)
+		add("sub/sub/z.txt", 0)
+
+		merged := []*RevisionEntry{}
+		err := sut.MergeChunks(func(re *RevisionEntry) error {
+			merged = append(merged, re)
+			return nil
+		})
+		assert.Equal(3, sut.Chunks(), "should be multiple chunks")
+		assert.NoError(err)
+		actualPaths := make([]string, len(merged))
+		for i, entry := range merged {
+			actualPaths[i] = string(entry.Path)
+		}
+		assert.Equal([]string{
+			".a.txt",
+			"a.txt",
+			"z.txt",
+			"sub",
+			"sub/.a.txt",
+			"sub/a.txt",
+			"sub/z.txt",
+			"sub/sub",
+			"sub/sub/.a.txt",
+			"sub/sub/a.txt",
+			"sub/sub/z.txt",
+		}, actualPaths)
+	})
+
 	t.Run("Single chuck", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -112,6 +207,7 @@ func TestRevisionEntryChunks(t *testing.T) {
 		assert.Equal("/some/dir/filea", string(merged[0].Path))
 		assert.Equal("/some/dir/fileb", string(merged[1].Path))
 	})
+
 	t.Run("Duplicate paths in the same chunk are rejected", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -125,6 +221,7 @@ func TestRevisionEntryChunks(t *testing.T) {
 		err = sut.rotateChunk()
 		assert.Error(err, "duplicate revision entry path: /some/dir/file")
 	})
+
 	t.Run("Duplicate paths in different chunks are rejected", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -141,6 +238,7 @@ func TestRevisionEntryChunks(t *testing.T) {
 		err = sut.MergeChunks(func(re *RevisionEntry) error { return nil })
 		assert.Error(err, "duplicate revision entry path: /some/dir/file")
 	})
+
 	t.Run("Fuzzing", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -212,9 +310,13 @@ func fakeRevision(parent RevisionId) *Revision {
 }
 
 func fakeRevisionEntry(path string, entryType RevisionEntryType) *RevisionEntry {
+	return fakeRevisionEntryMode(path, entryType, 0)
+}
+
+func fakeRevisionEntryMode(path string, entryType RevisionEntryType, mode ModeAndPerm) *RevisionEntry {
 	var metadata *FileMetadata
 	if entryType != RevisionEntryDelete {
-		metadata = fakeFileMetadata(0)
+		metadata = fakeFileMetadata(mode)
 	}
 	return &RevisionEntry{
 		Path:     NewPath(strings.Split(path, "/")...),
