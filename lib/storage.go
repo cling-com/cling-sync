@@ -114,14 +114,18 @@ func (fs *FileStorage) HasBlock(blockId BlockId) (bool, error) {
 }
 
 func (fs *FileStorage) WriteBlock(block Block) (bool, error) { //nolint:funlen
-	if len(block.Data) > MaxBlockDataSize {
-		return false, Errorf("block data too large: %d bytes, max %d", len(block.Data), MaxBlockDataSize)
+	if len(block.EncryptedData) > MaxEncryptedBlockDataSize {
+		return false, Errorf(
+			"block data too large: %d bytes, max %d",
+			len(block.EncryptedData),
+			MaxEncryptedBlockDataSize,
+		)
 	}
-	if int(block.Header.DataSize) != len(block.Data) {
+	if int(block.Header.EncryptedDataSize) != len(block.EncryptedData) {
 		return false, Errorf(
 			"block header data size %d does not match block data size %d",
-			block.Header.DataSize,
-			len(block.Data),
+			block.Header.EncryptedDataSize,
+			len(block.EncryptedData),
 		)
 	}
 	targetPath := fs.blockPath(block.Header.BlockId)
@@ -165,7 +169,7 @@ func (fs *FileStorage) WriteBlock(block Block) (bool, error) { //nolint:funlen
 			tmpPath,
 		)
 	}
-	if _, err := file.Write(block.Data); err != nil {
+	if _, err := file.Write(block.EncryptedData); err != nil {
 		_ = file.Close()
 		// Try to delete the file in case of an error.
 		if err := os.Remove(tmpPath); err != nil {
@@ -231,8 +235,12 @@ func (fs *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHe
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to unmarshal block header of %s", path)
 	}
-	if int(header.DataSize) != bytesRead-BlockHeaderSize {
-		return nil, BlockHeader{}, Errorf("read %d bytes, expected %d", bytesRead-BlockHeaderSize, header.DataSize)
+	if int(header.EncryptedDataSize) != bytesRead-BlockHeaderSize {
+		return nil, BlockHeader{}, Errorf(
+			"read %d bytes, expected %d",
+			bytesRead-BlockHeaderSize,
+			header.EncryptedDataSize,
+		)
 	}
 	return buf[BlockHeaderSize:bytesRead], header, nil
 }

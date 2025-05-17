@@ -99,14 +99,14 @@ func TestFileStorageBlocks(t *testing.T) {
 
 		block := Block{
 			Header: BlockHeader{
-				EncryptedDEK: fakeEncryptedKey("1"),
-				BlockId:      fakeBlockId("1"),
-				Flags:        0xffffffffffffffff,
-				DataSize:     0, // is set below
+				EncryptedDEK:      fakeEncryptedKey("1"),
+				BlockId:           fakeBlockId("1"),
+				Flags:             0xffffffffffffffff,
+				EncryptedDataSize: 0, // is set below
 			},
-			Data: []byte("block 1 data"),
+			EncryptedData: []byte("block 1 data"),
 		}
-		block.Header.DataSize = uint32(len(block.Data)) //nolint:gosec
+		block.Header.EncryptedDataSize = uint32(len(block.EncryptedData)) //nolint:gosec
 		ok, err := sut.HasBlock(block.Header.BlockId)
 		assert.NoError(err)
 		assert.Equal(false, ok)
@@ -140,11 +140,11 @@ func TestFileStorageBlocks(t *testing.T) {
 		var dataSize uint32
 		err = binary.Read(header, binary.LittleEndian, &dataSize)
 		assert.NoError(err)
-		assert.Equal(len(block.Data), int(dataSize))
+		assert.Equal(len(block.EncryptedData), int(dataSize))
 		// Read data.
 		data, err := io.ReadAll(f)
 		assert.NoError(err)
-		assert.Equal(block.Data, data)
+		assert.Equal(block.EncryptedData, data)
 		_ = f.Close()
 
 		// Now `HasBlock` should return `true`.
@@ -156,7 +156,7 @@ func TestFileStorageBlocks(t *testing.T) {
 		readData, readHeader, err := sut.ReadBlock(block.Header.BlockId, BlockBuf{})
 		assert.NoError(err)
 		assert.Equal(block.Header, readHeader)
-		assert.Equal(block.Data, readData)
+		assert.Equal(block.EncryptedData, readData)
 
 		// Write the block again - it should be seen as already existing.
 		existed, err = sut.WriteBlock(block)
@@ -173,14 +173,14 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.NoError(err)
 		block := Block{
 			Header: BlockHeader{
-				EncryptedDEK: fakeEncryptedKey("1"),
-				BlockId:      fakeBlockId("1"),
-				Flags:        0,
-				DataSize:     0, // is set below
+				EncryptedDEK:      fakeEncryptedKey("1"),
+				BlockId:           fakeBlockId("1"),
+				Flags:             0,
+				EncryptedDataSize: 0, // is set below
 			},
-			Data: make([]byte, MaxBlockDataSize+1),
+			EncryptedData: make([]byte, MaxEncryptedBlockDataSize+1),
 		}
-		block.Header.DataSize = uint32(len(block.Data)) //nolint:gosec
+		block.Header.EncryptedDataSize = uint32(len(block.EncryptedData)) //nolint:gosec
 		_, err = sut.WriteBlock(block)
 		assert.Error(err, "block data too large")
 		_, err = os.Stat(sut.blockPath(block.Header.BlockId))
@@ -194,10 +194,10 @@ func TestBlockHeaderMarshalUnmarshal(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		header := BlockHeader{
-			EncryptedDEK: fakeEncryptedKey("1"),
-			BlockId:      fakeBlockId("1"),
-			Flags:        0,
-			DataSize:     1234,
+			EncryptedDEK:      fakeEncryptedKey("1"),
+			BlockId:           fakeBlockId("1"),
+			Flags:             0,
+			EncryptedDataSize: 1234,
 		}
 		buf := new(bytes.Buffer)
 		err := binary.Write(buf, binary.LittleEndian, header)

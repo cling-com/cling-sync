@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	MaxBlockSize     = 4 * 1024 * 1024
-	BlockHeaderSize  = 96
-	MaxBlockDataSize = MaxBlockSize - BlockHeaderSize - TotalCipherOverhead
+	MaxBlockSize              = 4 * 1024 * 1024
+	BlockHeaderSize           = 96
+	MaxEncryptedBlockDataSize = MaxBlockSize - BlockHeaderSize
+	MaxBlockDataSize          = MaxEncryptedBlockDataSize - TotalCipherOverhead
 )
 
 type BlockBuf [MaxBlockSize]byte
@@ -34,15 +35,15 @@ type RepositoryConfig struct {
 }
 
 type BlockHeader struct {
-	BlockId      BlockId
-	Flags        uint64 // See `BlockFlag` constants.
-	EncryptedDEK EncryptedKey
-	DataSize     uint32
+	BlockId           BlockId
+	Flags             uint64 // See `BlockFlag` constants.
+	EncryptedDEK      EncryptedKey
+	EncryptedDataSize uint32
 }
 
 type Block struct {
-	Header BlockHeader
-	Data   []byte
+	Header        BlockHeader
+	EncryptedData []byte
 }
 
 const EncryptionVersion uint16 = 1
@@ -200,8 +201,8 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (bool, BlockHeader, e
 	if err != nil {
 		return false, BlockHeader{}, WrapErrorf(err, "failed to encrypt data with DEK for block %s", blockId)
 	}
-	header.DataSize = uint32(len(encryptedData)) //nolint:gosec
-	block := Block{Header: header, Data: encryptedData}
+	header.EncryptedDataSize = uint32(len(encryptedData)) //nolint:gosec
+	block := Block{Header: header, EncryptedData: encryptedData}
 	exists, err := r.storage.WriteBlock(block)
 	if err != nil {
 		return false, BlockHeader{}, WrapErrorf(err, "failed to write block %s", blockId)
@@ -329,7 +330,7 @@ func MarshalBlockHeader(header *BlockHeader, w io.Writer) error {
 	bw.Write(StorageVersion)
 	bw.Write(header.Flags)
 	bw.Write(header.EncryptedDEK)
-	bw.Write(header.DataSize)
+	bw.Write(header.EncryptedDataSize)
 	bw.Write([10]byte{}) // padding
 	return bw.Err
 }
@@ -346,7 +347,7 @@ func UnmarshalBlockHeader(blockId BlockId, r io.Reader) (BlockHeader, error) {
 	var header BlockHeader
 	br.Read(&header.Flags)
 	br.Read(&header.EncryptedDEK)
-	br.Read(&header.DataSize)
+	br.Read(&header.EncryptedDataSize)
 	br.Skip(10) // padding
 	header.BlockId = blockId
 	return header, br.Err

@@ -26,6 +26,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(repo1.kekCipher, repo2.kekCipher)
 	})
+
 	t.Run("MasterKeyInfo.EncryptedKEK is actually encrypted with user's passphrase", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -47,6 +48,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(repo1.kekCipher, repo2.kekCipher)
 	})
+
 	t.Run("Tampering with UserKeySalt is detected", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -65,6 +67,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert.Error(err, "message authentication failed")
 		assert.Nil(repo2)
 	})
+
 	t.Run("Tampering with EncryptedKEK is detected", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -91,10 +94,10 @@ func TestRepositoryMarshalUnmarshalBlockHeader(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		sut := BlockHeader{
-			BlockId:      fakeBlockId("1"),
-			Flags:        12345,
-			EncryptedDEK: fakeEncryptedKey("1"),
-			DataSize:     67890,
+			BlockId:           fakeBlockId("1"),
+			Flags:             12345,
+			EncryptedDEK:      fakeEncryptedKey("1"),
+			EncryptedDataSize: 67890,
 		}
 		buf := bytes.NewBuffer([]byte{})
 		err := MarshalBlockHeader(&sut, buf)
@@ -124,6 +127,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Equal(writeData, readData)
 		assert.Equal(writeHeader, readHeader)
 	})
+
 	// Because we write `Block` / `BlockHeader` to disk and might reuse those objects
 	// we have to make sure that the struct definition does not change.
 	t.Run("Structure of `BlockHeader` and `Block` must not change unexpectedly", func(t *testing.T) {
@@ -143,7 +147,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Equal("EncryptedKey", encryptedDEK.Type.Name())
 		assert.Equal(72, int(encryptedDEK.Type.Size()))
 		dataSize := header.Field(3)
-		assert.Equal("DataSize", dataSize.Name)
+		assert.Equal("EncryptedDataSize", dataSize.Name)
 		assert.Equal("uint32", dataSize.Type.Name())
 		assert.Equal(4, int(dataSize.Type.Size()))
 		assert.Equal(96, BlockHeaderSize)
@@ -154,8 +158,41 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Equal("Header", headerField.Name)
 		assert.Equal("BlockHeader", headerField.Type.Name())
 		dataField := block.Field(1)
-		assert.Equal("Data", dataField.Name)
+		assert.Equal("EncryptedData", dataField.Name)
 		assert.Equal("[]uint8", dataField.Type.String())
+	})
+
+	t.Run("Maximum block size", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, storage := testRepository(t)
+
+		writeData := make([]byte, MaxBlockDataSize)
+		_, header, err := repo.WriteBlock(writeData, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(MaxEncryptedBlockDataSize, int(header.EncryptedDataSize))
+		readData, _, err := repo.ReadBlock(header.BlockId, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(writeData, readData)
+
+		// Get the file size of the block file.
+		file, err := os.Open(storage.blockPath(header.BlockId))
+		assert.NoError(err)
+		defer file.Close() //nolint:errcheck
+		stat, err := file.Stat()
+		assert.NoError(err)
+		assert.Equal(int64(MaxBlockSize), stat.Size())
+	})
+
+	t.Run("Exceeding maximum block size", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		writeData := make([]byte, MaxBlockDataSize+1)
+		_, header, err := repo.WriteBlock(writeData, BlockBuf{})
+		assert.Error(err, "data size 4194169 exceeds maximum block size 4194168")
+		assert.Equal(BlockHeader{}, header) //nolint:exhaustruct
 	})
 }
 
