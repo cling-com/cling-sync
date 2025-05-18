@@ -24,7 +24,8 @@ func TestWorkspaceNewAndOpen(t *testing.T) {
 		// Open workspace.
 		open, err := OpenWorkspace(local)
 		assert.NoError(err)
-		assert.Equal(ws, open)
+		assert.Equal(ws.RemoteRepository, open.RemoteRepository)
+		assert.Equal(ws.WorkspacePath, open.WorkspacePath)
 	})
 
 	t.Run("Try to open non existing workspace", func(t *testing.T) {
@@ -72,7 +73,7 @@ func TestWorkspaceNewUsesAbsolutePaths(t *testing.T) { //nolint:paralleltest
 	// Open workspace.
 	open, err := OpenWorkspace(local)
 	assert.NoError(err)
-	assert.Equal(ws, open)
+	assert.Equal(ws.WorkspacePath, open.WorkspacePath)
 
 	localAbs, err := filepath.Abs(local)
 	assert.NoError(err)

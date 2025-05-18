@@ -48,19 +48,23 @@ func WrapErrorf(err error, msg string, msgArgs ...any) error {
 }
 
 func internalWrapErrorf(err error, msg string, msgArgs ...any) error {
-	pc := make([]uintptr, 3)
-	runtime.Callers(3, pc)
-	frames := runtime.CallersFrames(pc)
-	location := ""
-	frame, ok := frames.Next()
-	if ok {
-		location = fmt.Sprintf("%s:%d", frame.File, frame.Line)
-	}
+	location := location(3)
 	return &WrappedError{
 		msg:      fmt.Sprintf(msg, msgArgs...),
 		err:      err,
 		location: location,
 	}
+}
+
+func location(skip int) string {
+	pc := make([]uintptr, skip+1)
+	runtime.Callers(skip+1, pc)
+	frames := runtime.CallersFrames(pc)
+	frame, ok := frames.Next()
+	if ok {
+		return fmt.Sprintf("%s:%d", frame.File, frame.Line)
+	}
+	return ""
 }
 
 func Errorf(msg string, msgArgs ...any) error {

@@ -14,6 +14,7 @@ type RemoteRepository string
 type Workspace struct {
 	RemoteRepository RemoteRepository
 	WorkspacePath    string
+	tmpDir           string
 }
 
 var ErrNoWorkspace = lib.Errorf("no workspace found")
@@ -41,7 +42,11 @@ func OpenWorkspace(path string) (*Workspace, error) {
 	if !ok {
 		return nil, lib.Errorf("invalid repository config, key `remote.repository` not found")
 	}
-	return &Workspace{RemoteRepository: RemoteRepository(remoteRepository), WorkspacePath: path}, nil
+	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-workspace")
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to create temporary directory")
+	}
+	return &Workspace{RemoteRepository(remoteRepository), path, tmpDir}, nil
 }
 
 // Create a new workspace. Tests whether we are already inside a workspace or repository
@@ -95,5 +100,24 @@ This file contains the configuration of your cling workspace.
 	if err := w.Close(); err != nil {
 		return nil, lib.WrapErrorf(err, "failed to close workspace config file %s", configPath)
 	}
-	return &Workspace{RemoteRepository: remoteRepository, WorkspacePath: path}, nil
+	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-workspace")
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to create temporary directory")
+	}
+	return &Workspace{remoteRepository, path, tmpDir}, nil
+}
+
+func (w *Workspace) NewTmpDir(name string) (string, error) {
+	tmpDir, err := os.MkdirTemp(w.tmpDir, name)
+	if err != nil {
+		return "", lib.WrapErrorf(err, "failed to create temporary directory")
+	}
+	return tmpDir, nil
+}
+
+func (w *Workspace) Close() error {
+	if err := os.RemoveAll(w.tmpDir); err != nil {
+		return lib.WrapErrorf(err, "failed to remove temporary directory %s", w.tmpDir)
+	}
+	return nil
 }

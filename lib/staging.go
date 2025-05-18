@@ -58,29 +58,22 @@ func (s *Staging) Add(path Path, md *FileMetadata) (bool, error) {
 	return true, nil
 }
 
-// Commit by merging the staging snapshot with the revision snapshot. The new revision will
-// only contain the entries that are in the staging snapshot.
-//
-// Return `ErrEmptyCommit` if there are no changes.
-//
-//nolint:funlen
-func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, info *CommitInfo) (RevisionId, error) {
+// Merge the staging snapshot with the revision snapshot.
+// The resulting `RevisionEntryChunks` will only contain entries that are in the staging snapshot.
+func (s *Staging) MergeWithSnapshot(repository *Repository) (*RevisionEntryChunks, error) { //nolint:funlen
 	if err := s.mergeChunks(); err != nil {
-		return RevisionId{}, WrapErrorf(err, "failed to merge staging chunks")
+		return nil, WrapErrorf(err, "failed to merge staging chunks")
 	}
-	if s.BaseRevision != snapshot.RevisionId {
-		return RevisionId{}, Errorf(
-			"staging base revision %s does not match snapshot revision %s",
-			s.BaseRevision,
-			snapshot.RevisionId,
-		)
+	snapshot, err := s.revisionSnapshot(repository)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to create revision snapshot")
 	}
 	head, err := repository.Head()
 	if err != nil {
-		return RevisionId{}, WrapErrorf(err, "failed to read repository head")
+		return nil, WrapErrorf(err, "failed to read repository head")
 	}
 	if head != s.BaseRevision {
-		return RevisionId{}, Errorf(
+		return nil, Errorf(
 			"staging base revision %s does not match repository head %s",
 			s.BaseRevision,
 			head,
@@ -88,11 +81,11 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 	}
 	revReader, err := snapshot.Reader(s.PathFilter)
 	if err != nil {
-		return RevisionId{}, WrapErrorf(err, "failed to open revision snapshot")
+		return nil, WrapErrorf(err, "failed to open revision snapshot")
 	}
 	stgFile, err := os.Open(s.targetFile)
 	if err != nil {
-		return RevisionId{}, WrapErrorf(err, "failed to open staging snapshot")
+		return nil, WrapErrorf(err, "failed to open staging snapshot")
 	}
 	defer stgFile.Close() //nolint:errcheck
 	stgReader := bufio.NewReader(stgFile)
@@ -119,7 +112,7 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 					if rev != nil { // The current one might be nil.
 						// Write a delete.
 						if err := add(rev.Path, RevisionEntryDelete, nil); err != nil {
-							return RevisionId{}, err
+							return nil, err
 						}
 					}
 					rev, err = revReader.Read()
@@ -127,13 +120,13 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 						break
 					}
 					if err != nil {
-						return RevisionId{}, WrapErrorf(err, "failed to read revision snapshot")
+						return nil, WrapErrorf(err, "failed to read revision snapshot")
 					}
 				}
 				break
 			}
 			if err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to read staging snapshot")
+				return nil, WrapErrorf(err, "failed to read staging snapshot")
 			}
 		}
 		if rev == nil {
@@ -144,7 +137,7 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 				for {
 					if stg != nil { // The current one might be nil.
 						if err := add(stg.Path, RevisionEntryAdd, stg.Metadata); err != nil {
-							return RevisionId{}, err
+							return nil, err
 						}
 					}
 					stg, err = UnmarshalRevisionEntry(stgReader)
@@ -152,21 +145,21 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 						break
 					}
 					if err != nil {
-						return RevisionId{}, WrapErrorf(err, "failed to read staging snapshot")
+						return nil, WrapErrorf(err, "failed to read staging snapshot")
 					}
 				}
 				break
 			}
 			if err != nil {
-				return RevisionId{}, WrapErrorf(err, "failed to read revision snapshot")
+				return nil, WrapErrorf(err, "failed to read revision snapshot")
 			}
 		}
 		c := RevisionEntryPathCompare(stg, rev)
 		if c == 0 { //nolint:gocritic
-			if !stg.Metadata.IsEqual(rev.Metadata) {
+			if !stg.Metadata.IsEqualIgnoringBlockIds(rev.Metadata) {
 				// Write an update.
 				if err := add(stg.Path, RevisionEntryUpdate, stg.Metadata); err != nil {
-					return RevisionId{}, err
+					return nil, err
 				}
 			}
 			stg = nil
@@ -174,21 +167,33 @@ func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, inf
 		} else if c < 0 {
 			// Write an add.
 			if err := add(stg.Path, RevisionEntryAdd, stg.Metadata); err != nil {
-				return RevisionId{}, err
+				return nil, err
 			}
 			stg = nil
 			continue
 		} else {
 			// Write a delete.
 			if err := add(rev.Path, RevisionEntryDelete, nil); err != nil {
-				return RevisionId{}, err
+				return nil, err
 			}
 			rev = nil
 			continue
 		}
 	}
 	if err := cw.Close(); err != nil {
-		return RevisionId{}, WrapErrorf(err, "failed to close revision chunk writer")
+		return nil, WrapErrorf(err, "failed to close revision chunk writer")
+	}
+	return cw, nil
+}
+
+// First, merge the staging snapshot with the revision snapshot (see `MergeWithSnapshot`).
+// Then, create a new revision with the merged `RevisionEntryChunks`.
+//
+// Return `ErrEmptyCommit` if there are no changes.
+func (s *Staging) Commit(repository *Repository, info *CommitInfo) (RevisionId, error) {
+	cw, err := s.MergeWithSnapshot(repository)
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to merge staging chunks")
 	}
 	if cw.Chunks() == 0 {
 		return RevisionId{}, ErrEmptyCommit
@@ -259,4 +264,13 @@ func (s *Staging) mergeChunks() error {
 		return WrapErrorf(err, "failed to close target file")
 	}
 	return nil
+}
+
+func (s *Staging) revisionSnapshot(repository *Repository) (*RevisionSnapshot, error) {
+	tmpDir := filepath.Join(s.tmpDir, "revision-snapshot")
+	_ = os.RemoveAll(tmpDir)
+	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+		return nil, WrapErrorf(err, "failed to create temporary directory %s", tmpDir)
+	}
+	return NewRevisionSnapshot(repository, s.BaseRevision, tmpDir)
 }

@@ -3,6 +3,8 @@ package lib
 import (
 	"bytes"
 	"io/fs"
+	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -116,6 +118,81 @@ func TestFileMetadata(t *testing.T) {
 		read, err := UnmarshalFileMetadata(&buf)
 		assert.NoError(err)
 		assert.Equal(sut, read)
+	})
+
+	t.Run("IsEqualIgnoringBlockIds", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+
+		base := fakeFileMetadata(0)
+		actualFields := make([]string, 0)
+		typ := reflect.TypeOf(*base)
+		for i := range typ.NumField() {
+			actualFields = append(actualFields, typ.Field(i).Name)
+		}
+		slices.Sort(actualFields)
+		assert.Equal(
+			[]string{
+				"BirthtimeNSec",
+				"BirthtimeSec",
+				"BlockIds",
+				"FileHash",
+				"GID",
+				"MTimeNSec",
+				"MTimeSec",
+				"ModeAndPerm",
+				"Size",
+				"SymlinkTarget",
+				"UID",
+			}, actualFields, "FileMetadata field names have changed, make sure to update IsEqualIgnoringBlockIds",
+		)
+
+		actual := *base
+		assert.Equal(true, base.IsEqualIgnoringBlockIds(&actual))
+
+		actual = *base
+		actual.BlockIds = append(actual.BlockIds, fakeBlockId("3"))
+		assert.Equal(true, base.IsEqualIgnoringBlockIds(&actual), "BlockIds are ignored")
+
+		actual = *base
+		actual.ModeAndPerm += 1
+		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+
+		actual = *base
+		actual.MTimeSec += 1
+		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+
+		actual = *base
+		actual.MTimeNSec += 1
+		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+
+		actual = *base
+		actual.Size += 1
+		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+
+		actual = *base
+		actual.FileHash[0] += 1
+		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+
+		actual = *base
+		actual.SymlinkTarget += "_modified"
+		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+
+		actual = *base
+		actual.UID += 1
+		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+
+		actual = *base
+		actual.GID += 1
+		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+
+		actual = *base
+		actual.BirthtimeSec += 1
+		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+
+		actual = *base
+		actual.BirthtimeNSec += 1
+		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
 	})
 }
 

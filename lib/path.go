@@ -224,6 +224,19 @@ func (pef *PathExclusionFilter) Include(p string) bool {
 	return true
 }
 
+type PathInclusionFilter struct {
+	Includes []PathPattern
+}
+
+func (pif *PathInclusionFilter) Include(p string) bool {
+	for _, include := range pif.Includes {
+		if include.Match(p) {
+			return true
+		}
+	}
+	return false
+}
+
 // A PathFilter that combines multiple PathFilters.
 // It returns true if *all* of the PathFilters returns true.
 type AllPathFilter struct {

@@ -96,11 +96,36 @@ func initCmd(argv []string) error { //nolint:funlen
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to initialize repository")
 	}
-	_, err = workspace.NewWorkspace(".", workspace.RemoteRepository(repositoryPath))
+	ws, err := workspace.NewWorkspace(".", workspace.RemoteRepository(repositoryPath))
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create workspace")
 	}
+	ws.Close() //nolint:errcheck,gosec
 	return nil
+}
+
+func pathPatternFlag(flags *flag.FlagSet, name string, usage string, value *[]lib.PathPattern) {
+	flags.Func(
+		name,
+		// todo: Centralize this description or add it everywhere patterns are used.
+		// todo: Add examples.
+		usage+"\n"+strings.TrimSpace(`
+A pattern must match the full path or a directory within the path.
+Include patterns (see --include) can be used to override exclude patterns.
+Pattern syntax:
+    **      matches any number of directories
+    *       matches any number of characters in a single directory
+    ?       matches a single character
+		`),
+		func(pattern string) error {
+			p, err := lib.NewPathPattern(pattern)
+			if err != nil {
+				return lib.WrapErrorf(err, "invalid pattern: %s", pattern)
+			}
+			*value = append(*value, p)
+			return nil
+		},
+	)
 }
 
 func commitCmd(argv []string) error { //nolint:funlen
@@ -108,6 +133,7 @@ func commitCmd(argv []string) error { //nolint:funlen
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
+	defer ws.Close() //nolint:errcheck
 	args := struct { //nolint:exhaustruct
 		Help    bool
 		Message string
@@ -125,44 +151,17 @@ func commitCmd(argv []string) error { //nolint:funlen
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
-	flags.Func(
+	pathPatternFlag(
+		flags,
 		"exclude",
-		// todo: Centralize this description or add it everywhere patterns are used.
-		// todo: Add examples.
-		strings.TrimSpace(`
-Exclude paths matching the given pattern (can be used multiple times).
-A pattern must match the full path or a directory within the path.
-Include patterns (see --include) can be used to override exclude patterns.
-Pattern syntax:
-    **      matches any number of directories
-    *       matches any number of characters in a single directory
-    ?       matches a single character
-		`),
-		func(pattern string) error {
-			p, err := lib.NewPathPattern(pattern)
-			if err != nil {
-				return lib.WrapErrorf(err, "invalid pattern: %s", pattern)
-			}
-			args.Exclude = append(args.Exclude, p)
-			return nil
-		},
+		"Exclude paths matching the given pattern (can be used multiple times).",
+		&args.Exclude,
 	)
-	flags.Func(
+	pathPatternFlag(
+		flags,
 		"include",
-		// todo: Centralize this description or add it everywhere patterns are used.
-		// todo: Add examples.
-		strings.TrimSpace(`
-Include patterns are used to override exclude patterns. They are not evaluated
-when determining whether a path should be included in the commit.
-		`),
-		func(pattern string) error {
-			p, err := lib.NewPathPattern(pattern)
-			if err != nil {
-				return lib.WrapErrorf(err, "invalid pattern: %s", pattern)
-			}
-			args.Include = append(args.Include, p)
-			return nil
-		},
+		"Include paths matching the given pattern (can be used multiple times).",
+		&args.Include,
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s commit\n\n", appName)
@@ -189,10 +188,15 @@ when determining whether a path should be included in the commit.
 		return err
 	}
 	pathFilter := &lib.PathExclusionFilter{Excludes: args.Exclude, Includes: args.Include}
+	tmpDir, err := ws.NewTmpDir("commit")
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
 	revisionId, err := workspace.Commit(
 		ws.WorkspacePath,
 		repository,
 		&workspace.CommitConfig{PathFilter: pathFilter, Author: args.Author, Message: args.Message},
+		tmpDir,
 	)
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -201,11 +205,100 @@ when determining whether a path should be included in the commit.
 	return nil
 }
 
+func statusCmd(argv []string) error { //nolint:funlen
+	ws, err := workspace.OpenWorkspace(".")
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open workspace")
+	}
+	defer ws.Close() //nolint:errcheck
+	args := struct { //nolint:exhaustruct
+		Help    bool
+		Short   bool
+		Exclude []lib.PathPattern
+		Include []lib.PathPattern
+	}{}
+	flags := flag.NewFlagSet("ls", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.BoolVar(&args.Short, "short", false, "Only show the number of added, updated, and deleted files")
+	pathPatternFlag(
+		flags,
+		"exclude",
+		"Exclude paths matching the given pattern (can be used multiple times).",
+		&args.Exclude,
+	)
+	pathPatternFlag(
+		flags,
+		"include",
+		"Include paths matching the given pattern (can be used multiple times).",
+		&args.Include,
+	)
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s status [pattern]\n\n", appName)
+		fmt.Fprintf(os.Stderr, "Show the difference between the working directory and the repository.\n\n")
+		fmt.Fprintf(os.Stderr, "  pattern\n")
+		fmt.Fprintf(os.Stderr, "        The pattern syntax is the same as for the `--exclude` option.\n")
+		fmt.Fprintf(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	var pathFilter lib.PathFilter
+	if len(flags.Args()) == 1 {
+		p, err := lib.NewPathPattern(flags.Arg(0))
+		if err != nil {
+			return lib.WrapErrorf(err, "invalid pattern: %s", flags.Arg(0))
+		}
+		pathFilter = &lib.PathInclusionFilter{Includes: []lib.PathPattern{p}}
+	}
+	if len(flags.Args()) > 1 {
+		return lib.Errorf("too many positional arguments")
+	}
+	if len(args.Exclude) == 0 && len(args.Include) > 0 {
+		return lib.Errorf("include patterns can only be used with exclude patterns")
+	}
+	if len(args.Exclude) > 0 {
+		exclusionFilter := &lib.PathExclusionFilter{Excludes: args.Exclude, Includes: args.Include}
+		if pathFilter != nil {
+			pathFilter = &lib.AllPathFilter{Filters: []lib.PathFilter{pathFilter, exclusionFilter}}
+		} else {
+			pathFilter = exclusionFilter
+		}
+	}
+	repository, err := openRepository(ws)
+	if err != nil {
+		return err
+	}
+	tmpDir, err := ws.NewTmpDir("status")
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	result, err := workspace.Status(ws.WorkspacePath, repository, pathFilter, tmpDir)
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Short {
+		fmt.Println(result.Summary())
+		return nil
+	}
+	for _, file := range result {
+		fmt.Println(file.Format())
+	}
+	fmt.Println()
+	fmt.Println(result.Summary())
+	return nil
+}
+
 func lsCmd(argv []string) error { //nolint:funlen
 	ws, err := workspace.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
+	defer ws.Close() //nolint:errcheck
 	args := struct { //nolint:exhaustruct
 		Help     bool
 		Revision string
@@ -222,7 +315,6 @@ func lsCmd(argv []string) error { //nolint:funlen
 		fmt.Fprintf(os.Stderr, "List files in the repository.\n\n")
 		fmt.Fprintf(os.Stderr, "  pattern\n")
 		fmt.Fprintf(os.Stderr, "        The pattern syntax is the same as for the `commit --ignore` option.\n")
-		fmt.Fprintf(os.Stderr, "        A pattern must match the full path of the file.\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -299,6 +391,7 @@ func logCmd(argv []string) error {
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
+	defer ws.Close() //nolint:errcheck
 	args := struct { //nolint:exhaustruct
 		Help  bool
 		Short bool
@@ -402,6 +495,8 @@ func main() {
 		err = logCmd(argv)
 	case "ls":
 		err = lsCmd(argv)
+	case "status":
+		err = statusCmd(argv)
 	case "":
 		flag.Usage()
 		os.Exit(0)

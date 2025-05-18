@@ -20,42 +20,48 @@ type CommitConfig struct {
 
 // Commit all changes in the local directory.
 // `.cling` is always ignored.
-func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.RevisionId, error) { //nolint:funlen
+func Commit(src string, repository *lib.Repository, config *CommitConfig, tmpDir string) (lib.RevisionId, error) {
+	staging, err := NewStaging(src, repository, config.PathFilter, true, tmpDir)
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create staging")
+	}
+	return staging.Commit( //nolint:wrapcheck
+		repository,
+		&lib.CommitInfo{Author: config.Author, Message: config.Message},
+	)
+}
+
+// Build a `lib.Staging` from the `src` directory.
+// `.cling` is always ignored.
+//
+// Parameters:
+//   - `addContents`: Whether to add the contents of the `src` directory to the repository.
+func NewStaging(
+	src string,
+	repository *lib.Repository,
+	pathFilter lib.PathFilter,
+	addContents bool,
+	tmpDir string,
+) (*lib.Staging, error) {
 	head, err := repository.Head()
 	if err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get head")
+		return nil, lib.WrapErrorf(err, "failed to get head")
 	}
-	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync")
-	if err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create temporary directory")
-	}
-	_ = os.RemoveAll(tmpDir)
-	defer os.RemoveAll(tmpDir) //nolint:errcheck
-	stagingTmpDir := filepath.Join(tmpDir, "staging")
-	snapshotTmpDir := filepath.Join(tmpDir, "snapshot")
-	for _, d := range []string{stagingTmpDir, snapshotTmpDir} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to temporary directory %s", d)
-		}
-	}
-	// todo: We should rename `ignore` to `exclude` and add `include`
-	//		 patterns that override the exclude patterns.
 	clingPattern, err := lib.NewPathPattern(".cling")
 	if err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create path pattern")
+		return nil, lib.WrapErrorf(err, "failed to create path pattern")
 	}
 	clingFilter := &lib.PathExclusionFilter{Excludes: []lib.PathPattern{clingPattern}, Includes: nil}
-	var pathFilter lib.PathFilter
-	if config.PathFilter != nil {
-		pathFilter = &lib.AllPathFilter{Filters: []lib.PathFilter{config.PathFilter, clingFilter}}
+	if pathFilter != nil {
+		pathFilter = &lib.AllPathFilter{Filters: []lib.PathFilter{pathFilter, clingFilter}}
 	} else {
 		pathFilter = clingFilter
 	}
 
 	// Stage all files.
-	staging, err := lib.NewStaging(head, pathFilter, stagingTmpDir)
+	staging, err := lib.NewStaging(head, pathFilter, tmpDir)
 	if err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create staging")
+		return nil, lib.WrapErrorf(err, "failed to create staging")
 	}
 	err = filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -74,7 +80,7 @@ func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.R
 			return nil
 		}
 		repoPath := lib.NewPath(strings.Split(relPath, string(os.PathSeparator))...)
-		fileMetadata, err := addContentToRepo(path, d, repository)
+		fileMetadata, err := processDirEntry(path, d, repository, addContents)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to add path %s to repository", path)
 		}
@@ -84,21 +90,17 @@ func Commit(src string, repository *lib.Repository, config *CommitConfig) (lib.R
 		return nil
 	})
 	if err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to walk directory %s", src)
+		return nil, lib.WrapErrorf(err, "failed to walk directory %s", src)
 	}
-	snapshot, err := lib.NewRevisionSnapshot(repository, head, snapshotTmpDir)
-	if err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create revision snapshot")
-	}
-	// Create commit.
-	return staging.Commit( //nolint:wrapcheck
-		repository,
-		snapshot,
-		&lib.CommitInfo{Author: config.Author, Message: config.Message},
-	)
+	return staging, nil
 }
 
-func addContentToRepo(path string, d os.DirEntry, repo *lib.Repository) (lib.FileMetadata, error) {
+// Calculate the file hash and add the file contents to the repository (if `writeBlocks` is `true`).
+//
+// Parameters:
+//   - `writeBlocks`: Whether to write the file contents to the repository.
+//     If `false`, `FileMetadata.BlockIds` will be empty.
+func processDirEntry(path string, d os.DirEntry, repo *lib.Repository, writeBlocks bool) (lib.FileMetadata, error) {
 	// todo: what about symlinks
 	fileHash := sha256.New()
 	var fileSize int64
@@ -128,11 +130,13 @@ func addContentToRepo(path string, d os.DirEntry, repo *lib.Repository) (lib.Fil
 			if _, err := fileHash.Write(buf[:n]); err != nil {
 				return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to update file hash")
 			}
-			_, blockHeader, err := repo.WriteBlock(buf[:n], blockBuf)
-			if err != nil {
-				return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to write block")
+			if writeBlocks {
+				_, blockHeader, err := repo.WriteBlock(buf[:n], blockBuf)
+				if err != nil {
+					return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to write block")
+				}
+				blockIds = append(blockIds, blockHeader.BlockId)
 			}
-			blockIds = append(blockIds, blockHeader.BlockId)
 		}
 	}
 	// Create RevisionEntry.

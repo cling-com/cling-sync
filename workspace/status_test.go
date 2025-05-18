@@ -1,0 +1,69 @@
+package workspace
+
+import (
+	"testing"
+
+	"github.com/flunderpero/cling-sync/lib"
+)
+
+func TestStatus(t *testing.T) {
+	t.Parallel()
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		rt := NewRepositoryTest(t)
+
+		// Empty workspace.
+		status, err := Status(rt.WorkspacePath, rt.Repository, nil, t.TempDir())
+		assert.NoError(err)
+		assert.Equal(0, len(status))
+
+		// Add files and directories.
+		rt.AddLocal("a.txt", ".")
+		rt.AddLocal("b.txt", "..")
+		rt.AddLocal("c/1.txt", "...")
+		rt.AddLocal("c/d/2.txt", "....")
+
+		// "Dirty" workspace.
+		status, err = Status(rt.WorkspacePath, rt.Repository, nil, t.TempDir())
+		assert.NoError(err)
+		assert.Equal([]string{
+			"A a.txt",
+			"A b.txt",
+			"A c",
+			"A c/1.txt",
+			"A c/d",
+			"A c/d/2.txt",
+		}, statusFilesString(status))
+
+		// Commit, workspace should be "clean" again.
+		_, err = Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		assert.NoError(err)
+		status, err = Status(rt.WorkspacePath, rt.Repository, nil, t.TempDir())
+		assert.NoError(err)
+		assert.Equal(0, len(status))
+		assert.NoError(err)
+
+		// Add, remove, and update files.
+		rt.RemoveLocal("b.txt")
+		rt.AddLocal("e.txt", ".....")
+		rt.UpdateLocalMTime("c/1.txt")
+
+		// "Dirty" workspace.
+		status, err = Status(rt.WorkspacePath, rt.Repository, nil, t.TempDir())
+		assert.NoError(err)
+		assert.Equal([]string{
+			"D b.txt",
+			"A e.txt",
+			"M c/1.txt",
+		}, statusFilesString(status))
+	})
+}
+
+func statusFilesString(files []StatusFile) []string {
+	s := []string{}
+	for _, file := range files {
+		s = append(s, file.Format())
+	}
+	return s
+}

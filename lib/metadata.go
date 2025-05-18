@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"bytes"
 	"io"
 	"io/fs"
 )
@@ -161,16 +160,20 @@ func (fm *FileMetadata) EstimatedSize() int {
 	return 4 + 8 + 4 + 8 + len(fm.FileHash) + 4 + len(fm.BlockIds)*32 + len(fm.SymlinkTarget) + 4 + 4 + 8 + 4
 }
 
-func (fm *FileMetadata) IsEqual(other *FileMetadata) bool {
-	var thisBuf bytes.Buffer
-	var otherBuf bytes.Buffer
-	if err := MarshalFileMetadata(fm, &thisBuf); err != nil {
-		return false
-	}
-	if err := MarshalFileMetadata(other, &otherBuf); err != nil {
-		return false
-	}
-	return bytes.Equal(thisBuf.Bytes(), otherBuf.Bytes())
+// Two FileMetadata objects are equal all of its fields except `BlockIds` are equal.
+// BlockIds are not compared because they should be the same if the `FileHash` is the same.
+// This enables us to implement a `status` command that does not add blocks to the repository.
+func (fm *FileMetadata) IsEqualIgnoringBlockIds(other *FileMetadata) bool {
+	return fm.ModeAndPerm == other.ModeAndPerm &&
+		fm.MTimeSec == other.MTimeSec &&
+		fm.MTimeNSec == other.MTimeNSec &&
+		fm.Size == other.Size &&
+		fm.FileHash == other.FileHash &&
+		fm.SymlinkTarget == other.SymlinkTarget &&
+		fm.UID == other.UID &&
+		fm.GID == other.GID &&
+		fm.BirthtimeSec == other.BirthtimeSec &&
+		fm.BirthtimeNSec == other.BirthtimeNSec
 }
 
 func MarshalFileMetadata(f *FileMetadata, w io.Writer) error {
