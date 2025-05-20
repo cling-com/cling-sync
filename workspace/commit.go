@@ -12,22 +12,41 @@ import (
 	"github.com/flunderpero/cling-sync/lib"
 )
 
-type CommitConfig struct {
-	PathFilter lib.PathFilter
-	Author     string
-	Message    string
+type StagingOnError int
+
+const (
+	StagingOnErrorIgnore StagingOnError = 1
+	StagingOnErrorAbort  StagingOnError = 2
+)
+
+type StagingEntryMonitor interface {
+	OnStart(path string, dirEntry os.DirEntry)
+	OnAddBlock(path string, blockId lib.BlockId, existed bool, blockSize int)
+	OnError(path string, err error) StagingOnError
+	OnEnd(path string, excluded bool, metadata *lib.FileMetadata)
+}
+
+type CommitOptions struct {
+	PathFilter     lib.PathFilter
+	Author         string
+	Message        string
+	Monitor        StagingEntryMonitor
+	OnBeforeCommit func() error
 }
 
 // Commit all changes in the local directory.
 // `.cling` is always ignored.
-func Commit(src string, repository *lib.Repository, config *CommitConfig, tmpDir string) (lib.RevisionId, error) {
-	staging, err := NewStaging(src, repository, config.PathFilter, true, tmpDir)
+func Commit(src string, repository *lib.Repository, opts *CommitOptions, tmpDir string) (lib.RevisionId, error) {
+	staging, err := NewStaging(src, repository, opts.PathFilter, true, tmpDir, opts.Monitor)
 	if err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create staging")
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stage changes")
+	}
+	if err := opts.OnBeforeCommit(); err != nil {
+		return lib.RevisionId{}, err
 	}
 	return staging.Commit( //nolint:wrapcheck
 		repository,
-		&lib.CommitInfo{Author: config.Author, Message: config.Message},
+		&lib.CommitInfo{Author: opts.Author, Message: opts.Message},
 	)
 }
 
@@ -36,12 +55,13 @@ func Commit(src string, repository *lib.Repository, config *CommitConfig, tmpDir
 //
 // Parameters:
 //   - `addContents`: Whether to add the contents of the `src` directory to the repository.
-func NewStaging(
+func NewStaging( //nolint:funlen
 	src string,
 	repository *lib.Repository,
 	pathFilter lib.PathFilter,
 	addContents bool,
 	tmpDir string,
+	mon StagingEntryMonitor,
 ) (*lib.Staging, error) {
 	head, err := repository.Head()
 	if err != nil {
@@ -57,6 +77,12 @@ func NewStaging(
 	} else {
 		pathFilter = clingFilter
 	}
+	handleErr := func(path string, err error) error {
+		if err == nil || mon.OnError(path, err) == StagingOnErrorIgnore {
+			return nil
+		}
+		return err
+	}
 
 	// Stage all files.
 	staging, err := lib.NewStaging(head, pathFilter, tmpDir)
@@ -64,29 +90,34 @@ func NewStaging(
 		return nil, lib.WrapErrorf(err, "failed to create staging")
 	}
 	err = filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+		if handleErr(path, err) != nil {
 			return err
 		}
+		mon.OnStart(path, d)
 		relPath, err := filepath.Rel(src, path)
+		if handleErr(path, err) != nil {
+			return lib.WrapErrorf(err, "failed to get relative path for %s", path)
+		}
 		// Even though files are filtered out in Staging.Add, we still
 		// want to eagerly exclude them to avoid unnecessary work (encryption/file hash).
 		if !pathFilter.Include(relPath) {
+			mon.OnEnd(path, true, nil)
 			return nil
 		}
-		if err != nil {
-			return lib.WrapErrorf(err, "failed to get relative path for %s", path)
-		}
 		if relPath == "." {
+			mon.OnEnd(path, true, nil)
 			return nil
 		}
 		repoPath := lib.NewPath(strings.Split(relPath, string(os.PathSeparator))...)
-		fileMetadata, err := processDirEntry(path, d, repository, addContents)
-		if err != nil {
+		fileMetadata, err := processDirEntry(path, d, repository, mon.OnAddBlock, addContents)
+		if handleErr(path, err) != nil {
 			return lib.WrapErrorf(err, "failed to add path %s to repository", path)
 		}
-		if _, err := staging.Add(repoPath, &fileMetadata); err != nil {
+		_, err = staging.Add(repoPath, &fileMetadata)
+		if handleErr(path, err) != nil {
 			return lib.WrapErrorf(err, "failed to add path %s to staging", path)
 		}
+		mon.OnEnd(path, false, &fileMetadata)
 		return nil
 	})
 	if err != nil {
@@ -100,7 +131,13 @@ func NewStaging(
 // Parameters:
 //   - `writeBlocks`: Whether to write the file contents to the repository.
 //     If `false`, `FileMetadata.BlockIds` will be empty.
-func processDirEntry(path string, d os.DirEntry, repo *lib.Repository, writeBlocks bool) (lib.FileMetadata, error) {
+func processDirEntry( //nolint:funlen
+	path string,
+	d os.DirEntry,
+	repo *lib.Repository,
+	onAddBlock func(path string, blockId lib.BlockId, existed bool, blockSize int),
+	writeBlocks bool,
+) (lib.FileMetadata, error) {
 	// todo: what about symlinks
 	fileHash := sha256.New()
 	var fileSize int64
@@ -131,10 +168,11 @@ func processDirEntry(path string, d os.DirEntry, repo *lib.Repository, writeBloc
 				return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to update file hash")
 			}
 			if writeBlocks {
-				_, blockHeader, err := repo.WriteBlock(buf[:n], blockBuf)
+				existed, blockHeader, err := repo.WriteBlock(buf[:n], blockBuf)
 				if err != nil {
 					return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to write block")
 				}
+				onAddBlock(path, blockHeader.BlockId, existed, n)
 				blockIds = append(blockIds, blockHeader.BlockId)
 			}
 		}

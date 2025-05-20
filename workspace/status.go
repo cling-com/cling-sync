@@ -54,10 +54,15 @@ func (s StatusFiles) Summary() string {
 	return fmt.Sprintf("%d added, %d updated, %d deleted", added, updated, deleted)
 }
 
-func Status(src string, repository *lib.Repository, pathFilter lib.PathFilter, tmpDir string) (StatusFiles, error) {
-	staging, err := NewStaging(src, repository, pathFilter, false, tmpDir)
+type StatusOptions struct {
+	PathFilter lib.PathFilter
+	Monitor    StagingEntryMonitor
+}
+
+func Status(src string, repository *lib.Repository, opts *StatusOptions, tmpDir string) (StatusFiles, error) {
+	staging, err := NewStaging(src, repository, opts.PathFilter, false, tmpDir, opts.Monitor)
 	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to create staging")
+		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}
 	cw, err := staging.MergeWithSnapshot(repository)
 	if err != nil {

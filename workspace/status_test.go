@@ -14,7 +14,7 @@ func TestStatus(t *testing.T) {
 		rt := NewRepositoryTest(t)
 
 		// Empty workspace.
-		status, err := Status(rt.WorkspacePath, rt.Repository, nil, t.TempDir())
+		status, err := Status(rt.WorkspacePath, rt.Repository, fakeStatusOptions(), t.TempDir())
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
@@ -25,7 +25,7 @@ func TestStatus(t *testing.T) {
 		rt.AddLocal("c/d/2.txt", "....")
 
 		// "Dirty" workspace.
-		status, err = Status(rt.WorkspacePath, rt.Repository, nil, t.TempDir())
+		status, err = Status(rt.WorkspacePath, rt.Repository, fakeStatusOptions(), t.TempDir())
 		assert.NoError(err)
 		assert.Equal([]string{
 			"A a.txt",
@@ -39,7 +39,7 @@ func TestStatus(t *testing.T) {
 		// Commit, workspace should be "clean" again.
 		_, err = Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
-		status, err = Status(rt.WorkspacePath, rt.Repository, nil, t.TempDir())
+		status, err = Status(rt.WorkspacePath, rt.Repository, fakeStatusOptions(), t.TempDir())
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 		assert.NoError(err)
@@ -50,7 +50,7 @@ func TestStatus(t *testing.T) {
 		rt.UpdateLocalMTime("c/1.txt")
 
 		// "Dirty" workspace.
-		status, err = Status(rt.WorkspacePath, rt.Repository, nil, t.TempDir())
+		status, err = Status(rt.WorkspacePath, rt.Repository, fakeStatusOptions(), t.TempDir())
 		assert.NoError(err)
 		assert.Equal([]string{
 			"D b.txt",
@@ -66,4 +66,8 @@ func statusFilesString(files []StatusFile) []string {
 		s = append(s, file.Format())
 	}
 	return s
+}
+
+func fakeStatusOptions() *StatusOptions {
+	return &StatusOptions{nil, newTestStagingMonitor()}
 }

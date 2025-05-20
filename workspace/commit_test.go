@@ -59,7 +59,7 @@ func TestCommit(t *testing.T) {
 		revId, err := Commit(
 			rt.WorkspacePath,
 			rt.Repository,
-			&CommitConfig{PathFilter: pathFilter, Author: "author", Message: "message"},
+			&CommitOptions{pathFilter, "author", "message", newTestStagingMonitor(), nopOnBeforeCommit},
 			t.TempDir(),
 		)
 		assert.NoError(err)
@@ -79,7 +79,7 @@ func TestCommit(t *testing.T) {
 		revId, err = Commit(
 			rt.WorkspacePath,
 			rt.Repository,
-			&CommitConfig{PathFilter: pathFilter, Author: "author", Message: "message"},
+			&CommitOptions{pathFilter, "author", "message", newTestStagingMonitor(), nopOnBeforeCommit},
 			t.TempDir(),
 		)
 		assert.NoError(err)

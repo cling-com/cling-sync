@@ -108,8 +108,34 @@ type FileInfo struct {
 	Size int
 }
 
-func fakeCommitConfig() *CommitConfig {
-	return &CommitConfig{PathFilter: nil, Author: "author", Message: "message"}
+func fakeCommitConfig() *CommitOptions {
+	return &CommitOptions{nil, "author", "message", newTestStagingMonitor(), nopOnBeforeCommit}
+}
+
+func nopOnBeforeCommit() error {
+	return nil
+}
+
+type testStagingMonitor struct{}
+
+func newTestStagingMonitor() *testStagingMonitor {
+	return &testStagingMonitor{}
+}
+
+func (m *testStagingMonitor) OnStart(path string, dirEntry os.DirEntry) {
+}
+
+func (m *testStagingMonitor) OnAddBlock(path string, blockId lib.BlockId, existed bool, blockSize int) {
+}
+
+func (m *testStagingMonitor) OnError(path string, err error) StagingOnError {
+	return StagingOnErrorAbort
+}
+
+func (m *testStagingMonitor) OnEnd(path string, excluded bool, metadata *lib.FileMetadata) {
+}
+
+func (m *testStagingMonitor) Close() {
 }
 
 func testRepository(t *testing.T, dir string) (*lib.Repository, *lib.FileStorage) {

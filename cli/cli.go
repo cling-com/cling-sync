@@ -18,29 +18,17 @@ import (
 
 const appName = "cling-sync"
 
-func isTerm(f *os.File) bool {
-	return term.IsTerminal(int(f.Fd()))
-}
-
-func printErr(msg string, args ...any) {
-	s := "\nError: "
-	if isTerm(os.Stdout) {
-		s = fmt.Sprintf("\x1b[31m%s\x1b[0m", s)
-	}
-	fmt.Fprintf(os.Stderr, s+msg+"\n", args...)
-}
-
-func initCmd(argv []string) error { //nolint:funlen
-	if !isTerm(os.Stdin) {
+func InitCmd(argv []string) error { //nolint:funlen
+	if !IsTerm(os.Stdin) {
 		return lib.Errorf("a new repository can only be created in an interactive terminal session")
 	}
 	args := struct { //nolint:exhaustruct
-		Help                bool
-		AllowUnsafePassword bool
+		Help              bool
+		AllowWeakPassword bool
 	}{}
 	flags := flag.NewFlagSet("init", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
-	flags.BoolVar(&args.AllowUnsafePassword, "allow-unsafe-password", false, "Allow unsafe password")
+	flags.BoolVar(&args.AllowWeakPassword, "allow-weak-password", false, "Allow weak password")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s init <dst>\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Initialize a new repository at <dst>.\n")
@@ -57,7 +45,7 @@ func initCmd(argv []string) error { //nolint:funlen
 	if len(flags.Args()) != 1 {
 		return lib.Errorf("one positional argument is required: <dst>")
 	}
-	_, err := fmt.Fprint(os.Stdout, "Enter passphrase: ")
+	_, err := fmt.Fprint(os.Stderr, "Enter passphrase: ")
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
@@ -67,7 +55,7 @@ func initCmd(argv []string) error { //nolint:funlen
 	}
 	_, _ = fmt.Fprintln(os.Stdout)
 	if err := lib.CheckPassphraseStrength(passphrase); err != nil {
-		if args.AllowUnsafePassword {
+		if args.AllowWeakPassword {
 			fmt.Fprintf(os.Stderr, "\nWarning: %s\n", err.Error())
 		} else {
 			return err //nolint:wrapcheck
@@ -104,42 +92,21 @@ func initCmd(argv []string) error { //nolint:funlen
 	return nil
 }
 
-func pathPatternFlag(flags *flag.FlagSet, name string, usage string, value *[]lib.PathPattern) {
-	flags.Func(
-		name,
-		// todo: Centralize this description or add it everywhere patterns are used.
-		// todo: Add examples.
-		usage+"\n"+strings.TrimSpace(`
-A pattern must match the full path or a directory within the path.
-Include patterns (see --include) can be used to override exclude patterns.
-Pattern syntax:
-    **      matches any number of directories
-    *       matches any number of characters in a single directory
-    ?       matches a single character
-		`),
-		func(pattern string) error {
-			p, err := lib.NewPathPattern(pattern)
-			if err != nil {
-				return lib.WrapErrorf(err, "invalid pattern: %s", pattern)
-			}
-			*value = append(*value, p)
-			return nil
-		},
-	)
-}
-
-func commitCmd(argv []string) error { //nolint:funlen
+func CommitCmd(argv []string) error { //nolint:funlen
 	ws, err := workspace.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer ws.Close() //nolint:errcheck
 	args := struct { //nolint:exhaustruct
-		Help    bool
-		Message string
-		Author  string
-		Exclude []lib.PathPattern
-		Include []lib.PathPattern
+		Help         bool
+		Message      string
+		Author       string
+		IgnoreErrors bool
+		Verbose      bool
+		NoProgress   bool
+		Exclude      []lib.PathPattern
+		Include      []lib.PathPattern
 	}{}
 	defaultAuthor := "<anonymous>"
 	whoami, err := user.Current()
@@ -149,6 +116,10 @@ func commitCmd(argv []string) error { //nolint:funlen
 	defaultMessage := "Synced with cling-sync"
 	flags := flag.NewFlagSet("commit", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.BoolVar(&args.IgnoreErrors, "ignore-errors", false, "Ignore errors")
+	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
+	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
+	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
 	pathPatternFlag(
@@ -192,34 +163,52 @@ func commitCmd(argv []string) error { //nolint:funlen
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	revisionId, err := workspace.Commit(
-		ws.WorkspacePath,
-		repository,
-		&workspace.CommitConfig{PathFilter: pathFilter, Author: args.Author, Message: args.Message},
-		tmpDir,
-	)
+	mon := NewStagingMonitor(ws.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
+	opts := &workspace.CommitOptions{
+		PathFilter: pathFilter,
+		Author:     args.Author,
+		Message:    args.Message,
+		Monitor:    mon,
+		OnBeforeCommit: func() error {
+			if args.Verbose {
+				fmt.Println("Committing")
+			}
+			return nil
+		},
+	}
+	revisionId, err := workspace.Commit(ws.WorkspacePath, repository, opts, tmpDir)
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	fmt.Printf("Revision %s\n", revisionId)
+	mon.Close()
+	if args.IgnoreErrors && mon.errors > 0 {
+		fmt.Printf("%d errors ignored\n", mon.errors)
+	}
+	fmt.Printf("Revision %s (%d bytes added)\n", revisionId, mon.bytesAdded)
 	return nil
 }
 
-func statusCmd(argv []string) error { //nolint:funlen
+func StatusCmd(argv []string) error { //nolint:funlen
 	ws, err := workspace.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer ws.Close() //nolint:errcheck
 	args := struct { //nolint:exhaustruct
-		Help    bool
-		Short   bool
-		Exclude []lib.PathPattern
-		Include []lib.PathPattern
+		Help         bool
+		Short        bool
+		IgnoreErrors bool
+		Verbose      bool
+		NoProgress   bool
+		Exclude      []lib.PathPattern
+		Include      []lib.PathPattern
 	}{}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Only show the number of added, updated, and deleted files")
+	flags.BoolVar(&args.IgnoreErrors, "ignore-errors", false, "Ignore errors")
+	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
+	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	pathPatternFlag(
 		flags,
 		"exclude",
@@ -277,7 +266,10 @@ func statusCmd(argv []string) error { //nolint:funlen
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	result, err := workspace.Status(ws.WorkspacePath, repository, pathFilter, tmpDir)
+	mon := NewStagingMonitor(ws.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
+	opts := &workspace.StatusOptions{PathFilter: pathFilter, Monitor: mon}
+	result, err := workspace.Status(ws.WorkspacePath, repository, opts, tmpDir)
+	mon.Close()
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
@@ -293,7 +285,7 @@ func statusCmd(argv []string) error { //nolint:funlen
 	return nil
 }
 
-func lsCmd(argv []string) error { //nolint:funlen
+func LsCmd(argv []string) error { //nolint:funlen
 	ws, err := workspace.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
@@ -386,7 +378,7 @@ func lsCmd(argv []string) error { //nolint:funlen
 	return nil
 }
 
-func logCmd(argv []string) error {
+func LogCmd(argv []string) error {
 	ws, err := workspace.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
@@ -440,10 +432,10 @@ func logCmd(argv []string) error {
 }
 
 func openRepository(workspace *workspace.Workspace) (*lib.Repository, error) {
-	if !isTerm(os.Stdin) {
+	if !IsTerm(os.Stdin) {
 		return nil, lib.Errorf("this command can only be run in an interactive terminal session")
 	}
-	_, err := fmt.Fprint(os.Stdout, "Enter passphrase: ")
+	_, err := fmt.Fprint(os.Stderr, "Enter passphrase: ")
 	if err != nil {
 		return nil, err //nolint:wrapcheck
 	}
@@ -451,7 +443,7 @@ func openRepository(workspace *workspace.Workspace) (*lib.Repository, error) {
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read passphrase")
 	}
-	_, _ = fmt.Fprintln(os.Stdout)
+	fmt.Fprint(os.Stderr, "\r                          \r")
 	storage, err := lib.NewFileStorage(string(workspace.RemoteRepository))
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
@@ -461,6 +453,30 @@ func openRepository(workspace *workspace.Workspace) (*lib.Repository, error) {
 		return nil, lib.WrapErrorf(err, "failed to open repository")
 	}
 	return repository, nil
+}
+
+func pathPatternFlag(flags *flag.FlagSet, name string, usage string, value *[]lib.PathPattern) {
+	flags.Func(
+		name,
+		// todo: Centralize this description or add it everywhere patterns are used.
+		// todo: Add examples.
+		usage+"\n"+strings.TrimSpace(`
+A pattern must match the full path or a directory within the path.
+Include patterns (see --include) can be used to override exclude patterns.
+Pattern syntax:
+    **      matches any number of directories
+    *       matches any number of characters in a single directory
+    ?       matches a single character
+		`),
+		func(pattern string) error {
+			p, err := lib.NewPathPattern(pattern)
+			if err != nil {
+				return lib.WrapErrorf(err, "invalid pattern: %s", pattern)
+			}
+			*value = append(*value, p)
+			return nil
+		},
+	)
 }
 
 func main() {
@@ -488,24 +504,24 @@ func main() {
 	var err error
 	switch cmd {
 	case "init":
-		err = initCmd(argv)
+		err = InitCmd(argv)
 	case "commit":
-		err = commitCmd(argv)
+		err = CommitCmd(argv)
 	case "log":
-		err = logCmd(argv)
+		err = LogCmd(argv)
 	case "ls":
-		err = lsCmd(argv)
+		err = LsCmd(argv)
 	case "status":
-		err = statusCmd(argv)
+		err = StatusCmd(argv)
 	case "":
 		flag.Usage()
 		os.Exit(0)
 	default:
-		printErr("%s is not a valid command. See '%s --help'.", cmd, appName)
+		PrintErr("%s is not a valid command. See '%s --help'.", cmd, appName)
 		os.Exit(1)
 	}
 	if err != nil {
-		printErr(err.Error())
+		PrintErr(err.Error())
 		os.Exit(1)
 	}
 }
