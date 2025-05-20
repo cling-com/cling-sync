@@ -120,8 +120,9 @@ func Decrypt(ciphertext []byte, cipher cryptoCipher.AEAD, associatedData []byte,
 }
 
 func CalculateSha256(data []byte) Sha256 {
-	sha := sha256.New().Sum(data)
-	return Sha256(sha)
+	sha := sha256.New()
+	sha.Write(data)
+	return Sha256(sha.Sum(nil))
 }
 
 func CalculateHmac(data []byte, key RawKey) Sha256Hmac {
