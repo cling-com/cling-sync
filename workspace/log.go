@@ -39,7 +39,7 @@ func (l *RevisionLog) Long() string {
 func (l *RevisionLog) Short() string {
 	r := l.Revision
 	date := time.Unix(r.TimestampSec, int64(r.TimestampNSec)).Format(time.RFC3339)
-	return fmt.Sprintf("%s %s %s", l.RevisionId.Short(), date, strings.ReplaceAll(r.Message, "\n", " "))
+	return fmt.Sprintf("%s %s %s", l.RevisionId.Long(), date, strings.ReplaceAll(r.Message, "\n", " "))
 }
 
 func Log(repository *lib.Repository) ([]RevisionLog, error) {

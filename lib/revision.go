@@ -21,10 +21,6 @@ func (id RevisionId) String() string {
 	return "rev:" + hex.EncodeToString(id[:])
 }
 
-func (id RevisionId) Short() string {
-	return hex.EncodeToString(id[:])[:8]
-}
-
 func (id RevisionId) Long() string {
 	return hex.EncodeToString(id[:])
 }
