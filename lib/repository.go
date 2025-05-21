@@ -25,7 +25,7 @@ func (id BlockId) String() string {
 }
 
 const (
-	BlockFlagDeflate = 1
+	BlockFlagDeflate uint64 = 1
 )
 
 type RepositoryConfig struct {
@@ -178,13 +178,27 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (bool, BlockHeader, e
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, BlockHeader{}, WrapErrorf(err, "failed to read header of block %s", blockId)
 	}
+	// Compress data if possible.
+	var header BlockHeader
+	if IsCompressible(data) {
+		compressed, err := Compress(data, buf)
+		if err != nil {
+			return false, BlockHeader{}, WrapErrorf(err, "failed to compress data")
+		}
+		compressionRatio := float64(len(compressed)) / float64(len(data))
+		// todo: document the compression ratio threshold.
+		if compressionRatio < 0.95 {
+			// todo: maybe give feedback to the user that compression is skipped.
+			header.Flags |= BlockFlagDeflate
+			data = compressed
+		}
+	}
+	// Encrypt data.
 	dek, err := NewRawKey()
 	if err != nil {
 		return false, BlockHeader{}, WrapErrorf(err, "failed to generate random DEK for block %s", blockId)
 	}
-	var header BlockHeader
 	header.BlockId = blockId
-	header.Flags = 0
 	_, err = Encrypt(dek[:], r.kekCipher, blockId[:], header.EncryptedDEK[:])
 	if err != nil {
 		return false, BlockHeader{}, WrapErrorf(err, "failed to encrypt DEK with KEK for block %s", blockId)
@@ -203,6 +217,7 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (bool, BlockHeader, e
 	}
 	header.EncryptedDataSize = uint32(len(encryptedData)) //nolint:gosec
 	block := Block{Header: header, EncryptedData: encryptedData}
+	// Write block.
 	exists, err := r.storage.WriteBlock(block)
 	if err != nil {
 		return false, BlockHeader{}, WrapErrorf(err, "failed to write block %s", blockId)
@@ -237,6 +252,12 @@ func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHead
 	data, err := Decrypt(encryptedData, dekCypher, nil, buf[:])
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to decrypt data with DEK for block %s", blockId)
+	}
+	if header.Flags&BlockFlagDeflate != 0 {
+		data, err = Decompress(data, buf)
+		if err != nil {
+			return nil, BlockHeader{}, WrapErrorf(err, "failed to decompress data")
+		}
 	}
 	return data, header, nil
 }

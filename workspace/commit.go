@@ -21,7 +21,7 @@ const (
 
 type StagingEntryMonitor interface {
 	OnStart(path string, dirEntry os.DirEntry)
-	OnAddBlock(path string, blockId lib.BlockId, existed bool, blockSize int)
+	OnAddBlock(path string, header *lib.BlockHeader, existed bool, dataSize int)
 	OnError(path string, err error) StagingOnError
 	OnEnd(path string, excluded bool, metadata *lib.FileMetadata)
 }
@@ -135,7 +135,7 @@ func processDirEntry( //nolint:funlen
 	path string,
 	d os.DirEntry,
 	repo *lib.Repository,
-	onAddBlock func(path string, blockId lib.BlockId, existed bool, blockSize int),
+	onAddBlock func(path string, header *lib.BlockHeader, existed bool, dataSize int),
 	writeBlocks bool,
 ) (lib.FileMetadata, error) {
 	// todo: what about symlinks
@@ -172,7 +172,7 @@ func processDirEntry( //nolint:funlen
 				if err != nil {
 					return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to write block")
 				}
-				onAddBlock(path, blockHeader.BlockId, existed, len(data))
+				onAddBlock(path, &blockHeader, existed, len(data))
 				blockIds = append(blockIds, blockHeader.BlockId)
 			}
 		}

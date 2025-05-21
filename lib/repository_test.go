@@ -2,6 +2,7 @@ package lib
 
 import (
 	"bytes"
+	"crypto/rand"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -168,6 +169,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		repo, storage := testRepository(t)
 
 		writeData := make([]byte, MaxBlockDataSize)
+		_, _ = rand.Read(writeData)
 		_, header, err := repo.WriteBlock(writeData, BlockBuf{})
 		assert.NoError(err)
 		assert.Equal(MaxEncryptedBlockDataSize, int(header.EncryptedDataSize))
@@ -193,6 +195,72 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		_, header, err := repo.WriteBlock(writeData, BlockBuf{})
 		assert.Error(err, "exceeds maximum block size")
 		assert.Equal(BlockHeader{}, header) //nolint:exhaustruct
+	})
+
+	t.Run("Compression", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		// Create good compressible data.
+		writeData := make([]byte, MaxBlockDataSize)
+		for i := range writeData {
+			writeData[i] = byte(i % 32)
+		}
+		assert.Equal(true, IsCompressible(writeData))
+		existed, header, err := repo.WriteBlock(writeData, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(false, existed)
+		assert.Equal(header.Flags&BlockFlagDeflate, BlockFlagDeflate)
+		assert.Less(int(header.EncryptedDataSize), len(writeData)/5, "data should be very compressible")
+
+		readData, _, err := repo.ReadBlock(header.BlockId, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(writeData, readData)
+	})
+
+	t.Run("Compression is skipped if data is not compressible", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		// Create bad compressible data.
+		writeData := make([]byte, MaxBlockDataSize)
+		_, _ = rand.Read(writeData)
+		assert.Equal(false, IsCompressible(writeData))
+		existed, header, err := repo.WriteBlock(writeData, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(false, existed)
+		assert.Equal(uint64(0), header.Flags&BlockFlagDeflate)
+		assert.Equal(int(header.EncryptedDataSize), len(writeData)+TotalCipherOverhead)
+
+		readData, _, err := repo.ReadBlock(header.BlockId, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(writeData, readData)
+	})
+
+	t.Run("Compression is skipped if data is compressible but compression ratio is too low", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		// Create a block with random data.
+		writeData := make([]byte, MaxBlockDataSize)
+		_, _ = rand.Read(writeData)
+		// But the first `compressionCheckSize` bytes are very compressible.
+		for i := range compressionCheckSize {
+			writeData[i] = byte(i % 32)
+		}
+		assert.Equal(true, IsCompressible(writeData))
+		existed, header, err := repo.WriteBlock(writeData, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(false, existed)
+		assert.Equal(uint64(0), header.Flags&BlockFlagDeflate)
+		assert.Equal(int(header.EncryptedDataSize), len(writeData)+TotalCipherOverhead)
+
+		readData, _, err := repo.ReadBlock(header.BlockId, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(writeData, readData)
 	})
 }
 

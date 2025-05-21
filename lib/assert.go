@@ -117,11 +117,14 @@ func stringifyInternal(v any, indent int) string { //nolint:funlen
 		}
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("%s{ ", t.String()))
-		for i := range n {
+		for i := range min(n, 500) {
 			if i > 0 {
 				sb.WriteString(" ")
 			}
 			sb.WriteString(fmt.Sprintf("%02x", reflectV.Index(i).Uint()))
+		}
+		if n > 500 {
+			sb.WriteString(fmt.Sprintf(" ... %d more bytes }", n-500))
 		}
 		sb.WriteString(" }")
 		return sb.String()
@@ -202,15 +205,7 @@ func stringifyInternal(v any, indent int) string { //nolint:funlen
 
 func (a Assert) Greater(x, y any, msg ...any) {
 	a.tb.Helper()
-	if x == nil || y == nil {
-		a.tb.Fatalf("%snil value passed to Greater: %v > %v", details(msg), x, y)
-	}
-	xv := reflect.ValueOf(x)
-	yv := reflect.ValueOf(y)
-	if xv.Kind() != yv.Kind() {
-		a.tb.Fatalf("%sexpected same type kind, got %T and %T", details(msg), x, y)
-	}
-	isTrue := func() bool {
+	a.compare(x, y, func(xv, yv reflect.Value) bool {
 		switch xv.Kind() { //nolint:exhaustive
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			return xv.Int() > yv.Int()
@@ -223,10 +218,25 @@ func (a Assert) Greater(x, y any, msg ...any) {
 		default:
 			return false
 		}
-	}()
-	if !isTrue {
-		a.tb.Fatalf("%sexpected %v (%T) > %v (%T)", details(msg), x, x, y, y)
-	}
+	}, msg...)
+}
+
+func (a Assert) Less(x, y any, msg ...any) {
+	a.tb.Helper()
+	a.compare(x, y, func(xv, yv reflect.Value) bool {
+		switch xv.Kind() { //nolint:exhaustive
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return xv.Int() < yv.Int()
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			return xv.Uint() < yv.Uint()
+		case reflect.Float32, reflect.Float64:
+			return xv.Float() < yv.Float()
+		case reflect.String:
+			return xv.String() < yv.String()
+		default:
+			return false
+		}
+	}, msg...)
 }
 
 func (a Assert) Error(err error, contains string, msg ...any) {
@@ -286,6 +296,21 @@ func (a Assert) NoError(err error, msg ...any) {
 	a.tb.Helper()
 	if err != nil {
 		a.tb.Fatalf("%sexpected no error, got %v", details(msg), err)
+	}
+}
+
+func (a Assert) compare(x, y any, compare func(x, y reflect.Value) bool, msg ...any) {
+	a.tb.Helper()
+	if x == nil || y == nil {
+		a.tb.Fatalf("%snil values cannot be compared: %v and %v", details(msg), x, y)
+	}
+	xv := reflect.ValueOf(x)
+	yv := reflect.ValueOf(y)
+	if xv.Kind() != yv.Kind() {
+		a.tb.Fatalf("%sexpected same type kind, got %T and %T", details(msg), x, y)
+	}
+	if !compare(xv, yv) {
+		a.tb.Fatalf("%sexpected %v (%T) > %v (%T)", details(msg), x, x, y, y)
 	}
 }
 

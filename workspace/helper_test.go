@@ -125,7 +125,7 @@ func newTestStagingMonitor() *testStagingMonitor {
 func (m *testStagingMonitor) OnStart(path string, dirEntry os.DirEntry) {
 }
 
-func (m *testStagingMonitor) OnAddBlock(path string, blockId lib.BlockId, existed bool, blockSize int) {
+func (m *testStagingMonitor) OnAddBlock(path string, header *lib.BlockHeader, existed bool, dataSize int) {
 }
 
 func (m *testStagingMonitor) OnError(path string, err error) StagingOnError {

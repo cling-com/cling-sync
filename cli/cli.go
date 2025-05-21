@@ -184,7 +184,12 @@ func CommitCmd(argv []string) error { //nolint:funlen
 	if args.IgnoreErrors && mon.errors > 0 {
 		fmt.Printf("%d errors ignored\n", mon.errors)
 	}
-	fmt.Printf("Revision %s (%d bytes added)\n", revisionId, mon.bytesAdded)
+	fmt.Printf(
+		"Revision %s (%d bytes, compressed: %.2f)\n",
+		revisionId,
+		mon.rawBytesAdded,
+		float64(mon.compressedBytesAdded)/float64(mon.rawBytesAdded),
+	)
 	return nil
 }
 

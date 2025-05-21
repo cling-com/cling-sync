@@ -26,16 +26,17 @@ func PrintErr(msg string, args ...any) {
 }
 
 type StagingMonitor struct {
-	Verbose        bool
-	IgnoreErrors   bool
-	NoProgress     bool
-	WorkspaceDir   string
-	paths          int
-	excluded       int
-	bytesAdded     int64
-	totalFileSizes int64
-	errors         int
-	ignoredError   bool
+	Verbose              bool
+	IgnoreErrors         bool
+	NoProgress           bool
+	WorkspaceDir         string
+	paths                int
+	excluded             int
+	rawBytesAdded        int64
+	compressedBytesAdded int64
+	totalFileSizes       int64
+	errors               int
+	ignoredError         bool
 }
 
 func NewStagingMonitor(workspaceDir string, verbose, ignoreErrors, noProgress bool) *StagingMonitor {
@@ -62,19 +63,30 @@ func (m *StagingMonitor) OnStart(path string, dirEntry os.DirEntry) {
 	fmt.Printf("File %s\n", path)
 }
 
-func (m *StagingMonitor) OnAddBlock(path string, blockId lib.BlockId, existed bool, blockSize int) {
+func (m *StagingMonitor) OnAddBlock(path string, header *lib.BlockHeader, existed bool, dataSize int) {
 	if !existed {
-		m.bytesAdded += int64(blockSize)
+		m.rawBytesAdded += int64(dataSize)
+		m.compressedBytesAdded += int64(header.EncryptedDataSize) - lib.TotalCipherOverhead
 	}
+	blockId := header.BlockId
 	m.progress()
 	if !m.Verbose {
 		return
 	}
 	if existed {
-		fmt.Printf("  block (reused)  %s (%d bytes)\n", blockId, blockSize)
+		fmt.Printf("  block (reused)   %s (%d bytes)\n", blockId, dataSize)
 		return
 	}
-	fmt.Printf("  block (created) %s (%d bytes)\n", blockId, blockSize)
+	if header.Flags&lib.BlockFlagDeflate == lib.BlockFlagDeflate {
+		fmt.Printf(
+			"  block (created)  %s (%d bytes, compressed: %.2f)\n",
+			blockId,
+			dataSize,
+			float64(header.EncryptedDataSize-lib.TotalCipherOverhead)/float64(dataSize),
+		)
+		return
+	}
+	fmt.Printf("  block (created)  %s (%d bytes)\n", blockId, dataSize)
 }
 
 func (m *StagingMonitor) OnError(path string, err error) workspace.StagingOnError {
@@ -143,8 +155,14 @@ func (m *StagingMonitor) progress() {
 		sb.WriteString(fmt.Sprintf(", Errors: %d", m.errors))
 	}
 	sb.WriteString(fmt.Sprintf(", Total file sizes: %d bytes", m.totalFileSizes))
-	if m.bytesAdded > 0 {
-		sb.WriteString(fmt.Sprintf(", %d bytes added", m.bytesAdded))
+	if m.rawBytesAdded > 0 {
+		sb.WriteString(
+			fmt.Sprintf(
+				", %d bytes added, total compression factor: %.2f",
+				m.rawBytesAdded,
+				float64(m.compressedBytesAdded)/float64(m.rawBytesAdded),
+			),
+		)
 	}
 	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
 }
