@@ -191,7 +191,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 
 		writeData := make([]byte, MaxBlockDataSize+1)
 		_, header, err := repo.WriteBlock(writeData, BlockBuf{})
-		assert.Error(err, "data size 4194169 exceeds maximum block size 4194168")
+		assert.Error(err, "exceeds maximum block size")
 		assert.Equal(BlockHeader{}, header) //nolint:exhaustruct
 	})
 }

@@ -152,27 +152,27 @@ func processDirEntry( //nolint:funlen
 			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
 		}
 		defer f.Close() //nolint:errcheck
-		buf := [lib.MaxBlockDataSize]byte{}
 		blockBuf := lib.BlockBuf{}
 		// Read blocks and add them to the repository.
+		cdc := NewGearCDCWithDefaults(f)
 		for {
-			n, err := f.Read(buf[:])
+			data, err := cdc.Read(blockBuf)
 			if err != nil {
 				if errors.Is(err, io.EOF) {
 					break
 				}
 				return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to read file %s", path)
 			}
-			fileSize += int64(n)
-			if _, err := fileHash.Write(buf[:n]); err != nil {
+			fileSize += int64(len(data))
+			if _, err := fileHash.Write(data); err != nil {
 				return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to update file hash")
 			}
 			if writeBlocks {
-				existed, blockHeader, err := repo.WriteBlock(buf[:n], blockBuf)
+				existed, blockHeader, err := repo.WriteBlock(data, blockBuf)
 				if err != nil {
 					return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to write block")
 				}
-				onAddBlock(path, blockHeader.BlockId, existed, n)
+				onAddBlock(path, blockHeader.BlockId, existed, len(data))
 				blockIds = append(blockIds, blockHeader.BlockId)
 			}
 		}

@@ -46,7 +46,7 @@ That HMAC key is then used to calculate the block id like this: `HMAC(SHA256(blo
 
 #### Data Encryption
 
-The content of files are stored in blocks of up to _4MB_ in size. Each block is encrypted with
+The content of files are stored in blocks of up to _8MB_ in size. Each block is encrypted with
 a unique, random 32 byte _Data Encryption Key (DEK)_. That DEK is then stored alongside the random
 nonce used in the block header (see below).
 

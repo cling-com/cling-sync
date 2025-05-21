@@ -19,41 +19,67 @@ func NewAssert(tb testing.TB) Assert {
 	return Assert{tb: tb}
 }
 
+func areEqual(expected, actual any) bool {
+	if expected == nil || actual == nil {
+		return expected != actual
+	}
+	expectedBytes, ok := expected.([]byte)
+	if ok {
+		actualBytes, ok := actual.([]byte)
+		if !ok {
+			return false
+		}
+		return bytes.Equal(expectedBytes, actualBytes)
+	}
+	return reflect.DeepEqual(expected, actual)
+}
+
 func (a Assert) Equal(expected, actual any, msg ...any) {
 	a.tb.Helper()
-	areEqual := func() bool {
-		if expected == nil || actual == nil {
-			return expected != actual
-		}
-		expectedBytes, ok := expected.([]byte)
-		if ok {
-			actualBytes, ok := actual.([]byte)
-			if !ok {
-				return false
-			}
-			return bytes.Equal(expectedBytes, actualBytes)
-		}
-		return reflect.DeepEqual(expected, actual)
-	}()
-	if !areEqual {
-		expectedStr := stringify(expected)
-		if strings.Contains(expectedStr, "\n") {
-			expectedStr = "\n" + expectedStr
-		}
-		actualStr := stringify(actual)
-		if strings.Contains(actualStr, "\n") {
-			actualStr = "\n" + actualStr
-		}
-		expectedStr, actualStr = diff(expectedStr, actualStr)
-		a.tb.Fatalf(
-			"%sexpected: %v (%T), got: %v (%T)",
-			details(msg),
-			expectedStr,
-			expected,
-			actualStr,
-			actual,
-		)
+	if areEqual(expected, actual) {
+		return
 	}
+	expectedStr := stringify(expected)
+	if strings.Contains(expectedStr, "\n") {
+		expectedStr = "\n" + expectedStr
+	}
+	actualStr := stringify(actual)
+	if strings.Contains(actualStr, "\n") {
+		actualStr = "\n" + actualStr
+	}
+	expectedStr, actualStr = diff(expectedStr, actualStr)
+	a.tb.Fatalf(
+		"%sexpected: %v (%T), got: %v (%T)",
+		details(msg),
+		expectedStr,
+		expected,
+		actualStr,
+		actual,
+	)
+}
+
+func (a Assert) NotEqual(expected, actual any, msg ...any) {
+	a.tb.Helper()
+	if !areEqual(expected, actual) {
+		return
+	}
+	expectedStr := stringify(expected)
+	if strings.Contains(expectedStr, "\n") {
+		expectedStr = "\n" + expectedStr
+	}
+	actualStr := stringify(actual)
+	if strings.Contains(actualStr, "\n") {
+		actualStr = "\n" + actualStr
+	}
+	expectedStr, actualStr = diff(expectedStr, actualStr)
+	a.tb.Fatalf(
+		"%sexpected: %v (%T) not to equal: %v (%T)",
+		details(msg),
+		expectedStr,
+		expected,
+		actualStr,
+		actual,
+	)
 }
 
 // Just mark different lines.

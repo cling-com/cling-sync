@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	MaxBlockSize              = 4 * 1024 * 1024
+	MaxBlockSize              = 8 * 1024 * 1024
 	BlockHeaderSize           = 96
 	MaxEncryptedBlockDataSize = MaxBlockSize - BlockHeaderSize
 	MaxBlockDataSize          = MaxEncryptedBlockDataSize - TotalCipherOverhead
