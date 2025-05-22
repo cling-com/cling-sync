@@ -156,8 +156,19 @@ type FileMetadata struct {
 	BirthtimeNSec int32  // -1 if not present.
 }
 
-func (fm *FileMetadata) EstimatedSize() int {
-	return 4 + 8 + 4 + 8 + len(fm.FileHash) + 4 + len(fm.BlockIds)*32 + len(fm.SymlinkTarget) + 4 + 4 + 8 + 4
+func (fm *FileMetadata) MarshalledSize() int {
+	return 2 + // MetadataVersion
+		4 + // ModeAndPerm
+		8 + // MTimeSec
+		4 + // MTimeNSec
+		8 + // Size
+		32 + // FileHash
+		len(fm.BlockIds)*32 + 2 + // BlockIds + len(BlockIds)
+		len(fm.SymlinkTarget) + 2 + // SymlinkTarget + len(SymlinkTarget)
+		4 + // UID
+		4 + // GID
+		8 + // BirthtimeSec
+		4 // BirthtimeNSec
 }
 
 // Two FileMetadata objects are equal all of its fields except `BlockIds` are equal.

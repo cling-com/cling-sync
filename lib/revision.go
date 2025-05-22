@@ -149,10 +149,10 @@ func NewRevisionEntry(path Path, typ RevisionEntryType, md *FileMetadata) (Revis
 	return RevisionEntry{Path: path, Type: typ, Metadata: md}, nil
 }
 
-func (se *RevisionEntry) EstimatedSize() int {
-	size := len(se.Path) + 1
+func (se *RevisionEntry) MarshalledSize() int {
+	size := len(se.Path) + 2 + 1 // Path + len(Path) + Type
 	if se.Metadata != nil {
-		size += se.Metadata.EstimatedSize()
+		size += se.Metadata.MarshalledSize()
 	}
 	return size
 }
@@ -256,14 +256,14 @@ func NewRevisionEntryChunks(tmpDir string, filePrefix string, maxChunkSize int) 
 }
 
 func (c *RevisionEntryChunks) Add(re *RevisionEntry) error {
-	size := re.EstimatedSize()
+	size := re.MarshalledSize()
 	if c.chunkSize > 0 && c.chunkSize+size > c.maxChunkSize {
 		if err := c.rotateChunk(); err != nil {
 			return err
 		}
 	}
 	c.chunk = append(c.chunk, re)
-	c.chunkSize += re.EstimatedSize()
+	c.chunkSize += size
 	return nil
 }
 

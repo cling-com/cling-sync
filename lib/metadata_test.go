@@ -120,6 +120,28 @@ func TestFileMetadata(t *testing.T) {
 		assert.Equal(sut, read)
 	})
 
+	t.Run("MarshalledSize", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		var buf bytes.Buffer
+		sut := fakeFileMetadata(0)
+		err := MarshalFileMetadata(sut, &buf)
+		assert.NoError(err)
+		assert.Equal(sut.MarshalledSize(), buf.Len())
+
+		sut.SymlinkTarget = "some/symlink"
+		buf.Reset()
+		err = MarshalFileMetadata(sut, &buf)
+		assert.NoError(err)
+		assert.Equal(sut.MarshalledSize(), buf.Len())
+
+		sut.BlockIds = []BlockId{fakeBlockId("1")}
+		buf.Reset()
+		err = MarshalFileMetadata(sut, &buf)
+		assert.NoError(err)
+		assert.Equal(sut.MarshalledSize(), buf.Len())
+	})
+
 	t.Run("IsEqualIgnoringBlockIds", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

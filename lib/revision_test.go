@@ -30,6 +30,23 @@ func TestRevisionEntry(t *testing.T) {
 		test(RevisionEntryDelete)
 	})
 
+	t.Run("MarshalledSize", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		var buf bytes.Buffer
+		sut := fakeRevisionEntry("a.txt", RevisionEntryAdd)
+		err := MarshalRevisionEntry(sut, &buf)
+		assert.NoError(err)
+		assert.Equal(sut.MarshalledSize(), buf.Len())
+
+		sut = fakeRevisionEntry("a.txt", RevisionEntryDelete)
+		sut.Metadata = nil
+		buf.Reset()
+		err = MarshalRevisionEntry(sut, &buf)
+		assert.NoError(err)
+		assert.Equal(sut.MarshalledSize(), buf.Len())
+	})
+
 	t.Run("RevisionPathCompare", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -134,6 +151,35 @@ func TestRevisionEntryChunks(t *testing.T) {
 		assert.Equal("/some/dir2", string(merged[6].Path))
 		assert.Equal("/some/dir2/filea", string(merged[7].Path))
 		assert.Equal("/some/dir2/filec", string(merged[8].Path))
+	})
+
+	t.Run("Chunk size is not exceeded", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		dir := t.TempDir()
+
+		// First, try with a chunk size that *exactly* fits 3 entries.
+		entry := fakeRevisionEntry("1.txt", RevisionEntryAdd)
+		sut := NewRevisionEntryChunks(dir, "chunk", entry.MarshalledSize()*3)
+		for i := range 3 {
+			err := sut.Add(fakeRevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryAdd))
+			assert.NoError(err)
+			assert.Equal(0, sut.Chunks(), "chunk should not have been rotated")
+		}
+		err := sut.Add(fakeRevisionEntry("4.txt", RevisionEntryAdd))
+		assert.NoError(err)
+		assert.Equal(1, sut.Chunks(), "chunk should have been rotated")
+
+		// Now, try with a chunk size that is on byte smaller than 3 entries.
+		sut = NewRevisionEntryChunks(dir, "chunk", entry.MarshalledSize()*3-1)
+		for i := range 2 {
+			err := sut.Add(fakeRevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryAdd))
+			assert.NoError(err)
+			assert.Equal(0, sut.Chunks(), "chunk should not have been rotated")
+		}
+		err = sut.Add(fakeRevisionEntry("3.txt", RevisionEntryAdd))
+		assert.NoError(err)
+		assert.Equal(1, sut.Chunks(), "chunk should have been rotated")
 	})
 
 	t.Run("Sort order is files, directories, and subdirectories", func(t *testing.T) {
