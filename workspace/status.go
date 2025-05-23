@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -64,31 +63,24 @@ func Status(src string, repository *lib.Repository, opts *StatusOptions, tmpDir 
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}
-	cw, err := staging.MergeWithSnapshot(repository)
+	revisionTemp, err := staging.MergeWithSnapshot(repository)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to merge staging chunks")
 	}
-	if cw.Chunks() == 0 {
+	if revisionTemp.Chunks() == 0 {
 		return []StatusFile{}, nil
 	}
+	revisionTempReader := revisionTemp.Reader()
 	result := []StatusFile{}
-	for i := range cw.Chunks() {
-		f, err := cw.ChunkReader(i)
+	for {
+		entry, err := revisionTempReader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
 		if err != nil {
-			return nil, lib.WrapErrorf(err, "failed to open revision chunk file")
+			return nil, lib.WrapErrorf(err, "failed to read revision chunk file")
 		}
-		defer f.Close() //nolint:errcheck
-		reader := bufio.NewReader(f)
-		for {
-			re, err := lib.UnmarshalRevisionEntry(reader)
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			if err != nil {
-				return nil, lib.WrapErrorf(err, "failed to read revision chunk file")
-			}
-			result = append(result, StatusFile{re.Path.FSString(), re.Type, re.Metadata})
-		}
+		result = append(result, StatusFile{entry.Path.FSString(), entry.Type, entry.Metadata})
 	}
 	return result, nil
 }

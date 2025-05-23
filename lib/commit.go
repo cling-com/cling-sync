@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"io"
 	"os"
 	"time"
 )
@@ -11,7 +10,7 @@ const defaultChunkSize = 4 * 1024 * 1024
 type Commit struct {
 	BaseRevision RevisionId
 	repository   *Repository
-	chunkWriter  *RevisionEntryChunks
+	tempWriter   *RevisionTempWriter
 	tmpDir       string
 }
 
@@ -27,15 +26,15 @@ func NewCommit(repository *Repository, tmpDir string) (*Commit, error) {
 	if len(files) > 0 {
 		return nil, Errorf("temporary directory %s is not empty", tmpDir)
 	}
-	chunkWriter := NewRevisionEntryChunks(tmpDir, "add", defaultChunkSize)
-	return &Commit{head, repository, chunkWriter, tmpDir}, nil
+	tempWriter := NewRevisionTempWriter(tmpDir, defaultChunkSize)
+	return &Commit{head, repository, tempWriter, tmpDir}, nil
 }
 
 func (c *Commit) Add(entry *RevisionEntry) error {
-	if c.chunkWriter == nil {
-		return Errorf("staging is closed")
+	if c.tempWriter == nil {
+		return Errorf("commit is closed")
 	}
-	return c.chunkWriter.Add(entry)
+	return c.tempWriter.Add(entry)
 }
 
 type CommitInfo struct {
@@ -44,25 +43,19 @@ type CommitInfo struct {
 }
 
 func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
-	sortedChunkWriter := NewRevisionEntryChunks(c.tmpDir, "sorted", MaxBlockDataSize)
-	if err := c.chunkWriter.MergeChunks(sortedChunkWriter.Add); err != nil {
-		return RevisionId{}, WrapErrorf(err, "failed to merge chunks")
+	sorted, err := c.tempWriter.Finalize()
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to finalize temp writer")
 	}
-	if err := sortedChunkWriter.Close(); err != nil {
-		return RevisionId{}, WrapErrorf(err, "failed to close sorted chunk writer")
-	}
-	if sortedChunkWriter.Chunks() == 0 {
+	defer sorted.Remove() //nolint:errcheck
+	if sorted.Chunks() == 0 {
 		return RevisionId{}, Errorf("empty commit")
 	}
 	blockBuf := BlockBuf{}
 	blockIds := []BlockId{}
-	for chunk := range sortedChunkWriter.Chunks() {
-		f, err := sortedChunkWriter.ChunkReader(chunk)
-		if err != nil {
-			return RevisionId{}, WrapErrorf(err, "failed to open sorted chunk file")
-		}
-		defer f.Close() //nolint:errcheck
-		buf, err := io.ReadAll(f)
+	sortedReader := sorted.Reader()
+	for chunk := range sorted.Chunks() {
+		buf, err := sortedReader.ReadChunkRaw(chunk)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to read sorted chunk file")
 		}
