@@ -78,11 +78,8 @@ func (s *Staging) MergeWithSnapshot(repository *Repository) (*RevisionTemp, erro
 			head,
 		)
 	}
-	revReader, err := snapshot.Reader(s.PathFilter)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to open revision snapshot")
-	}
-	stgReader := stgTemp.Reader()
+	revReader := snapshot.Reader(s.PathFilter)
+	stgReader := stgTemp.Reader(s.PathFilter)
 	final := filepath.Join(s.tmpDir, "final")
 	if err := os.MkdirAll(final, 0o700); err != nil {
 		return nil, WrapErrorf(err, "failed to create commit directory")
@@ -208,7 +205,7 @@ func (s *Staging) Commit(repository *Repository, info *CommitInfo) (RevisionId, 
 		Blocks:        make([]BlockId, 0),
 	}
 	blockBuf := BlockBuf{}
-	revisionTempReader := revisionTemp.Reader()
+	revisionTempReader := revisionTemp.Reader(s.PathFilter)
 	for i := range revisionTemp.Chunks() {
 		data, err := revisionTempReader.ReadChunkRaw(i)
 		if err != nil {
@@ -227,7 +224,7 @@ func (s *Staging) Commit(repository *Repository, info *CommitInfo) (RevisionId, 
 	return revisionId, nil
 }
 
-func (s *Staging) revisionSnapshot(repository *Repository) (*RevisionSnapshot, error) {
+func (s *Staging) revisionSnapshot(repository *Repository) (*RevisionTemp, error) {
 	tmpDir := filepath.Join(s.tmpDir, "revision-snapshot")
 	_ = os.RemoveAll(tmpDir)
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {

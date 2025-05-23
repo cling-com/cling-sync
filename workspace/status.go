@@ -70,7 +70,7 @@ func Status(src string, repository *lib.Repository, opts *StatusOptions, tmpDir 
 	if revisionTemp.Chunks() == 0 {
 		return []StatusFile{}, nil
 	}
-	revisionTempReader := revisionTemp.Reader()
+	revisionTempReader := revisionTemp.Reader(nil)
 	result := []StatusFile{}
 	for {
 		entry, err := revisionTempReader.Read()

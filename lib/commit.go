@@ -53,7 +53,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	}
 	blockBuf := BlockBuf{}
 	blockIds := []BlockId{}
-	sortedReader := sorted.Reader()
+	sortedReader := sorted.Reader(nil)
 	for chunk := range sorted.Chunks() {
 		buf, err := sortedReader.ReadChunkRaw(chunk)
 		if err != nil {

@@ -9,15 +9,17 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 )
 
+// todo: encrypt the temporary files
 type RevisionTemp struct {
 	dir    string
 	chunks int
 }
 
-func (rt *RevisionTemp) Reader() *RevisionTempReader {
-	return &RevisionTempReader{dir: rt.dir, chunks: rt.chunks} //nolint:exhaustruct
+func (rt *RevisionTemp) Reader(pathFilter PathFilter) *RevisionTempReader {
+	return &RevisionTempReader{dir: rt.dir, chunks: rt.chunks, pathFilter: pathFilter} //nolint:exhaustruct
 }
 
 func (rt *RevisionTemp) Chunks() int {
@@ -33,6 +35,7 @@ func (rt *RevisionTemp) Remove() error {
 
 type RevisionTempReader struct {
 	dir          string
+	pathFilter   PathFilter
 	chunks       int
 	chunkIndex   int
 	current      []*RevisionEntry
@@ -40,21 +43,25 @@ type RevisionTempReader struct {
 }
 
 func (rtr *RevisionTempReader) Read() (*RevisionEntry, error) {
-	if rtr.current == nil || rtr.currentIndex == len(rtr.current) {
-		if rtr.chunkIndex == rtr.chunks {
-			return nil, io.EOF
+	for {
+		if rtr.current == nil || rtr.currentIndex == len(rtr.current) {
+			if rtr.chunkIndex == rtr.chunks {
+				return nil, io.EOF
+			}
+			entries, err := rtr.ReadChunk(rtr.chunkIndex)
+			if err != nil {
+				return nil, err
+			}
+			rtr.current = entries
+			rtr.currentIndex = 0
+			rtr.chunkIndex++
 		}
-		entries, err := rtr.ReadChunk(rtr.chunkIndex)
-		if err != nil {
-			return nil, err
+		re := rtr.current[rtr.currentIndex]
+		rtr.currentIndex++
+		if rtr.pathFilter == nil || rtr.pathFilter.Include(re.Path.FSString()) {
+			return re, nil
 		}
-		rtr.current = entries
-		rtr.currentIndex = 0
-		rtr.chunkIndex++
 	}
-	re := rtr.current[rtr.currentIndex]
-	rtr.currentIndex++
-	return re, nil
 }
 
 func (rtr *RevisionTempReader) ReadChunk(i int) ([]*RevisionEntry, error) {
@@ -76,11 +83,15 @@ func (rtr *RevisionTempReader) ReadChunk(i int) ([]*RevisionEntry, error) {
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to unmarshal revision entry from chunk file %d", i)
 		}
+		if rtr.pathFilter != nil && !rtr.pathFilter.Include(string(re.Path)) {
+			continue
+		}
 		entries = append(entries, re)
 	}
 	return entries, nil
 }
 
+// This ignores the `pathFilter` and reads all entries (obviously).
 func (rtr *RevisionTempReader) ReadChunkRaw(i int) ([]byte, error) {
 	if i < 0 || i >= rtr.chunks {
 		return nil, Errorf("chunk index out of range")
@@ -256,4 +267,89 @@ func (rtw *RevisionTempWriter) rotateChunk() error {
 	rtw.chunkSize = 0
 	rtw.chunks += 1
 	return nil
+}
+
+type RevisionTempCache struct {
+	temp             *RevisionTemp
+	maxChunksInCache int
+	reader           *RevisionTempReader
+	cache            []map[string]*RevisionEntry
+	firstEntries     []*RevisionEntry
+	lastAccessed     []int64
+	chunksInCache    int
+	CacheMisses      int
+}
+
+func NewRevisionTempCache(temp *RevisionTemp, maxChunksInCache int) (*RevisionTempCache, error) {
+	firstEntries := make([]*RevisionEntry, temp.Chunks())
+	reader := temp.Reader(nil)
+	for i := range temp.Chunks() {
+		f, err := os.Open(reader.chunkFilename(i))
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to open chunk file %d", i)
+		}
+		defer f.Close() //nolint:errcheck
+		first, err := UnmarshalRevisionEntry(f)
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to read chunk file %d", i)
+		}
+		firstEntries[i] = first
+	}
+	return &RevisionTempCache{
+		temp:             temp,
+		maxChunksInCache: maxChunksInCache,
+		reader:           reader,
+		cache:            make([]map[string]*RevisionEntry, temp.Chunks()),
+		firstEntries:     firstEntries,
+		lastAccessed:     make([]int64, temp.Chunks()),
+		CacheMisses:      0,
+		chunksInCache:    0,
+	}, nil
+}
+
+func (rtc *RevisionTempCache) Get(path Path, isDir bool) (*RevisionEntry, bool, error) {
+	entry := &RevisionEntry{Path: path, Type: RevisionEntryAdd, Metadata: &FileMetadata{}} //nolint:exhaustruct
+	if isDir {
+		entry.Metadata.ModeAndPerm = ModeDir
+	}
+	// Find the chunk that contains the entry.
+	chunkIndex := rtc.temp.Chunks() - 1
+	for i, firstEntry := range rtc.firstEntries {
+		c := RevisionEntryPathCompare(entry, firstEntry)
+		if c < 0 {
+			if i == 0 {
+				return nil, false, nil
+			}
+			chunkIndex = i - 1
+			break
+		}
+	}
+	cache := rtc.cache[chunkIndex]
+	if cache == nil {
+		if rtc.chunksInCache >= rtc.maxChunksInCache {
+			// Evict the oldest chunk.
+			oldest := -1
+			for i, lastAccessed := range rtc.lastAccessed {
+				if oldest < 0 || lastAccessed < rtc.lastAccessed[oldest] {
+					oldest = i
+				}
+			}
+			rtc.cache[oldest] = nil
+		} else {
+			rtc.chunksInCache++
+		}
+		cache = make(map[string]*RevisionEntry)
+		rtc.cache[chunkIndex] = cache
+		rtc.CacheMisses++
+		entries, err := rtc.reader.ReadChunk(chunkIndex)
+		if err != nil {
+			return nil, false, WrapErrorf(err, "failed to read chunk %d", chunkIndex)
+		}
+		for _, entry := range entries {
+			cache[string(entry.Path)] = entry
+		}
+	}
+	rtc.lastAccessed[chunkIndex] = time.Now().UnixNano()
+	re, ok := cache[string(entry.Path)]
+	return re, ok, nil
 }

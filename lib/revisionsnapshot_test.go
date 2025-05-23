@@ -172,8 +172,8 @@ func readRevisionSnapshot(
 	assert := NewAssert(t)
 	snapshot, err := NewRevisionSnapshot(repo, revisionId, t.TempDir())
 	assert.NoError(err)
-	defer snapshot.Close() //nolint:errcheck
-	reader, err := snapshot.Reader(pathFilter)
+	defer snapshot.Remove() //nolint:errcheck
+	reader := snapshot.Reader(pathFilter)
 	assert.NoError(err)
 	entries := []*RevisionEntry{}
 	for {

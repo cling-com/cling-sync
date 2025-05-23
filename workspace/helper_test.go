@@ -88,9 +88,8 @@ func (rt *RepositoryTest) RevisionSnapshot(revisionId lib.RevisionId, pathFilter
 	rt.assert.NoError(os.MkdirAll(tmpDir, 0o700))
 	snapshot, err := lib.NewRevisionSnapshot(rt.Repository, revisionId, tmpDir)
 	rt.assert.NoError(err)
-	defer snapshot.Close() //nolint:errcheck
-	reader, err := snapshot.Reader(pathFilter)
-	rt.assert.NoError(err)
+	defer snapshot.Remove() //nolint:errcheck
+	reader := snapshot.Reader(pathFilter)
 	entries := []*lib.RevisionEntry{}
 	for {
 		entry, err := reader.Read()

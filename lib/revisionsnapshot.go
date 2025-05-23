@@ -1,25 +1,17 @@
-// A revision snapshot contains the list of all paths present in a given revision.
-// It does this by building a list of all revisions from the given revision to the root
+// A revision snapshot represents a sorted list of all effective RevisionEntries
+// for a given revision.
+// It is created by reading all revisions from the given revision to the root
 // revision, and then merging the revisions together.
 package lib
 
 import (
-	"bufio"
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 )
 
-type RevisionSnapshot struct {
-	RevisionId RevisionId
-	targetFile string
-	tmpDir     string
-	reader     *RevisionSnapshotReader
-}
-
-func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpDir string) (*RevisionSnapshot, error) {
+func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpDir string) (*RevisionTemp, error) {
 	files, err := os.ReadDir(tmpDir)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read temporary directory %s", tmpDir)
@@ -27,7 +19,6 @@ func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpDir str
 	if len(files) > 0 {
 		return nil, Errorf("temporary directory %s is not empty", tmpDir)
 	}
-	targetFile := filepath.Join(tmpDir, "snapshot")
 	// Build a list of all revisions.
 	revisions := make([]*Revision, 0)
 	r := revision
@@ -40,75 +31,29 @@ func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpDir str
 		revisions = append(revisions, &revision)
 		r = revision.Parent
 	}
-	// todo: encrypt the temporary file
-	if err := revisionNWayMerge(repository, revisions, targetFile); err != nil {
+	tempWriter := NewRevisionTempWriter(tmpDir, defaultChunkSize)
+	if err := revisionNWayMerge(repository, revisions, tempWriter); err != nil {
 		return nil, WrapErrorf(err, "failed to revision n-way merge revisions")
 	}
-	return &RevisionSnapshot{revision, targetFile, tmpDir, nil}, nil
-}
-
-func (rs *RevisionSnapshot) Close() error {
-	defer func() {
-		os.Remove(rs.targetFile) //nolint:errcheck,gosec
-		os.RemoveAll(rs.tmpDir)  //nolint:errcheck,gosec
-	}()
-	if rs.reader != nil {
-		if err := rs.reader.file.Close(); err != nil {
-			return WrapErrorf(err, "failed to close revision snapshot reader")
-		}
-		rs.reader = nil
-	}
-	return nil
-}
-
-func (rs *RevisionSnapshot) Reader(pathFilter PathFilter) (*RevisionSnapshotReader, error) {
-	if rs.reader != nil {
-		return nil, Errorf("reader already created")
-	}
-	file, err := os.Open(rs.targetFile)
+	// todo: we don't need to call `tempWriter.Finalize()` because the entries
+	// are already sorted.
+	temp, err := tempWriter.Finalize()
 	if err != nil {
-		return nil, WrapErrorf(err, "failed to open revision snapshot")
+		return nil, WrapErrorf(err, "failed to finalize temporary file")
 	}
-	bufReader := bufio.NewReader(file)
-	rs.reader = &RevisionSnapshotReader{file: file, bufReader: *bufReader, pathFilter: pathFilter}
-	return rs.reader, nil
+	return temp, nil
 }
 
-type RevisionSnapshotReader struct {
-	file       *os.File
-	bufReader  bufio.Reader
-	pathFilter PathFilter
-}
-
-// Return `io.EOF` if we are done.
-func (rs *RevisionSnapshotReader) Read() (*RevisionEntry, error) {
-	for {
-		re, err := UnmarshalRevisionEntry(&rs.bufReader)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil, io.EOF
-			}
-			return nil, WrapErrorf(err, "failed to read revision snapshot")
-		}
-		if rs.pathFilter != nil && !rs.pathFilter.Include(re.Path.FSString()) {
-			continue
-		}
-		return re, nil
-	}
-}
-
-func revisionNWayMerge(repository *Repository, revisions []*Revision, targetFile string) error { //nolint:funlen
-	file, err := os.OpenFile(targetFile, os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return WrapErrorf(err, "failed to open target file for writing")
-	}
-	defer file.Close() //nolint:errcheck
-	w := bufio.NewWriter(file)
-	cr := make([]*RevisionReader, len(revisions))
+func revisionNWayMerge(
+	repository *Repository,
+	revisions []*Revision,
+	tempWriter *RevisionTempWriter,
+) error {
+	readers := make([]*RevisionReader, len(revisions))
 	heap := []*RevisionEntry{}
 	for i, revision := range revisions {
-		cr[i] = NewRevisionReader(repository, revision, BlockBuf{})
-		re, err := cr[i].Read()
+		readers[i] = NewRevisionReader(repository, revision, BlockBuf{})
+		re, err := readers[i].Read()
 		if errors.Is(err, io.EOF) {
 			continue
 		}
@@ -139,7 +84,7 @@ func revisionNWayMerge(repository *Repository, revisions []*Revision, targetFile
 				if newest == nil {
 					newest = re
 				}
-				re, err := cr[i].Read()
+				re, err := readers[i].Read()
 				if errors.Is(err, io.EOF) {
 					heap[i] = nil
 					continue
@@ -151,19 +96,10 @@ func revisionNWayMerge(repository *Repository, revisions []*Revision, targetFile
 			}
 		}
 		if newest.Type != RevisionEntryDelete {
-			if err := MarshalRevisionEntry(newest, w); err != nil {
-				return WrapErrorf(err, "failed to write to target file")
+			if err := tempWriter.Add(newest); err != nil {
+				return WrapErrorf(err, "failed to write entry")
 			}
 		}
-	}
-	if err := w.Flush(); err != nil {
-		return WrapErrorf(err, "failed to flush target file")
-	}
-	if err := file.Close(); err != nil {
-		if err2 := os.Remove(targetFile); err2 != nil {
-			return WrapErrorf(err, "failed to close file (and it could not be deleted, it is garbage now)")
-		}
-		return WrapErrorf(err, "failed to close target file")
 	}
 	return nil
 }

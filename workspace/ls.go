@@ -99,11 +99,9 @@ func Ls(repository *lib.Repository, revisionId lib.RevisionId, pattern *lib.Path
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	defer snapshot.Close() //nolint:errcheck
-	reader, err := snapshot.Reader(nil)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to open revision snapshot reader")
-	}
+	defer snapshot.Remove() //nolint:errcheck
+	filter := &lib.PathInclusionFilter{Includes: []lib.PathPattern{*pattern}}
+	reader := snapshot.Reader(filter)
 	files := []LsFile{}
 	for {
 		re, err := reader.Read()
@@ -114,9 +112,6 @@ func Ls(repository *lib.Repository, revisionId lib.RevisionId, pattern *lib.Path
 			return nil, lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
 		path := re.Path.FSString()
-		if pattern != nil && !pattern.Match(path) {
-			continue
-		}
 		files = append(files, LsFile{path, re.Metadata})
 	}
 	return files, nil
