@@ -348,9 +348,7 @@ func checkRevision(t *testing.T, repo *Repository, revId, parent RevisionId, exp
 	expectedEntries := make([]*RevisionEntry, len(expected))
 	for i, f := range expected {
 		entry := fakeRevisionEntry(f.path, f.typ)
-		if entry.Metadata != nil {
-			entry.Metadata.ModeAndPerm = ModeAndPerm(f.mode)
-		}
+		entry.Metadata.ModeAndPerm = ModeAndPerm(f.mode)
 		expectedEntries[i] = entry
 	}
 	assert.Equal(expectedEntries, entries)

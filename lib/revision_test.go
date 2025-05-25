@@ -38,7 +38,6 @@ func TestRevisionEntry(t *testing.T) {
 		assert.Equal(sut.MarshalledSize(), buf.Len())
 
 		sut = fakeRevisionEntry("a.txt", RevisionEntryDelete)
-		sut.Metadata = nil
 		buf.Reset()
 		err = MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
@@ -86,6 +85,18 @@ func TestRevisionEntry(t *testing.T) {
 			"/abc/1.md",
 		}, actualPaths)
 	})
+
+	t.Run("RevisionEntryPathCompare with different types", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := fakeRevisionEntryMode("a", RevisionEntryDelete, ModeDir)
+		assert.Equal(0, RevisionEntryPathCompare(sut, fakeRevisionEntryMode("a", RevisionEntryDelete, ModeDir)))
+		assert.Equal(0, RevisionEntryPathCompare(sut, fakeRevisionEntryMode("a", RevisionEntryAdd, ModeDir)))
+		assert.Equal(0, RevisionEntryPathCompare(sut, fakeRevisionEntryMode("a", RevisionEntryUpdate, ModeDir)))
+
+		// Files are greater than directories.
+		assert.Equal(1, RevisionEntryPathCompare(sut, fakeRevisionEntryMode("a", RevisionEntryUpdate, 0)))
+	})
 }
 
 func TestRevision(t *testing.T) {
@@ -119,13 +130,9 @@ func fakeRevisionEntry(path string, entryType RevisionEntryType) *RevisionEntry 
 }
 
 func fakeRevisionEntryMode(path string, entryType RevisionEntryType, mode ModeAndPerm) *RevisionEntry {
-	var metadata *FileMetadata
-	if entryType != RevisionEntryDelete {
-		metadata = fakeFileMetadata(mode)
-	}
 	return &RevisionEntry{
 		Path:     NewPath(strings.Split(path, "/")...),
 		Type:     entryType,
-		Metadata: metadata,
+		Metadata: fakeFileMetadata(mode),
 	}
 }

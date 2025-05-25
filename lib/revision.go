@@ -116,7 +116,7 @@ func UnmarshalRevision(r io.Reader) (*Revision, error) {
 func RevisionEntryPathCompare(a, b *RevisionEntry) int {
 	key := func(e *RevisionEntry) string {
 		p := strings.ReplaceAll(string(e.Path), "/", "/1")
-		if e.Metadata != nil && e.Metadata.ModeAndPerm.IsDir() {
+		if e.Metadata.ModeAndPerm.IsDir() {
 			return p
 		}
 		lastSlash := strings.LastIndex(p, "/")
@@ -135,35 +135,20 @@ type RevisionEntry struct {
 }
 
 func NewRevisionEntry(path Path, typ RevisionEntryType, md *FileMetadata) (RevisionEntry, error) {
-	if typ == RevisionEntryDelete {
-		if md != nil {
-			return RevisionEntry{}, Errorf("cannot create delete revision with metadata")
-		}
-	} else if md == nil {
-		return RevisionEntry{}, Errorf("cannot create add/update revision without metadata")
-	}
 	return RevisionEntry{Path: path, Type: typ, Metadata: md}, nil
 }
 
 func (se *RevisionEntry) MarshalledSize() int {
-	size := len(se.Path) + 2 + 1 // Path + len(Path) + Type
-	if se.Metadata != nil {
-		size += se.Metadata.MarshalledSize()
-	}
-	return size
+	return len(se.Path) + 2 + 1 + // Path + len(Path) + Type
+		se.Metadata.MarshalledSize()
 }
 
 func MarshalRevisionEntry(r *RevisionEntry, w io.Writer) error {
 	bw := NewBinaryWriter(w)
 	bw.WriteString(string(r.Path))
 	bw.Write(r.Type)
-	if r.Metadata != nil {
-		if r.Type == RevisionEntryDelete {
-			return Errorf("cannot marshal delete revision with metadata %s", r.Path)
-		}
-		return MarshalFileMetadata(r.Metadata, w)
-	} else if r.Type != RevisionEntryDelete {
-		return Errorf("cannot marshal add/update revision without metadata %s (%d)", r.Path, r.Type)
+	if err := MarshalFileMetadata(r.Metadata, w); err != nil {
+		return WrapErrorf(err, "failed to marshal revision entry %s", r.Path)
 	}
 	if bw.Err != nil {
 		return WrapErrorf(bw.Err, "failed to marshal revision entry %s", r.Path)
@@ -179,13 +164,11 @@ func UnmarshalRevisionEntry(r io.Reader) (*RevisionEntry, error) {
 	path := br.ReadString()
 	re.Path = Path(path)
 	br.Read(&re.Type)
-	if re.Type != RevisionEntryDelete {
-		metadata, err := UnmarshalFileMetadata(r)
-		if err != nil {
-			return nil, WrapErrorf(err, "failed to unmarshal file metadata for revision entry %s", re.Path)
-		}
-		re.Metadata = metadata
+	metadata, err := UnmarshalFileMetadata(r)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to unmarshal file metadata for revision entry %s", re.Path)
 	}
+	re.Metadata = metadata
 	if br.Err != nil {
 		return nil, WrapErrorf(br.Err, "failed to unmarshal revision entry")
 	}

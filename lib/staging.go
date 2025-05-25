@@ -106,7 +106,7 @@ func (s *Staging) MergeWithSnapshot(repository *Repository) (*RevisionTemp, erro
 				for {
 					if rev != nil { // The current one might be nil.
 						// Write a delete.
-						if err := add(rev.Path, RevisionEntryDelete, nil); err != nil {
+						if err := add(rev.Path, RevisionEntryDelete, rev.Metadata); err != nil {
 							return nil, err
 						}
 					}
@@ -168,7 +168,7 @@ func (s *Staging) MergeWithSnapshot(repository *Repository) (*RevisionTemp, erro
 			continue
 		} else {
 			// Write a delete.
-			if err := add(rev.Path, RevisionEntryDelete, nil); err != nil {
+			if err := add(rev.Path, RevisionEntryDelete, rev.Metadata); err != nil {
 				return nil, err
 			}
 			rev = nil
