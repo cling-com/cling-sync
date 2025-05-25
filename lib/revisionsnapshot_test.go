@@ -123,7 +123,7 @@ func TestRevisionSnapshot(t *testing.T) {
 		}, entries)
 	})
 
-	t.Run("Ignored paths", func(t *testing.T) {
+	t.Run("PathFilter", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		repo, _ := testRepository(t)
@@ -145,6 +145,43 @@ func TestRevisionSnapshot(t *testing.T) {
 			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
 			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
 		}, snapshot)
+	})
+
+	t.Run("Delete directory", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		_, err := testCommit(
+			t,
+			repo,
+			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/b/3.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/b/4.txt", RevisionEntryAdd),
+		)
+		assert.NoError(err)
+		_, err = testCommit(
+			t,
+			repo,
+			fakeRevisionEntry("a/b/3.txt", RevisionEntryUpdate),
+			fakeRevisionEntry("a/b/4.txt", RevisionEntryUpdate),
+		)
+		assert.NoError(err)
+		revId2, err := testCommit(
+			t,
+			repo,
+			fakeRevisionEntry("a/b", RevisionEntryDelete),
+			fakeRevisionEntry("a/b/3.txt", RevisionEntryDelete),
+			fakeRevisionEntry("a/b/4.txt", RevisionEntryDelete),
+		)
+		assert.NoError(err)
+
+		entries := readRevisionSnapshot(t, repo, revId2, nil)
+		assert.Equal([]*RevisionEntry{
+			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
+			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+		}, entries)
 	})
 }
 

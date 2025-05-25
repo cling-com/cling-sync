@@ -3,6 +3,7 @@ package main
 
 import (
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -177,19 +178,22 @@ func CommitCmd(argv []string) error { //nolint:funlen
 		},
 	}
 	revisionId, err := workspace.Commit(ws.WorkspacePath, repository, opts, tmpDir)
-	if err != nil {
-		return err //nolint:wrapcheck
-	}
 	mon.Close()
 	if args.IgnoreErrors && mon.errors > 0 {
 		fmt.Printf("%d errors ignored\n", mon.errors)
 	}
-	fmt.Printf(
-		"Revision %s (%d bytes, compressed: %.2f)\n",
-		revisionId,
-		mon.rawBytesAdded,
-		float64(mon.compressedBytesAdded)/float64(mon.rawBytesAdded),
-	)
+	if errors.Is(err, lib.ErrEmptyCommit) {
+		fmt.Println("No changes")
+		return nil
+	}
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	compressionRatio := "n/a"
+	if mon.rawBytesAdded > 0 {
+		compressionRatio = fmt.Sprintf("%.2f", float64(mon.compressedBytesAdded)/float64(mon.rawBytesAdded))
+	}
+	fmt.Printf("Revision %s (%s added, compressed: %s)\n", revisionId, formatBytes(mon.rawBytesAdded), compressionRatio)
 	return nil
 }
 

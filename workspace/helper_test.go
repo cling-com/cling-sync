@@ -75,8 +75,29 @@ func (rt *RepositoryTest) VerifyRevisionSnapshot(
 	for i, entry := range entries {
 		rt.assert.Equal(true, i < len(files), "not enough files, expected entry: %v", entry)
 		file := files[i]
+		stat, err := os.Stat(rt.LocalPath(file.Path))
+		rt.assert.NoError(err)
 		rt.assert.Equal(entry.Path.FSString(), file.Path, "path of %s", entry.Path.FSString())
 		rt.assert.Equal(entry.Metadata.Size, int64(file.Size), "size of %s", entry.Path.FSString())
+		rt.assert.Equal(
+			entry.Metadata.ModeAndPerm,
+			lib.NewModeAndPerm(stat.Mode()),
+			"mode of %s",
+			entry.Path.FSString(),
+		)
+		if stat.Mode().IsRegular() {
+			expectedContent, err := os.ReadFile(rt.LocalPath(file.Path))
+			rt.assert.NoError(err)
+			// Rebuild the content from the repository.
+			var content []byte
+			blockBuf := lib.BlockBuf{}
+			for _, blockId := range entry.Metadata.BlockIds {
+				data, _, err := rt.Repository.ReadBlock(blockId, blockBuf)
+				rt.assert.NoError(err)
+				content = append(content, data...)
+			}
+			rt.assert.Equal(string(expectedContent), string(content), "content of %s", entry.Path.FSString())
+		}
 	}
 	rt.assert.Equal(len(files), len(entries), "not enough revision entries, expected file: %v", files[len(entries)-1])
 }
@@ -124,7 +145,7 @@ func newTestStagingMonitor() *testStagingMonitor {
 func (m *testStagingMonitor) OnStart(path string, dirEntry os.DirEntry) {
 }
 
-func (m *testStagingMonitor) OnAddBlock(path string, header *lib.BlockHeader, existed bool, dataSize int) {
+func (m *testStagingMonitor) OnAddBlock(path string, header *lib.BlockHeader, existed bool, dataSize int64) {
 }
 
 func (m *testStagingMonitor) OnError(path string, err error) StagingOnError {

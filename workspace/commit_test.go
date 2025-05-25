@@ -44,6 +44,35 @@ func TestCommit(t *testing.T) {
 		})
 	})
 
+	t.Run("Removing a directory", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		rt := NewRepositoryTest(t)
+		rt.AddLocal("a.txt", ".")
+		rt.AddLocal("b.txt", "..")
+		rt.AddLocal("c/1.txt", "...")
+		rt.AddLocal("c/d/2.txt", "....")
+
+		revId, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		assert.NoError(err)
+		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
+			{"a.txt", 1},
+			{"b.txt", 2},
+			{"c", 0},
+			{"c/1.txt", 3},
+			{"c/d", 0},
+			{"c/d/2.txt", 4},
+		})
+
+		rt.RemoveLocal("c")
+		revId, err = Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		assert.NoError(err)
+		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
+			{"a.txt", 1},
+			{"b.txt", 2},
+		})
+	})
+
 	t.Run("Ignore files", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)

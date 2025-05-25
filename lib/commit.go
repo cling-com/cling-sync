@@ -49,7 +49,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	}
 	defer sorted.Remove() //nolint:errcheck
 	if sorted.Chunks() == 0 {
-		return RevisionId{}, Errorf("empty commit")
+		return RevisionId{}, ErrEmptyCommit
 	}
 	blockBuf := BlockBuf{}
 	blockIds := []BlockId{}

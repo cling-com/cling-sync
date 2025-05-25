@@ -201,6 +201,25 @@ func TestRevisionTemp(t *testing.T) {
 		assert.Equal("b.txt", string(merged[0].Path))
 	})
 
+	t.Run("PathFilter filtering everything", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		dir := t.TempDir()
+		sut := NewRevisionTempWriter(dir, defaultChunkSize)
+
+		for _, path := range []string{"a.txt", "sub/a.txt", "b.txt"} {
+			err := sut.Add(fakeRevisionEntry(path, RevisionEntryAdd))
+			assert.NoError(err)
+		}
+
+		filtered, err := NewPathExclusionFilter([]string{"**/*"}, []string{})
+		assert.NoError(err)
+		temp, err := sut.Finalize()
+		assert.NoError(err)
+		merged := readAllRevsisionTemp(t, temp, filtered)
+		assert.Equal(0, len(merged))
+	})
+
 	t.Run("Fuzzing", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

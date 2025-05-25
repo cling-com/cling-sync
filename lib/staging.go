@@ -58,14 +58,13 @@ func (s *Staging) Add(path Path, md *FileMetadata) (bool, error) {
 
 // Merge the staging snapshot with the revision snapshot.
 // The resulting `RevisionEntryChunks` will only contain entries that are in the staging snapshot.
-func (s *Staging) MergeWithSnapshot(repository *Repository) (*RevisionTemp, error) { //nolint:funlen
+func (s *Staging) MergeWithSnapshot( //nolint:funlen
+	repository *Repository,
+	snapshot *RevisionSnapshot,
+) (*RevisionTemp, error) {
 	stgTemp, err := s.tempWriter.Finalize()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to finalize staging temp writer")
-	}
-	snapshot, err := s.revisionSnapshot(repository)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to create revision snapshot")
 	}
 	head, err := repository.Head()
 	if err != nil {
@@ -77,6 +76,9 @@ func (s *Staging) MergeWithSnapshot(repository *Repository) (*RevisionTemp, erro
 			s.BaseRevision,
 			head,
 		)
+	}
+	if head != snapshot.RevisionId {
+		return nil, Errorf("snapshot revision %s does not match head %s", s.BaseRevision, head)
 	}
 	revReader := snapshot.Reader(s.PathFilter)
 	stgReader := stgTemp.Reader(s.PathFilter)
@@ -186,8 +188,8 @@ func (s *Staging) MergeWithSnapshot(repository *Repository) (*RevisionTemp, erro
 // Then, create a new revision with the merged `RevisionEntryChunks`.
 //
 // Return `ErrEmptyCommit` if there are no changes.
-func (s *Staging) Commit(repository *Repository, info *CommitInfo) (RevisionId, error) {
-	revisionTemp, err := s.MergeWithSnapshot(repository)
+func (s *Staging) Commit(repository *Repository, snapshot *RevisionSnapshot, info *CommitInfo) (RevisionId, error) {
+	revisionTemp, err := s.MergeWithSnapshot(repository, snapshot)
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to merge staging chunks")
 	}
@@ -205,7 +207,7 @@ func (s *Staging) Commit(repository *Repository, info *CommitInfo) (RevisionId, 
 		Blocks:        make([]BlockId, 0),
 	}
 	blockBuf := BlockBuf{}
-	revisionTempReader := revisionTemp.Reader(s.PathFilter)
+	revisionTempReader := revisionTemp.Reader(nil)
 	for i := range revisionTemp.Chunks() {
 		data, err := revisionTempReader.ReadChunkRaw(i)
 		if err != nil {
@@ -222,13 +224,4 @@ func (s *Staging) Commit(repository *Repository, info *CommitInfo) (RevisionId, 
 		return RevisionId{}, WrapErrorf(err, "failed to write revision")
 	}
 	return revisionId, nil
-}
-
-func (s *Staging) revisionSnapshot(repository *Repository) (*RevisionTemp, error) {
-	tmpDir := filepath.Join(s.tmpDir, "revision-snapshot")
-	_ = os.RemoveAll(tmpDir)
-	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
-		return nil, WrapErrorf(err, "failed to create temporary directory %s", tmpDir)
-	}
-	return NewRevisionSnapshot(repository, s.BaseRevision, tmpDir)
 }

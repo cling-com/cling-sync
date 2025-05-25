@@ -55,6 +55,10 @@ func (rtr *RevisionTempReader) Read() (*RevisionEntry, error) {
 			rtr.current = entries
 			rtr.currentIndex = 0
 			rtr.chunkIndex++
+			if len(entries) == 0 {
+				// All entries have been filtered out.
+				continue
+			}
 		}
 		re := rtr.current[rtr.currentIndex]
 		rtr.currentIndex++
@@ -139,10 +143,8 @@ func (rtw *RevisionTempWriter) Add(re *RevisionEntry) error {
 
 // Rotate the current chunk and then sort all chunks and return the merged result.
 func (rtw *RevisionTempWriter) Finalize() (*RevisionTemp, error) { //nolint:funlen
-	if len(rtw.chunk) > 0 {
-		if err := rtw.rotateChunk(); err != nil {
-			return nil, WrapErrorf(err, "failed to rotate final chunk")
-		}
+	if err := rtw.rotateChunk(); err != nil {
+		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
 	// Create a new RevisionTempWriter to store the sorted chunks.
 	sorted := NewRevisionTempWriter(rtw.dir, rtw.maxChunkSize)
@@ -211,10 +213,8 @@ func (rtw *RevisionTempWriter) Finalize() (*RevisionTemp, error) { //nolint:funl
 		}
 		entries[minIndex] = &entry{value, chunkIdx}
 	}
-	if len(sorted.chunk) > 0 {
-		if err := sorted.rotateChunk(); err != nil {
-			return nil, WrapErrorf(err, "failed to rotate final chunk")
-		}
+	if err := sorted.rotateChunk(); err != nil {
+		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
 	// Close and delete all chunk files.
 	for i := range rtw.chunks {
@@ -234,6 +234,9 @@ func (rtw *RevisionTempWriter) chunkFilename(index int) string {
 
 // Sort the current chunk and write it to disk.
 func (rtw *RevisionTempWriter) rotateChunk() error {
+	if len(rtw.chunk) == 0 {
+		return nil
+	}
 	var err error
 	slices.SortFunc(rtw.chunk, func(a, b *RevisionEntry) int {
 		c := RevisionEntryPathCompare(a, b)
@@ -323,6 +326,9 @@ func (rtc *RevisionTempCache) Get(path Path, isDir bool) (*RevisionEntry, bool, 
 			chunkIndex = i - 1
 			break
 		}
+	}
+	if chunkIndex < 0 {
+		return nil, false, nil
 	}
 	cache := rtc.cache[chunkIndex]
 	if cache == nil {

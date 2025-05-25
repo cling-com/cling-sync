@@ -327,9 +327,11 @@ func commitStaging(
 	st, err := NewStaging(base, pathFilter, t.TempDir())
 	assert.NoError(err)
 	addFiles(t, st, files)
-
+	snapshot, err := NewRevisionSnapshot(repo, base, t.TempDir())
+	assert.NoError(err)
 	revId, err := st.Commit(
 		repo,
+		snapshot,
 		&CommitInfo{Author: fmt.Sprintf("author: %s", base), Message: fmt.Sprintf("message: %s", base)},
 	)
 	return revId, err

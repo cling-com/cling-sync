@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
@@ -59,11 +61,26 @@ type StatusOptions struct {
 }
 
 func Status(src string, repository *lib.Repository, opts *StatusOptions, tmpDir string) (StatusFiles, error) {
-	staging, err := NewStaging(src, repository, opts.PathFilter, false, tmpDir, opts.Monitor)
+	head, err := repository.Head()
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to get head")
+	}
+	snapshotDir := filepath.Join(tmpDir, "snapshot")
+	stagingDir := filepath.Join(tmpDir, "staging")
+	for _, dir := range []string{snapshotDir, stagingDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, lib.WrapErrorf(err, "failed to create temporary directory %s", dir)
+		}
+	}
+	snapshot, err := lib.NewRevisionSnapshot(repository, head, snapshotDir)
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
+	}
+	staging, err := NewStaging(src, repository, snapshot, opts.PathFilter, false, stagingDir, opts.Monitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}
-	revisionTemp, err := staging.MergeWithSnapshot(repository)
+	revisionTemp, err := staging.MergeWithSnapshot(repository, snapshot)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to merge staging chunks")
 	}

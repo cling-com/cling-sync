@@ -11,7 +11,12 @@ import (
 	"slices"
 )
 
-func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpDir string) (*RevisionTemp, error) {
+type RevisionSnapshot struct {
+	RevisionTemp
+	RevisionId RevisionId
+}
+
+func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpDir string) (*RevisionSnapshot, error) {
 	files, err := os.ReadDir(tmpDir)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read temporary directory %s", tmpDir)
@@ -41,7 +46,7 @@ func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpDir str
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to finalize temporary file")
 	}
-	return temp, nil
+	return &RevisionSnapshot{*temp, revision}, nil
 }
 
 func revisionNWayMerge(
