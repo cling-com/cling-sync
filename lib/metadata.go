@@ -29,6 +29,26 @@ func NewModeAndPerm(fm fs.FileMode) ModeAndPerm {
 	return ModeAndPerm(mode)
 }
 
+func (m ModeAndPerm) AsFileMode() fs.FileMode {
+	mode := fs.FileMode(m.Perm())
+	if m&ModeDir != 0 {
+		mode |= fs.ModeDir
+	}
+	if m&ModeSymlink != 0 {
+		mode |= fs.ModeSymlink
+	}
+	if m&ModeSetUID != 0 {
+		mode |= fs.ModeSetuid
+	}
+	if m&ModeSetGID != 0 {
+		mode |= fs.ModeSetgid
+	}
+	if m&ModeSticky != 0 {
+		mode |= fs.ModeSticky
+	}
+	return mode
+}
+
 func (m ModeAndPerm) String() string {
 	const str = "dLugtr"
 	bits := []uint32{ModeDir, ModeSymlink, ModeSetUID, ModeSetGID, ModeSticky}
@@ -154,6 +174,18 @@ type FileMetadata struct {
 	GID           uint32 // 2^31 if not present.
 	BirthtimeSec  int64  // -1 if not present.
 	BirthtimeNSec int32  // -1 if not present.
+}
+
+func (fm *FileMetadata) HasGID() bool {
+	return fm.GID != 0xffffffff
+}
+
+func (fm *FileMetadata) HasUID() bool {
+	return fm.UID != 0xffffffff
+}
+
+func (fm *FileMetadata) HasBirthtime() bool {
+	return fm.BirthtimeSec != -1
 }
 
 func (fm *FileMetadata) MarshalledSize() int {

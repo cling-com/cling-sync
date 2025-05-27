@@ -85,27 +85,38 @@ func TestFileMetadata(t *testing.T) {
 		assert.Equal("lrwsrwsrwt", m.ShortString())
 	})
 
-	t.Run("NewModeAndPerm", func(t *testing.T) {
+	t.Run("NewModeAndPerm and AsFileMode", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		var fsm fs.FileMode
 		assert.Equal(0, int(NewModeAndPerm(fsm)))
+		assert.Equal(0, int(NewModeAndPerm(fsm).AsFileMode()))
 		fsm |= fs.ModeDir
 		assert.Equal(ModeDir, int(NewModeAndPerm(fsm)))
+		assert.Equal(fs.ModeDir, NewModeAndPerm(fsm).AsFileMode())
 		fsm |= fs.ModeSymlink
 		assert.Equal(ModeSymlink|ModeDir, int(NewModeAndPerm(fsm)))
+		assert.Equal(fs.ModeSymlink|fs.ModeDir, NewModeAndPerm(fsm).AsFileMode())
 		fsm |= fs.ModeSetuid
 		assert.Equal(ModeSetUID|ModeSymlink|ModeDir, int(NewModeAndPerm(fsm)))
+		assert.Equal(fs.ModeSetuid|fs.ModeSymlink|fs.ModeDir, NewModeAndPerm(fsm).AsFileMode())
 		fsm |= fs.ModeSetgid
 		assert.Equal(ModeSetGID|ModeSetUID|ModeSymlink|ModeDir, int(NewModeAndPerm(fsm)))
+		assert.Equal(fs.ModeSetgid|fs.ModeSetuid|fs.ModeSymlink|fs.ModeDir, NewModeAndPerm(fsm).AsFileMode())
 		fsm |= fs.ModeSticky
 		assert.Equal(ModeSticky|ModeSetGID|ModeSetUID|ModeSymlink|ModeDir, int(NewModeAndPerm(fsm)))
+		assert.Equal(
+			fs.ModeSticky|fs.ModeSetgid|fs.ModeSetuid|fs.ModeSymlink|fs.ModeDir,
+			NewModeAndPerm(fsm).AsFileMode(),
+		)
 		// These are ignored.
 		for _, ignored := range []fs.FileMode{fs.ModeTemporary, fs.ModeNamedPipe, fs.ModeSocket, fs.ModeIrregular, fs.ModeCharDevice, fs.ModeAppend, fs.ModeExclusive} {
 			assert.Equal(0, int(NewModeAndPerm(ignored)))
+			assert.Equal(0, int(NewModeAndPerm(ignored).AsFileMode()))
 		}
 		// Permissions are the same bits.
 		assert.Equal(0o777, int(NewModeAndPerm(0o777)))
+		assert.Equal(0o777, int(NewModeAndPerm(0o777).AsFileMode()))
 	})
 
 	t.Run("Marshal and Unmarshal", func(t *testing.T) {

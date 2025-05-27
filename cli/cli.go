@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
-	"github.com/flunderpero/cling-sync/workspace"
+	ws "github.com/flunderpero/cling-sync/workspace"
 	"golang.org/x/term"
 )
 
@@ -85,21 +85,119 @@ func InitCmd(argv []string) error { //nolint:funlen
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to initialize repository")
 	}
-	ws, err := workspace.NewWorkspace(".", workspace.RemoteRepository(repositoryPath))
+	workspace, err := ws.NewWorkspace(".", ws.RemoteRepository(repositoryPath))
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create workspace")
 	}
-	ws.Close() //nolint:errcheck,gosec
+	workspace.Close() //nolint:errcheck,gosec
+	return nil
+}
+
+func CpCmd(argv []string) error { //nolint:funlen
+	workspace, err := ws.OpenWorkspace(".")
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open workspace")
+	}
+	defer workspace.Close() //nolint:errcheck
+	args := struct {        //nolint:exhaustruct
+		Help         bool
+		Revision     string
+		IgnoreErrors bool
+		Verbose      bool
+		NoProgress   bool
+		Exclude      []lib.PathPattern
+		Include      []lib.PathPattern
+	}{}
+	flags := flag.NewFlagSet("cp", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to copy from")
+	flags.BoolVar(&args.IgnoreErrors, "ignore-errors", false, "Ignore errors")
+	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
+	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
+	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	pathPatternFlag(
+		flags,
+		"exclude",
+		"Exclude paths matching the given pattern (can be used multiple times).",
+		&args.Exclude,
+	)
+	pathPatternFlag(
+		flags,
+		"include",
+		"Include paths matching the given pattern (can be used multiple times).",
+		&args.Include,
+	)
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s cp <pattern> <target>\n\n", appName)
+		fmt.Fprintf(os.Stderr, "Copy files from the repository to a local directory.\n")
+		fmt.Fprintf(os.Stderr, "The pattern syntax is the same as for the `--exclude` option.\n")
+		fmt.Fprintf(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	if len(flags.Args()) != 2 {
+		return lib.Errorf("two positional arguments are required: <pattern> <target>")
+	}
+	if len(args.Exclude) == 0 && len(args.Include) > 0 {
+		return lib.Errorf("include patterns can only be used with exclude patterns")
+	}
+	repository, err := openRepository(workspace)
+	if err != nil {
+		return err
+	}
+	pattern, err := lib.NewPathPattern(flags.Arg(0))
+	if err != nil {
+		return lib.WrapErrorf(err, "invalid pattern: %s", flags.Arg(0))
+	}
+	pathFilter := &lib.AllPathFilter{Filters: []lib.PathFilter{
+		&lib.PathInclusionFilter{Includes: []lib.PathPattern{pattern}},
+		&lib.PathExclusionFilter{Excludes: args.Exclude, Includes: args.Include},
+	}}
+	tmpDir, err := workspace.NewTmpDir("commit")
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	mon := NewCpMonitor(workspace.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
+	revisionId, err := revisionId(repository, args.Revision)
+	if err != nil {
+		return err
+	}
+	opts := &ws.CpOptions{
+		PathFilter: pathFilter,
+		Monitor:    mon,
+		RevisionId: revisionId,
+	}
+	err = ws.Cp(workspace.WorkspacePath, repository, flags.Arg(1), opts, tmpDir)
+	mon.Close()
+	if args.IgnoreErrors && mon.errors > 0 {
+		fmt.Printf("%d errors ignored\n", mon.errors)
+	}
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	mbs := (float64(mon.bytesWritten) / float64(time.Since(mon.startTime).Seconds()))
+	fmt.Printf(
+		"%d files copied (%s at %s/s)\n",
+		mon.paths,
+		ws.FormatBytes(mon.bytesWritten),
+		ws.FormatBytes(int64(mbs)),
+	)
 	return nil
 }
 
 func CommitCmd(argv []string) error { //nolint:funlen
-	ws, err := workspace.OpenWorkspace(".")
+	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
-	defer ws.Close() //nolint:errcheck
-	args := struct { //nolint:exhaustruct
+	defer workspace.Close() //nolint:errcheck
+	args := struct {        //nolint:exhaustruct
 		Help         bool
 		Message      string
 		Author       string
@@ -155,17 +253,17 @@ func CommitCmd(argv []string) error { //nolint:funlen
 	if len(args.Exclude) == 0 && len(args.Include) > 0 {
 		return lib.Errorf("include patterns can only be used with exclude patterns")
 	}
-	repository, err := openRepository(ws)
+	repository, err := openRepository(workspace)
 	if err != nil {
 		return err
 	}
 	pathFilter := &lib.PathExclusionFilter{Excludes: args.Exclude, Includes: args.Include}
-	tmpDir, err := ws.NewTmpDir("commit")
+	tmpDir, err := workspace.NewTmpDir("commit")
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	mon := NewStagingMonitor(ws.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
-	opts := &workspace.CommitOptions{
+	mon := NewStagingMonitor(workspace.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
+	opts := &ws.CommitOptions{
 		PathFilter: pathFilter,
 		Author:     args.Author,
 		Message:    args.Message,
@@ -177,7 +275,7 @@ func CommitCmd(argv []string) error { //nolint:funlen
 			return nil
 		},
 	}
-	revisionId, err := workspace.Commit(ws.WorkspacePath, repository, opts, tmpDir)
+	revisionId, err := ws.Commit(workspace.WorkspacePath, repository, opts, tmpDir)
 	mon.Close()
 	if args.IgnoreErrors && mon.errors > 0 {
 		fmt.Printf("%d errors ignored\n", mon.errors)
@@ -193,17 +291,22 @@ func CommitCmd(argv []string) error { //nolint:funlen
 	if mon.rawBytesAdded > 0 {
 		compressionRatio = fmt.Sprintf("%.2f", float64(mon.compressedBytesAdded)/float64(mon.rawBytesAdded))
 	}
-	fmt.Printf("Revision %s (%s added, compressed: %s)\n", revisionId, formatBytes(mon.rawBytesAdded), compressionRatio)
+	fmt.Printf(
+		"Revision %s (%s added, compressed: %s)\n",
+		revisionId,
+		ws.FormatBytes(mon.rawBytesAdded),
+		compressionRatio,
+	)
 	return nil
 }
 
 func StatusCmd(argv []string) error { //nolint:funlen
-	ws, err := workspace.OpenWorkspace(".")
+	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
-	defer ws.Close() //nolint:errcheck
-	args := struct { //nolint:exhaustruct
+	defer workspace.Close() //nolint:errcheck
+	args := struct {        //nolint:exhaustruct
 		Help         bool
 		Short        bool
 		IgnoreErrors bool
@@ -267,17 +370,17 @@ func StatusCmd(argv []string) error { //nolint:funlen
 			pathFilter = exclusionFilter
 		}
 	}
-	repository, err := openRepository(ws)
+	repository, err := openRepository(workspace)
 	if err != nil {
 		return err
 	}
-	tmpDir, err := ws.NewTmpDir("status")
+	tmpDir, err := workspace.NewTmpDir("status")
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	mon := NewStagingMonitor(ws.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
-	opts := &workspace.StatusOptions{PathFilter: pathFilter, Monitor: mon}
-	result, err := workspace.Status(ws.WorkspacePath, repository, opts, tmpDir)
+	mon := NewStagingMonitor(workspace.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
+	opts := &ws.StatusOptions{PathFilter: pathFilter, Monitor: mon}
+	result, err := ws.Status(workspace.WorkspacePath, repository, opts, tmpDir)
 	mon.Close()
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -295,12 +398,12 @@ func StatusCmd(argv []string) error { //nolint:funlen
 }
 
 func LsCmd(argv []string) error { //nolint:funlen
-	ws, err := workspace.OpenWorkspace(".")
+	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
-	defer ws.Close() //nolint:errcheck
-	args := struct { //nolint:exhaustruct
+	defer workspace.Close() //nolint:errcheck
+	args := struct {        //nolint:exhaustruct
 		Help     bool
 		Revision string
 		Short    bool
@@ -337,24 +440,20 @@ func LsCmd(argv []string) error { //nolint:funlen
 	if len(flags.Args()) > 1 {
 		return lib.Errorf("too many positional arguments")
 	}
-	repository, err := openRepository(ws)
+	repository, err := openRepository(workspace)
 	if err != nil {
 		return err
 	}
-	var revisionId lib.RevisionId
-	if strings.ToLower(args.Revision) == "head" {
-		revisionId, err = repository.Head()
-		if err != nil {
-			return lib.WrapErrorf(err, "failed to read head revision")
-		}
-	} else {
-		b, err := hex.DecodeString(args.Revision)
-		if err != nil {
-			return lib.Errorf("invalid revision id: %s", args.Revision)
-		}
-		revisionId = lib.RevisionId(b)
+	var pathFilter lib.PathFilter
+	if pattern != nil {
+		pathFilter = &lib.PathInclusionFilter{Includes: []lib.PathPattern{*pattern}}
 	}
-	files, err := workspace.Ls(repository, revisionId, pattern)
+	revisionId, err := revisionId(repository, args.Revision)
+	if err != nil {
+		return err
+	}
+	opts := &ws.LsOptions{RevisionId: revisionId, PathFilter: pathFilter}
+	files, err := ws.Ls(repository, opts)
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
@@ -362,7 +461,7 @@ func LsCmd(argv []string) error { //nolint:funlen
 	if args.Short {
 		timestampFormat = "relative"
 	}
-	format := &workspace.LsFormat{
+	format := &ws.LsFormat{
 		FullPath:          !args.Short,
 		FullMode:          !args.Short,
 		TimestampFormat:   timestampFormat,
@@ -388,12 +487,12 @@ func LsCmd(argv []string) error { //nolint:funlen
 }
 
 func LogCmd(argv []string) error {
-	ws, err := workspace.OpenWorkspace(".")
+	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
-	defer ws.Close() //nolint:errcheck
-	args := struct { //nolint:exhaustruct
+	defer workspace.Close() //nolint:errcheck
+	args := struct {        //nolint:exhaustruct
 		Help  bool
 		Short bool
 	}{}
@@ -416,11 +515,11 @@ func LogCmd(argv []string) error {
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("no positional arguments are required")
 	}
-	repository, err := openRepository(ws)
+	repository, err := openRepository(workspace)
 	if err != nil {
 		return err
 	}
-	logs, err := workspace.Log(repository)
+	logs, err := ws.Log(repository)
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
@@ -440,7 +539,24 @@ func LogCmd(argv []string) error {
 	return nil
 }
 
-func openRepository(workspace *workspace.Workspace) (*lib.Repository, error) {
+func revisionId(repository *lib.Repository, revision string) (lib.RevisionId, error) {
+	var revisionId lib.RevisionId
+	if strings.ToLower(revision) == "head" {
+		revisionId, err := repository.Head()
+		if err != nil {
+			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read head revision")
+		}
+		return revisionId, nil
+	}
+	b, err := hex.DecodeString(revision)
+	if err != nil {
+		return lib.RevisionId{}, lib.Errorf("invalid revision id: %s", revision)
+	}
+	revisionId = lib.RevisionId(b)
+	return revisionId, nil
+}
+
+func openRepository(workspace *ws.Workspace) (*lib.Repository, error) {
 	if !IsTerm(os.Stdin) {
 		return nil, lib.Errorf("this command can only be run in an interactive terminal session")
 	}
@@ -495,6 +611,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s <command> [command arguments]\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Commands:\n")
+		fmt.Fprintf(os.Stderr, "  cp           Copy files from the repository to a local directory\n")
 		fmt.Fprintf(os.Stderr, "  commit       Synchronize local changes to the repository\n")
 		fmt.Fprintf(os.Stderr, "  init         Initialize a new repository\n")
 		fmt.Fprintf(os.Stderr, "  ls           List files in the repository\n")
@@ -514,6 +631,8 @@ func main() {
 	switch cmd {
 	case "init":
 		err = InitCmd(argv)
+	case "cp":
+		err = CpCmd(argv)
 	case "commit":
 		err = CommitCmd(argv)
 	case "log":

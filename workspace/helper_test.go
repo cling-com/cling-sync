@@ -23,8 +23,16 @@ type RepositoryTest struct {
 func NewRepositoryTest(t *testing.T) *RepositoryTest {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	repositoryDir := filepath.Join(t.TempDir(), "repository")
-	workspacePath := filepath.Join(t.TempDir(), "local")
+	repositoryDir := t.TempDir()
+	workspacePath := t.TempDir()
+	t.Cleanup(func() {
+		for _, dir := range []string{repositoryDir, workspacePath} {
+			_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+				_ = os.Chmod(path, 0o777) //nolint:gosec
+				return nil
+			})
+		}
+	})
 	repository, storage := testRepository(t, repositoryDir)
 	workspace, err := NewWorkspace(workspacePath, RemoteRepository(repositoryDir))
 	assert.NoError(err)
@@ -51,6 +59,21 @@ func (rt *RepositoryTest) AddLocal(path string, content string) {
 	rt.assert.NoError(err)
 }
 
+func (rt *RepositoryTest) LocalStat(path string) os.FileInfo {
+	rt.t.Helper()
+	path = rt.LocalPath(path)
+	stat, err := os.Stat(path)
+	rt.assert.NoError(err)
+	return stat
+}
+
+func (rt *RepositoryTest) UpdateLocal(path string, content string) {
+	rt.t.Helper()
+	path = rt.LocalPath(path)
+	err := os.WriteFile(path, []byte(content), 0o600)
+	rt.assert.NoError(err)
+}
+
 func (rt *RepositoryTest) RemoveLocal(path string) {
 	rt.t.Helper()
 	path = filepath.Join(rt.Workspace.WorkspacePath, path)
@@ -62,6 +85,13 @@ func (rt *RepositoryTest) UpdateLocalMTime(path string) {
 	rt.t.Helper()
 	path = rt.LocalPath(path)
 	err := os.Chtimes(path, time.Now(), time.Now())
+	rt.assert.NoError(err)
+}
+
+func (rt *RepositoryTest) UpdateLocalMode(path string, mode os.FileMode) {
+	rt.t.Helper()
+	path = rt.LocalPath(path)
+	err := os.Chmod(path, mode)
 	rt.assert.NoError(err)
 }
 

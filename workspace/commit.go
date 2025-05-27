@@ -143,6 +143,8 @@ func NewStaging( //nolint:funlen
 			mon.OnEnd(path, true, nil)
 			return nil
 		}
+		// todo: this might be insecure, perhaps we should use filepath.Split and
+		// filepath.Clean directly in lib.NewPath.
 		repoPath := lib.NewPath(strings.Split(relPath, string(os.PathSeparator))...)
 		var fileMetadata lib.FileMetadata
 		if addContents {

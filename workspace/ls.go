@@ -49,22 +49,7 @@ func (f *LsFile) Format(format *LsFormat) string {
 	}
 	var size string
 	if format.HumanReadableSize {
-		suffixes := []string{"", "K", "M", "G", "T", "P"}
-		var i int
-		s := float32(f.Metadata.Size)
-		for ; i < len(suffixes)-1; i++ {
-			if s < 1000 {
-				break
-			}
-			s /= 1000
-		}
-		if f.Metadata.Size < 1000 { //nolint:gocritic
-			size = fmt.Sprintf("%d%s", f.Metadata.Size, suffixes[i])
-		} else if f.Metadata.Size < 1000000 {
-			size = fmt.Sprintf("%.0f%s", s, suffixes[i])
-		} else {
-			size = fmt.Sprintf("%.1f%s", s, suffixes[i])
-		}
+		size = FormatBytes(f.Metadata.Size)
 	} else {
 		size = fmt.Sprintf("%d", f.Metadata.Size)
 	}
@@ -90,18 +75,22 @@ func (f *LsFile) Format(format *LsFormat) string {
 	}
 }
 
-func Ls(repository *lib.Repository, revisionId lib.RevisionId, pattern *lib.PathPattern) ([]LsFile, error) {
+type LsOptions struct {
+	RevisionId lib.RevisionId
+	PathFilter lib.PathFilter
+}
+
+func Ls(repository *lib.Repository, opts *LsOptions) ([]LsFile, error) {
 	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("ls-%d", os.Getpid()))
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create temporary directory %s", tmpDir)
 	}
-	snapshot, err := lib.NewRevisionSnapshot(repository, revisionId, tmpDir)
+	snapshot, err := lib.NewRevisionSnapshot(repository, opts.RevisionId, tmpDir)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
 	defer snapshot.Remove() //nolint:errcheck
-	filter := &lib.PathInclusionFilter{Includes: []lib.PathPattern{*pattern}}
-	reader := snapshot.Reader(filter)
+	reader := snapshot.Reader(opts.PathFilter)
 	files := []LsFile{}
 	for {
 		re, err := reader.Read()
@@ -115,4 +104,17 @@ func Ls(repository *lib.Repository, revisionId lib.RevisionId, pattern *lib.Path
 		files = append(files, LsFile{path, re.Metadata})
 	}
 	return files, nil
+}
+
+func FormatBytes(b int64) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%dB", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%c", float64(b)/float64(div), "KMGTPE"[exp])
 }

@@ -154,11 +154,6 @@ func TestCommit(t *testing.T) {
 			)
 			assert.Equal(expected, entries[entryIndex].Metadata.ModeAndPerm, path)
 		}
-		defer func() {
-			// Make sure the temporary directory can be removed.
-			_ = os.Chmod(rt.LocalPath("a"), 0o700)       //nolint:gosec
-			_ = os.Chmod(rt.LocalPath("a/b.txt"), 0o700) //nolint:gosec
-		}()
 		rt.AddLocal("a/b.txt", ".")
 		for i := range 9 {
 			mode := lib.ModeAndPerm(lib.ModeDir | (1 << i) | 0o500) // Directory must always be `xr`.

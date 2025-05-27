@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 type Assert struct {
@@ -106,6 +107,9 @@ func stringify(v any) string {
 }
 
 func stringifyInternal(v any, indent int) string { //nolint:funlen
+	if t, ok := v.(time.Time); ok {
+		return t.Format(time.RFC3339Nano)
+	}
 	reflectV := reflect.ValueOf(v)
 	t := reflectV.Type()
 	kind := t.Kind()

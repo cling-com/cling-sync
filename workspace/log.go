@@ -35,7 +35,7 @@ func (l *RevisionLog) Long() string {
 
 // Return the log in short format.
 //
-// <8-char-RevisionId> <Date> <Message>
+// <RevisionId> <Date> <Message>
 func (l *RevisionLog) Short() string {
 	r := l.Revision
 	date := time.Unix(r.TimestampSec, int64(r.TimestampNSec)).Format(time.RFC3339)
