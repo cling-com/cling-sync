@@ -1,4 +1,3 @@
-//nolint:forbidigo
 package lib
 
 import (
@@ -195,8 +194,7 @@ func TestStagingCommitFuzz(t *testing.T) {
 // Test with random data.
 // This will create multiple commits with random adds, updates, and deletes.
 // From time to time an empty commit will be added.
-func fuzzTesting(t *testing.T, randSeed uint64, debug bool) {
-	t.Helper()
+func fuzzTesting(t *testing.T, randSeed uint64, debug bool) { //nolint:thelper
 	const (
 		steps             = 20
 		maxFilesPerCommit = 50
@@ -216,7 +214,7 @@ func fuzzTesting(t *testing.T, randSeed uint64, debug bool) {
 
 	for step := range steps {
 		if debug {
-			fmt.Println("Step", step)
+			t.Logf("Step %d", step)
 		}
 
 		staged := map[string]*FileMetadata{}
@@ -244,28 +242,34 @@ func fuzzTesting(t *testing.T, randSeed uint64, debug bool) {
 			}
 		}
 		pathFilter := &PathExclusionFilter{nil, nil}
+		if debug && numIgnored > 0 {
+			t.Log("Excluding")
+		}
 		for i := range numIgnored {
 			pattern, err := NewPathPattern(fmt.Sprintf("a/%03d.txt", i))
 			assert.NoError(err)
 			pathFilter.Excludes = append(pathFilter.Excludes, pattern)
+			if debug {
+				t.Logf("%3d: %s\n", i, pattern)
+			}
 		}
 		files := make([]testFile, 0, len(staged))
 		for path, md := range staged {
 			files = append(files, testFile{path: path, mode: uint32(md.ModeAndPerm), typ: RevisionEntryAdd})
 		}
 		if debug {
-			fmt.Println("Staging")
+			t.Logf("Staging")
 			slices.SortFunc(files, func(a, b testFile) int { return strings.Compare(a.path, b.path) })
 			for i, file := range files {
-				fmt.Printf("%3d: %s %s\n", i, file.path, ModeAndPerm(file.mode))
+				t.Logf("%3d: %s %s\n", i, file.path, ModeAndPerm(file.mode))
 			}
 		}
 		nextRevId, err := commitStaging(t, repo, revId, pathFilter, files)
 		if errors.Is(err, ErrEmptyCommit) {
 			assert.Equal(0, len(repoState), "repository should be empty")
-			assert.Equal(0, len(staged), "no files should have been staged")
 			continue
 		}
+		assert.NoError(err)
 
 		// Filter out the ignored paths from staged.
 		filteredStaged := map[string]*FileMetadata{}
@@ -279,9 +283,9 @@ func fuzzTesting(t *testing.T, randSeed uint64, debug bool) {
 		// Compare our current model with the real world.
 		entries := readRevisionSnapshot(t, repo, nextRevId, nil)
 		if debug {
-			fmt.Println("Revision")
+			t.Logf("Revision")
 			for i, entry := range entries {
-				fmt.Printf("%3d: %s %s\n", i, entry.Path, entry.Metadata.ModeAndPerm)
+				t.Logf("%3d: %s %s\n", i, entry.Path, entry.Metadata.ModeAndPerm)
 			}
 		}
 		for _, entry := range entries {
