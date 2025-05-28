@@ -17,8 +17,17 @@ const (
 	CpOnErrorAbort  CpOnError = 2
 )
 
+type CpOnExists int
+
+const (
+	CpOnExistsAbort     CpOnExists = 1
+	CpOnExistsIgnore    CpOnExists = 2
+	CpOnExistsOverwrite CpOnExists = 3
+)
+
 type CpMonitor interface {
 	OnStart(entry *lib.RevisionEntry, targetPath string)
+	OnExists(entry *lib.RevisionEntry, targetPath string) CpOnExists
 	OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte)
 	OnEnd(entry *lib.RevisionEntry, targetPath string)
 	OnError(entry *lib.RevisionEntry, targetPath string, err error) CpOnError
@@ -31,8 +40,6 @@ type CpOptions struct {
 }
 
 func Cp(src string, repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir string) error {
-	// todo: We should not overwrite files unless `CpMonitor.OnError` returns `CpOnErrorIgnore`
-	//       for `ErrExist`.
 	snapshot, err := lib.NewRevisionSnapshot(repository, opts.RevisionId, tmpDir)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
@@ -95,7 +102,7 @@ func Cp(src string, repository *lib.Repository, targetPath string, opts *CpOptio
 	return nil
 }
 
-func restore(entry *lib.RevisionEntry, repository *lib.Repository, target string, mon CpMonitor) error {
+func restore(entry *lib.RevisionEntry, repository *lib.Repository, target string, mon CpMonitor) error { //nolint:funlen
 	md := entry.Metadata
 	if md.ModeAndPerm.IsDir() {
 		if err := os.MkdirAll(target, 0o700); err != nil {
@@ -113,7 +120,18 @@ func restore(entry *lib.RevisionEntry, repository *lib.Repository, target string
 			}
 			return lib.WrapErrorf(err, "failed to create parent directory %s", target)
 		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, md.ModeAndPerm.AsFileMode())
+		f, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, md.ModeAndPerm.AsFileMode())
+		if errors.Is(err, os.ErrExist) {
+			switch mon.OnExists(entry, target) {
+			case CpOnExistsOverwrite:
+				f, err = os.OpenFile(target, os.O_CREATE|os.O_WRONLY, md.ModeAndPerm.AsFileMode())
+			case CpOnExistsIgnore:
+				mon.OnEnd(entry, target)
+				return nil
+			case CpOnExistsAbort:
+				return lib.WrapErrorf(err, "failed to open file %s for writing", target)
+			}
+		}
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				mon.OnEnd(entry, target)

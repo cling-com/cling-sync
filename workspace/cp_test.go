@@ -36,7 +36,7 @@ func TestCp(t *testing.T) {
 
 		// Copy all from rev1.
 		assert.NoError(os.MkdirAll(tmp, 0o700))
-		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, &TestCpMonitor{}, nil}, tmp)
+		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]PathInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -50,7 +50,7 @@ func TestCp(t *testing.T) {
 		// Copy all from the rev2.
 		assert.NoError(os.RemoveAll(tmp))
 		assert.NoError(os.MkdirAll(tmp, 0o700))
-		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId2, &TestCpMonitor{}, nil}, tmp)
+		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId2, NewTestCpMonitorOverwrite(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]PathInfo{
 			{"a.txt", 0o600, 1, "A"},
@@ -86,7 +86,7 @@ func TestCp(t *testing.T) {
 		// Copy all from the rev1.
 		assert.NoError(os.RemoveAll(tmp))
 		assert.NoError(os.MkdirAll(tmp, 0o700))
-		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, &TestCpMonitor{}, nil}, tmp)
+		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]PathInfo{
 			{"c", 0o500 | os.ModeDir, 0, ""},
@@ -112,7 +112,7 @@ func TestCp(t *testing.T) {
 		pattern, err := lib.NewPathPattern("c/**/*")
 		assert.NoError(err)
 		pathFilter := &lib.PathInclusionFilter{Includes: []lib.PathPattern{pattern}}
-		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, &TestCpMonitor{}, pathFilter}, tmp)
+		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), pathFilter}, tmp)
 		assert.NoError(err)
 		assert.Equal([]PathInfo{
 			{"c", 0o700 | os.ModeDir, 0, ""},
@@ -160,7 +160,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, &TestCpMonitor{}, nil}, tmp)
+		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
 
 		stat := rt.LocalStat("a.txt")
@@ -221,7 +221,17 @@ func readDir(t *testing.T, basePath string) []PathInfo {
 	return pathInfos
 }
 
-type TestCpMonitor struct{}
+type TestCpMonitor struct {
+	Exists CpOnExists
+}
+
+func NewTestCpMonitor() *TestCpMonitor {
+	return &TestCpMonitor{CpOnExistsAbort}
+}
+
+func NewTestCpMonitorOverwrite() *TestCpMonitor {
+	return &TestCpMonitor{CpOnExistsOverwrite}
+}
 
 func (m *TestCpMonitor) OnStart(entry *lib.RevisionEntry, targetPath string) {
 }
@@ -234,4 +244,8 @@ func (m *TestCpMonitor) OnEnd(entry *lib.RevisionEntry, targetPath string) {
 
 func (m *TestCpMonitor) OnError(entry *lib.RevisionEntry, targetPath string, err error) CpOnError {
 	return CpOnErrorAbort
+}
+
+func (m *TestCpMonitor) OnExists(entry *lib.RevisionEntry, targetPath string) CpOnExists {
+	return m.Exists
 }

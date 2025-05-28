@@ -105,6 +105,7 @@ func CpCmd(argv []string) error { //nolint:funlen
 		IgnoreErrors bool
 		Verbose      bool
 		NoProgress   bool
+		Overwrite    bool
 		Exclude      []lib.PathPattern
 		Include      []lib.PathPattern
 	}{}
@@ -115,6 +116,7 @@ func CpCmd(argv []string) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	flags.BoolVar(&args.Overwrite, "overwrite", false, "Overwrite existing files")
 	pathPatternFlag(
 		flags,
 		"exclude",
@@ -163,7 +165,11 @@ func CpCmd(argv []string) error { //nolint:funlen
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	mon := NewCpMonitor(workspace.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
+	cpOnExists := ws.CpOnExistsAbort
+	if args.Overwrite {
+		cpOnExists = ws.CpOnExistsOverwrite
+	}
+	mon := NewCpMonitor(workspace.WorkspacePath, cpOnExists, args.Verbose, args.IgnoreErrors, args.NoProgress)
 	revisionId, err := revisionId(repository, args.Revision)
 	if err != nil {
 		return err

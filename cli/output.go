@@ -170,6 +170,7 @@ type CpMonitor struct {
 	IgnoreErrors bool
 	NoProgress   bool
 	WorkspaceDir string
+	cpOnExists   ws.CpOnExists
 	paths        int
 	excluded     int
 	bytesWritten int64
@@ -178,12 +179,13 @@ type CpMonitor struct {
 	startTime    time.Time
 }
 
-func NewCpMonitor(workspaceDir string, verbose, ignoreErrors, noProgress bool) *CpMonitor {
+func NewCpMonitor(workspaceDir string, cpOnExists ws.CpOnExists, verbose, ignoreErrors, noProgress bool) *CpMonitor {
 	return &CpMonitor{ //nolint:exhaustruct
 		Verbose:      verbose,
 		IgnoreErrors: ignoreErrors,
 		NoProgress:   noProgress,
 		WorkspaceDir: workspaceDir,
+		cpOnExists:   cpOnExists,
 	}
 }
 
@@ -198,6 +200,15 @@ func (m *CpMonitor) OnStart(entry *lib.RevisionEntry, targetPath string) {
 		return
 	}
 	fmt.Printf("%s\n", targetPath)
+}
+
+func (m *CpMonitor) OnExists(entry *lib.RevisionEntry, targetPath string) ws.CpOnExists {
+	if m.Verbose {
+		if m.cpOnExists == ws.CpOnExistsIgnore {
+			fmt.Printf("  skipping existing\n")
+		}
+	}
+	return m.cpOnExists
 }
 
 func (m *CpMonitor) OnError(entry *lib.RevisionEntry, targetPath string, err error) ws.CpOnError {
