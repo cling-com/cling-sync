@@ -77,7 +77,7 @@ func InitCmd(argv []string) error { //nolint:funlen
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
 	}
-	storage, err := lib.NewFileStorage(repositoryPath)
+	storage, err := lib.NewFileStorage(repositoryPath, lib.StoragePurposeRepository)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create storage")
 	}
@@ -575,7 +575,7 @@ func openRepository(workspace *ws.Workspace) (*lib.Repository, error) {
 		return nil, lib.WrapErrorf(err, "failed to read passphrase")
 	}
 	fmt.Fprint(os.Stderr, "\r                          \r")
-	storage, err := lib.NewFileStorage(string(workspace.RemoteRepository))
+	storage, err := lib.NewFileStorage(string(workspace.RemoteRepository), lib.StoragePurposeRepository)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
 	}

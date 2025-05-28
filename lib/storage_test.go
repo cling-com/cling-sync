@@ -12,15 +12,15 @@ import (
 
 func TestFileStorageInit(t *testing.T) {
 	t.Parallel()
-	t.Run("Happy path (directory exists)", func(t *testing.T) {
+	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		dir := t.TempDir()
-		sut, err := NewFileStorage(dir)
+		sut, err := NewFileStorage(dir, StoragePurposeRepository)
 		assert.NoError(err)
-		err = sut.Init(fakeMaserKeyInfo())
+		err = sut.Init(Toml{"encryption": {"version": "1"}}, "header comment")
 		assert.NoError(err)
-		// Make sure the repository config file has been written.
+		// Make sure the storage config file has been written.
 		files, err := os.ReadDir(dir)
 		assert.NoError(err)
 		assert.Equal(1, len(files))
@@ -29,14 +29,35 @@ func TestFileStorageInit(t *testing.T) {
 		assert.Equal(true, clingDir.IsDir())
 		files, err = os.ReadDir(filepath.Join(dir, ".cling"))
 		assert.NoError(err)
-		assert.Equal(3, len(files))
+		assert.Equal(2, len(files))
 		configFile := files[slices.IndexFunc(files, func(f os.DirEntry) bool { return !f.IsDir() })]
+
+		// Test that the storage config file has been written.
 		assert.Equal("repository.txt", configFile.Name())
-		config, _, err := ReadRepositoryConfigFile(filepath.Join(dir, ".cling", configFile.Name()))
+		f, err := os.Open(filepath.Join(dir, ".cling", configFile.Name()))
 		assert.NoError(err)
-		assert.Equal(fakeMaserKeyInfo(), config.MasterKeyInfo)
-		assert.Equal(StorageVersion, config.StorageVersion)
-		assert.Equal("file", config.StorageFormat)
+		defer f.Close() //nolint:errcheck
+		toml, err := ReadToml(f)
+		assert.NoError(err)
+		assert.Equal(Toml{"encryption": {"version": "1"}}, toml)
+
+		files, err = os.ReadDir(filepath.Join(dir, ".cling", "repository"))
+		assert.NoError(err)
+		assert.Equal(2, len(files))
+		assert.Equal("objects", files[0].Name())
+		assert.Equal("refs", files[1].Name())
+	})
+
+	t.Run("Storage already exists", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		dir := t.TempDir()
+		sut, err := NewFileStorage(dir, StoragePurposeRepository)
+		assert.NoError(err)
+		err = sut.Init(Toml{"encryption": {"version": "1"}}, "header comment")
+		assert.NoError(err)
+		err = sut.Init(Toml{"encryption": {"version": "1"}}, "header comment")
+		assert.ErrorIs(err, ErrStorageAlreadyExists)
 	})
 }
 
@@ -46,43 +67,109 @@ func TestFileStorageOpen(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		dir := t.TempDir()
-		sut, err := NewFileStorage(dir)
+		sut, err := NewFileStorage(dir, StoragePurposeRepository)
 		assert.NoError(err)
-		err = sut.Init(fakeMaserKeyInfo())
+		err = sut.Init(Toml{"encryption": {"version": "1"}}, "header comment")
 		assert.NoError(err)
 
-		sut, err = NewFileStorage(dir)
+		sut, err = NewFileStorage(dir, StoragePurposeRepository)
 		assert.NoError(err)
-		config, err := sut.Open()
+		toml, err := sut.Open()
 		assert.NoError(err)
-		assert.Equal(fakeMaserKeyInfo(), config.MasterKeyInfo)
-		assert.Equal(StorageVersion, config.StorageVersion)
-		assert.Equal("file", config.StorageFormat)
+		assert.Equal(Toml{"encryption": {"version": "1"}}, toml)
 	})
+
 	t.Run("Repository does not exist", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		dir := t.TempDir()
-		sut, err := NewFileStorage(dir)
+		sut, err := NewFileStorage(dir, StoragePurposeRepository)
 		assert.NoError(err)
 		_, err = sut.Open()
-		assert.Error(err, "repository does not exist")
+		assert.ErrorIs(err, ErrStorageNotFound)
 	})
+
 	t.Run("Repository config file is missing", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		dir := t.TempDir()
-		sut, err := NewFileStorage(dir)
+		sut, err := NewFileStorage(dir, StoragePurposeRepository)
 		assert.NoError(err)
-		err = sut.Init(fakeMaserKeyInfo())
+		err = sut.Init(nil, "")
 		assert.NoError(err)
-		err = os.Remove(filepath.Join(dir, ".cling", repositoryConfigFile))
+		err = os.Remove(filepath.Join(dir, ".cling", "repository.txt"))
 		assert.NoError(err)
 
-		sut, err = NewFileStorage(dir)
+		sut, err = NewFileStorage(dir, StoragePurposeRepository)
 		assert.NoError(err)
 		_, err = sut.Open()
-		assert.Error(err, "repository is corrupt")
+		assert.ErrorIs(err, ErrStorageNotFound)
+	})
+}
+
+func TestFileStorageMultiPurpose(t *testing.T) { //nolint:tparallel
+	t.Parallel()
+	assert := NewAssert(t)
+	dir := t.TempDir()
+	repo, err := NewFileStorage(dir, StoragePurposeRepository)
+	assert.NoError(err)
+	workspace, err := NewFileStorage(dir, StoragePurposeWorkspace)
+	assert.NoError(err)
+
+	t.Run("Init", func(t *testing.T) { //nolint:paralleltest
+		err = repo.Init(Toml{"repository": {"version": "1"}}, "repository header comment")
+		assert.NoError(err)
+		err = workspace.Init(Toml{"workspace": {"version": "1"}}, "workspace header comment")
+		assert.NoError(err)
+	})
+
+	t.Run("Control files", func(t *testing.T) { //nolint:paralleltest
+		err = repo.WriteControlFile(ControlFileSectionRefs, "head", []byte("1234"))
+		assert.NoError(err)
+		err = workspace.WriteControlFile(ControlFileSectionRefs, "head", []byte("5678"))
+		assert.NoError(err)
+
+		repoCtrlContent, err := repo.ReadControlFile(ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal([]byte("1234"), repoCtrlContent)
+		workspaceCtrlContent, err := workspace.ReadControlFile(ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal([]byte("5678"), workspaceCtrlContent)
+	})
+
+	t.Run("Read and write block", func(t *testing.T) { //nolint:paralleltest
+		// Write a block with the same block id for each purpose.
+		repoBlock := Block{
+			Header: BlockHeader{
+				BlockId:           fakeBlockId("1"),
+				Flags:             0,
+				EncryptedDEK:      fakeEncryptedKey("1"),
+				EncryptedDataSize: 0, // is set below
+			},
+			EncryptedData: []byte("repository data"),
+		}
+		repoBlock.Header.EncryptedDataSize = uint32(len(repoBlock.EncryptedData)) //nolint:gosec
+		workspaceBlock := repoBlock
+		workspaceBlock.EncryptedData = []byte("workspace data")
+		workspaceBlock.Header.EncryptedDataSize = uint32(len(workspaceBlock.EncryptedData)) //nolint:gosec
+
+		ok, err := repo.WriteBlock(repoBlock)
+		assert.NoError(err)
+		assert.Equal(false, ok)
+
+		ok, err = workspace.WriteBlock(workspaceBlock)
+		assert.NoError(err)
+		assert.Equal(false, ok)
+
+		data, header, err := repo.ReadBlock(repoBlock.Header.BlockId, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(repoBlock.Header, header)
+		assert.Equal(repoBlock.EncryptedData, data)
+
+		data, header, err = workspace.ReadBlock(workspaceBlock.Header.BlockId, BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(workspaceBlock.Header, header)
+		assert.Equal(workspaceBlock.EncryptedData, data)
 	})
 }
 
@@ -92,9 +179,9 @@ func TestFileStorageBlocks(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		dir := t.TempDir()
-		sut, err := NewFileStorage(dir)
+		sut, err := NewFileStorage(dir, StoragePurposeRepository)
 		assert.NoError(err)
-		err = sut.Init(fakeMaserKeyInfo())
+		err = sut.Init(nil, "")
 		assert.NoError(err)
 
 		block := Block{
@@ -167,9 +254,9 @@ func TestFileStorageBlocks(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		dir := t.TempDir()
-		sut, err := NewFileStorage(dir)
+		sut, err := NewFileStorage(dir, StoragePurposeRepository)
 		assert.NoError(err)
-		err = sut.Init(fakeMaserKeyInfo())
+		err = sut.Init(nil, "")
 		assert.NoError(err)
 		block := Block{
 			Header: BlockHeader{
@@ -207,17 +294,4 @@ func TestBlockHeaderMarshalUnmarshal(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(header, header2)
 	})
-}
-
-func fakeMaserKeyInfo() MasterKeyInfo {
-	return MasterKeyInfo{
-		EncryptionVersion: EncryptionVersion,
-		EncryptedKEK: EncryptedKey(
-			[]byte("the encrypted kek 23456789abcdef0123456789abcdef0123456789abcdef01234567"),
-		),
-		EncryptedBlockIdHmacKey: EncryptedKey(
-			[]byte("the encrypted block id hmac key 23456789abcdef0123456789abcdef0123456789abcdef01234567"),
-		),
-		UserKeySalt: Salt([]byte("the user salt ef0123456789abcdef")),
-	}
 }

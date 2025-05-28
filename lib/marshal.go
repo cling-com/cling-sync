@@ -3,11 +3,9 @@ package lib
 import (
 	"encoding/base32"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -143,113 +141,6 @@ func ParseRecoveryCode(s string) ([]byte, error) {
 		return nil, WrapErrorf(err, "failed to decode recovery code %q", s)
 	}
 	return decoded, nil
-}
-
-func WriteRepositoryConfigFile(fullPath string, config *RepositoryConfig) error {
-	headerComment := strings.Trim(`
-DO NOT DELETE OR CHANGE THIS FILE.
-
-This file contains the configuration of your cling repository including
-the master key information.
-You need your passphrase to unlock the repository so this file in itself
-is not enough to access your data. But without this file all your data is
-lost. Forever.
-
-So please back this file up. 
-Copy it to a secure place (a password manager might be a good choice) or 
-even print it out and keep it somewhere safe.
-`, "\n ")
-	toml := Toml{
-		"encryption": {
-			"version":                 fmt.Sprintf("%d", config.MasterKeyInfo.EncryptionVersion),
-			"encrypted-kek":           FormatRecoveryCode(config.MasterKeyInfo.EncryptedKEK[:]),
-			"user-key-salt":           FormatRecoveryCode(config.MasterKeyInfo.UserKeySalt[:]),
-			"encrypted-block-id-hmac": FormatRecoveryCode(config.MasterKeyInfo.EncryptedBlockIdHmacKey[:]),
-		},
-		"storage": {
-			"format":  config.StorageFormat,
-			"version": fmt.Sprintf("%d", config.StorageVersion),
-		},
-	}
-	file, err := os.OpenFile(fullPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o400)
-	if err != nil {
-		return WrapErrorf(err, "failed to open config file %q", fullPath)
-	}
-	defer file.Close() //nolint:errcheck
-	if err := WriteToml(file, headerComment, toml); err != nil {
-		return WrapErrorf(err, "failed write toml for %q", fullPath)
-	}
-	if err := file.Close(); err != nil {
-		return WrapErrorf(err, "failed to close config file %q", fullPath)
-	}
-	return nil
-}
-
-func ReadRepositoryConfigFile(fullPath string) (RepositoryConfig, Toml, error) { //nolint:funlen
-	file, err := os.Open(fullPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return RepositoryConfig{}, nil, Errorf("repository is corrupt - %s: no such file", fullPath)
-		}
-		return RepositoryConfig{}, nil, WrapErrorf(err, "failed to open config file %q", fullPath)
-	}
-	defer file.Close() //nolint:errcheck
-	toml, err := ReadToml(file)
-	if err != nil {
-		return RepositoryConfig{}, nil, WrapErrorf(err, "failed to read toml for %q", fullPath)
-	}
-	var config RepositoryConfig
-	v, ok := toml.GetValue("storage", "format")
-	if !ok {
-		return RepositoryConfig{}, nil, Errorf("missing key storage.format in config file %q", fullPath)
-	}
-	config.StorageFormat = v
-	i, ok := toml.GetIntValue("storage", "version")
-	if !ok {
-		return RepositoryConfig{}, nil, Errorf("missing or invalid key storage.version in config file %q", fullPath)
-	}
-	if i > int(StorageVersion) {
-		return RepositoryConfig{}, nil, Errorf("invalid storage version %d in config file %q", i, fullPath)
-	}
-	config.StorageVersion = uint16(i) //nolint:gosec
-	i, ok = toml.GetIntValue("encryption", "version")
-	if !ok {
-		return RepositoryConfig{}, nil, Errorf("missing or invalid key encryption.version in config file %q", fullPath)
-	}
-	if i > int(EncryptionVersion) {
-		return RepositoryConfig{}, nil, Errorf("invalid encryption version %d in config file %q", i, fullPath)
-	}
-	config.MasterKeyInfo.EncryptionVersion = uint16(i) //nolint:gosec
-	parseRecoveryCode := func(section string, key string, expectedLen int) ([]byte, error) {
-		v, ok = toml.GetValue(section, key)
-		if !ok {
-			return nil, Errorf("missing key %s.%s in config file %q", section, key, fullPath)
-		}
-		c, err := ParseRecoveryCode(v)
-		if err != nil {
-			return nil, WrapErrorf(err, "invalid key %s.%s in config file %q", section, key, fullPath)
-		}
-		if len(c) != expectedLen {
-			return nil, Errorf("invalid key %s.%s in config file (len) %q", section, key, fullPath)
-		}
-		return c, nil
-	}
-	c, err := parseRecoveryCode("encryption", "encrypted-kek", EncryptedKeySize)
-	if err != nil {
-		return RepositoryConfig{}, nil, err
-	}
-	config.MasterKeyInfo.EncryptedKEK = EncryptedKey(c)
-	c, err = parseRecoveryCode("encryption", "user-key-salt", SaltSize)
-	if err != nil {
-		return RepositoryConfig{}, nil, err
-	}
-	config.MasterKeyInfo.UserKeySalt = Salt(c)
-	c, err = parseRecoveryCode("encryption", "encrypted-block-id-hmac", EncryptedKeySize)
-	if err != nil {
-		return RepositoryConfig{}, nil, err
-	}
-	config.MasterKeyInfo.EncryptedBlockIdHmacKey = EncryptedKey(c)
-	return config, toml, nil
 }
 
 // Wrapper around `encoding/binary` that encapsulates repetitive error handling and offers

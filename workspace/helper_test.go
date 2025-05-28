@@ -192,7 +192,7 @@ func testRepository(t *testing.T, dir string) (*lib.Repository, *lib.FileStorage
 	t.Helper()
 	userPassphrase := []byte("user passphrase")
 	assert := lib.NewAssert(t)
-	storage, err := lib.NewFileStorage(dir)
+	storage, err := lib.NewFileStorage(dir, lib.StoragePurposeRepository)
 	assert.NoError(err)
 	repo, err := lib.InitNewRepository(storage, userPassphrase)
 	assert.NoError(err)

@@ -5,8 +5,10 @@ import (
 	"crypto/cipher"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 const (
@@ -28,12 +30,6 @@ const (
 	BlockFlagDeflate uint64 = 1
 )
 
-type RepositoryConfig struct {
-	MasterKeyInfo  MasterKeyInfo
-	StorageFormat  string
-	StorageVersion uint16
-}
-
 type BlockHeader struct {
 	BlockId           BlockId
 	Flags             uint64 // See `BlockFlag` constants.
@@ -46,7 +42,10 @@ type Block struct {
 	EncryptedData []byte
 }
 
-const EncryptionVersion uint16 = 1
+const (
+	EncryptionVersion uint16 = 1
+	StorageVersion    uint16 = 1
+)
 
 var ErrRootRevision = errors.New("root revision cannot be read")
 
@@ -110,7 +109,8 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 		userKeySalt,
 		EncryptedKey(encryptedBlockIdHmacKey),
 	}
-	if err := storage.Init(masterKeyInfo); err != nil {
+	toml, headerComment := createRepositoryConfig(masterKeyInfo)
+	if err := storage.Init(toml, headerComment); err != nil {
 		return nil, WrapErrorf(err, "failed to initialize storage")
 	}
 	rootRevisionId := RevisionId{}
@@ -124,11 +124,14 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 }
 
 func OpenRepository(storage Storage, passphrase []byte) (*Repository, error) {
-	config, err := storage.Open()
+	toml, err := storage.Open()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to open storage")
 	}
-	masterKeyInfo := config.MasterKeyInfo
+	masterKeyInfo, err := parseRepositoryConfig(toml)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to parse repository config")
+	}
 	if masterKeyInfo.EncryptionVersion != EncryptionVersion {
 		return nil, Errorf(
 			"unsupported repository version %d, want %d",
@@ -372,4 +375,82 @@ func UnmarshalBlockHeader(blockId BlockId, r io.Reader) (BlockHeader, error) {
 	br.Skip(10) // padding
 	header.BlockId = blockId
 	return header, br.Err
+}
+
+func parseRepositoryConfig(toml Toml) (*MasterKeyInfo, error) {
+	i, ok := toml.GetIntValue("storage", "version")
+	if !ok {
+		return nil, Errorf("missing or invalid key `storage.version` in repository config")
+	}
+	if i != int(StorageVersion) {
+		return nil, Errorf("unsupported repository version %d, want %d", i, StorageVersion)
+	}
+	i, ok = toml.GetIntValue("encryption", "version")
+	if !ok {
+		return nil, Errorf("missing or invalid key `encryption.version` in repository config")
+	}
+	if i != int(EncryptionVersion) {
+		return nil, Errorf("unsupported repository version %d, want %d", i, EncryptionVersion)
+	}
+	masterKeyInfo := &MasterKeyInfo{ //nolint:exhaustruct
+		EncryptionVersion: uint16(i),
+	}
+	parseRecoveryCode := func(section string, key string, expectedLen int) ([]byte, error) {
+		v, ok := toml.GetValue(section, key)
+		if !ok {
+			return nil, Errorf("missing key `%s.%s` in repository config", section, key)
+		}
+		c, err := ParseRecoveryCode(v)
+		if err != nil {
+			return nil, WrapErrorf(err, "invalid key `%s.%s` in repository config", section, key)
+		}
+		if len(c) != expectedLen {
+			return nil, Errorf("invalid key length `%s.%s` in repository config", section, key)
+		}
+		return c, nil
+	}
+	c, err := parseRecoveryCode("encryption", "encrypted-kek", EncryptedKeySize)
+	if err != nil {
+		return nil, err
+	}
+	masterKeyInfo.EncryptedKEK = EncryptedKey(c)
+	c, err = parseRecoveryCode("encryption", "user-key-salt", SaltSize)
+	if err != nil {
+		return nil, err
+	}
+	masterKeyInfo.UserKeySalt = Salt(c)
+	c, err = parseRecoveryCode("encryption", "encrypted-block-id-hmac", EncryptedKeySize)
+	if err != nil {
+		return nil, err
+	}
+	masterKeyInfo.EncryptedBlockIdHmacKey = EncryptedKey(c)
+	return masterKeyInfo, nil
+}
+
+func createRepositoryConfig(masterKeyInfo MasterKeyInfo) (Toml, string) {
+	toml := Toml{
+		"encryption": {
+			"version":                 fmt.Sprintf("%d", masterKeyInfo.EncryptionVersion),
+			"encrypted-kek":           FormatRecoveryCode(masterKeyInfo.EncryptedKEK[:]),
+			"user-key-salt":           FormatRecoveryCode(masterKeyInfo.UserKeySalt[:]),
+			"encrypted-block-id-hmac": FormatRecoveryCode(masterKeyInfo.EncryptedBlockIdHmacKey[:]),
+		},
+		"storage": {
+			"version": fmt.Sprintf("%d", StorageVersion),
+		},
+	}
+	headerComment := strings.Trim(`
+DO NOT DELETE OR CHANGE THIS FILE.
+
+This file contains the configuration of your cling repository including
+the master key information.
+You need your passphrase to unlock the repository so this file in itself
+is not enough to access your data. But without this file all your data is
+lost. Forever.
+
+So please back this file up. 
+Copy it to a secure place (a password manager might be a good choice) or 
+even print it out and keep it somewhere safe.
+`, "\n ")
+	return toml, headerComment
 }

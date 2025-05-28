@@ -4,14 +4,10 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-)
-
-const (
-	repositoryConfigFile        = "repository.txt"
-	StorageVersion       uint16 = 1
 )
 
 type ControlFileSection string
@@ -20,12 +16,27 @@ const (
 	ControlFileSectionRefs ControlFileSection = "refs"
 )
 
+type StoragePurpose string
+
+const (
+	StoragePurposeRepository StoragePurpose = "repository"
+	StoragePurposeWorkspace  StoragePurpose = "workspace"
+)
+
+var (
+	ErrStorageNotFound      = Errorf("storage not found")
+	ErrStorageAlreadyExists = Errorf("storage already exists")
+)
+
 type Storage interface {
-	Init(MasterKeyInfo) error
-	Open() (RepositoryConfig, error)
+	Init(config Toml, headerComment string) error
+	Open() (Toml, error)
 	HasBlock(blockId BlockId) (bool, error)
 	ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error)
 	ReadBlockHeader(blockId BlockId) (BlockHeader, error)
+	// Write a block and return whether it was written.
+	//
+	// Returns `true` if the block was already present.
 	WriteBlock(block Block) (bool, error)
 	ReadControlFile(section ControlFileSection, name string) ([]byte, error)
 	WriteControlFile(section ControlFileSection, name string, data []byte) error
@@ -33,14 +44,15 @@ type Storage interface {
 
 type FileStorage struct {
 	Dir      string
+	Purpose  StoragePurpose
 	clingDir string
 }
 
-func NewFileStorage(dir string) (*FileStorage, error) {
-	return &FileStorage{Dir: dir, clingDir: filepath.Join(dir, ".cling")}, nil
+func NewFileStorage(dir string, purpose StoragePurpose) (*FileStorage, error) {
+	return &FileStorage{Dir: dir, Purpose: purpose, clingDir: filepath.Join(dir, ".cling")}, nil
 }
 
-func (fs *FileStorage) Init(masterKeyInfo MasterKeyInfo) error {
+func (fs *FileStorage) Init(config Toml, headerComment string) error {
 	stat, err := os.Stat(fs.Dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -53,52 +65,57 @@ func (fs *FileStorage) Init(masterKeyInfo MasterKeyInfo) error {
 	} else if !stat.IsDir() {
 		return Errorf("%s is not a directory", fs.Dir)
 	}
-	files, err := os.ReadDir(fs.Dir)
-	if err != nil {
-		return WrapErrorf(err, "failed to read directory %s", fs.Dir)
+	purposeDir := filepath.Join(fs.clingDir, string(fs.Purpose))
+	_, err = os.Stat(purposeDir)
+	if !errors.Is(err, os.ErrNotExist) {
+		return ErrStorageAlreadyExists
 	}
-	if len(files) > 0 {
-		return Errorf("directory %s is not empty", fs.Dir)
+	err = os.MkdirAll(purposeDir, 0o700)
+	if err != nil && !errors.Is(err, os.ErrExist) {
+		return WrapErrorf(err, "failed to create new directory %s", purposeDir)
 	}
 	// Create the directory layout.
 	mkClingDir := func(names ...string) error {
 		fullPath := filepath.Join(append([]string{fs.clingDir}, names...)...)
 		if err := os.Mkdir(fullPath, 0o700); err != nil {
-			return WrapErrorf(err, "failed to create directory %s", fullPath)
+			return WrapErrorf(err, "failed to create new directory %s", fullPath)
 		}
 		return nil
 	}
-	if err := mkClingDir(); err != nil {
+	if err := mkClingDir(string(fs.Purpose), "refs"); err != nil {
 		return err
 	}
-	if err := mkClingDir("refs"); err != nil {
+	if err := mkClingDir(string(fs.Purpose), "objects"); err != nil {
 		return err
 	}
-	if err := mkClingDir("objects"); err != nil {
-		return err
+	f, err := os.OpenFile(fs.configFilePath(), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return WrapErrorf(err, "failed to open config file %s", fs.configFilePath())
 	}
-	repositoryFile := filepath.Join(fs.clingDir, repositoryConfigFile)
-	config := &RepositoryConfig{MasterKeyInfo: masterKeyInfo, StorageFormat: "file", StorageVersion: StorageVersion}
-	if err := WriteRepositoryConfigFile(repositoryFile, config); err != nil {
-		return WrapErrorf(err, "failed to write config file %s", repositoryFile)
+	defer f.Close() //nolint:errcheck
+	if err := WriteToml(f, headerComment, config); err != nil {
+		return WrapErrorf(err, "failed to write config file %s", fs.configFilePath())
+	}
+	if err := f.Close(); err != nil {
+		return WrapErrorf(err, "failed to close config file %s", fs.configFilePath())
 	}
 	return nil
 }
 
-func (fs *FileStorage) Open() (RepositoryConfig, error) {
-	_, err := os.Stat(fs.clingDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return RepositoryConfig{}, Errorf("repository does not exist %s", fs.Dir)
-		}
-		return RepositoryConfig{}, WrapErrorf(err, "failed to stat directory %s", fs.clingDir)
+func (fs *FileStorage) Open() (Toml, error) {
+	f, err := os.Open(fs.configFilePath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrStorageNotFound
 	}
-	repositoryFile := filepath.Join(fs.clingDir, repositoryConfigFile)
-	config, _, err := ReadRepositoryConfigFile(repositoryFile)
 	if err != nil {
-		return RepositoryConfig{}, err
+		return nil, WrapErrorf(err, "failed to open config file %s", fs.configFilePath())
 	}
-	return config, nil
+	defer f.Close() //nolint:errcheck
+	toml, err := ReadToml(f)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to read config file %s", fs.configFilePath())
+	}
+	return toml, nil
 }
 
 func (fs *FileStorage) HasBlock(blockId BlockId) (bool, error) {
@@ -288,7 +305,7 @@ func (fs *FileStorage) ReadControlFile(section ControlFileSection, name string) 
 
 func (fs *FileStorage) blockPath(blockId BlockId) string {
 	hexPath := hex.EncodeToString(blockId[:])
-	return filepath.Join(fs.clingDir, "objects", hexPath[:2], hexPath[2:4], hexPath[4:])
+	return filepath.Join(fs.clingDir, string(fs.Purpose), "objects", hexPath[:2], hexPath[2:4], hexPath[4:])
 }
 
 func (fs *FileStorage) controlFilePath(section ControlFileSection, name string) (string, error) {
@@ -296,5 +313,9 @@ func (fs *FileStorage) controlFilePath(section ControlFileSection, name string) 
 	if strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, "..") || len(name) == 0 {
 		return "", Errorf("invalid file name %s", name)
 	}
-	return filepath.Join(fs.clingDir, string(section), name), nil
+	return filepath.Join(fs.clingDir, string(fs.Purpose), string(section), name), nil
+}
+
+func (fs *FileStorage) configFilePath() string {
+	return filepath.Join(fs.clingDir, fmt.Sprintf("%s.txt", fs.Purpose))
 }
