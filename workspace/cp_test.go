@@ -25,18 +25,18 @@ func TestCp(t *testing.T) {
 		rt.AddLocal("b.txt", "b")
 		rt.AddLocal("c/1.txt", "c1")
 		rt.AddLocal("c/d/2.txt", "c2")
-		revId1, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId1, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 
 		rt.UpdateLocal("a.txt", "A")
 		rt.AddLocal("c/3.txt", "c3")
 		rt.UpdateLocalMode("b.txt", 0o777)
-		revId2, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId2, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 
 		// Copy all from rev1.
 		assert.NoError(os.MkdirAll(tmp, 0o700))
-		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
+		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]PathInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -50,7 +50,7 @@ func TestCp(t *testing.T) {
 		// Copy all from the rev2.
 		assert.NoError(os.RemoveAll(tmp))
 		assert.NoError(os.MkdirAll(tmp, 0o700))
-		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId2, NewTestCpMonitorOverwrite(), nil}, tmp)
+		err = Cp(rt.Repository, out, &CpOptions{revId2, NewTestCpMonitorOverwrite(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]PathInfo{
 			{"a.txt", 0o600, 1, "A"},
@@ -80,13 +80,13 @@ func TestCp(t *testing.T) {
 		rt.AddLocal("c/1.txt", "c1")
 		rt.UpdateLocalMode("c", 0o500)
 
-		revId1, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId1, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 
 		// Copy all from the rev1.
 		assert.NoError(os.RemoveAll(tmp))
 		assert.NoError(os.MkdirAll(tmp, 0o700))
-		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
+		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]PathInfo{
 			{"c", 0o500 | os.ModeDir, 0, ""},
@@ -106,13 +106,13 @@ func TestCp(t *testing.T) {
 		rt.AddLocal("b.txt", "b")
 		rt.AddLocal("c/1.txt", "c1")
 		rt.AddLocal("c/d/2.txt", "c2")
-		revId1, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId1, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 
 		pattern, err := lib.NewPathPattern("c/**/*")
 		assert.NoError(err)
 		pathFilter := &lib.PathInclusionFilter{Includes: []lib.PathPattern{pattern}}
-		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), pathFilter}, tmp)
+		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), pathFilter}, tmp)
 		assert.NoError(err)
 		assert.Equal([]PathInfo{
 			{"c", 0o700 | os.ModeDir, 0, ""},
@@ -156,11 +156,11 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Commit.
-		revId1, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId1, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		err = Cp(rt.WorkspacePath, rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
+		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
 
 		stat := rt.LocalStat("a.txt")

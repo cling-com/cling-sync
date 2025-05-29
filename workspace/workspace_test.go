@@ -20,6 +20,9 @@ func TestWorkspaceNewAndOpen(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(local, ws.WorkspacePath)
 		assert.Equal(remote, string(ws.RemoteRepository))
+		head, err := ws.Head()
+		assert.NoError(err)
+		assert.Equal(true, head.IsRoot())
 
 		// Open workspace.
 		open, err := OpenWorkspace(local)

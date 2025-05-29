@@ -179,7 +179,7 @@ func CpCmd(argv []string) error { //nolint:funlen
 		Monitor:    mon,
 		RevisionId: revisionId,
 	}
-	err = ws.Cp(workspace.WorkspacePath, repository, flags.Arg(1), opts, tmpDir)
+	err = ws.Cp(repository, flags.Arg(1), opts, tmpDir)
 	mon.Close()
 	if args.IgnoreErrors && mon.errors > 0 {
 		fmt.Printf("%d errors ignored\n", mon.errors)
@@ -281,7 +281,7 @@ func CommitCmd(argv []string) error { //nolint:funlen
 			return nil
 		},
 	}
-	revisionId, err := ws.Commit(workspace.WorkspacePath, repository, opts, tmpDir)
+	revisionId, err := ws.Commit(workspace, repository, opts, tmpDir)
 	mon.Close()
 	if args.IgnoreErrors && mon.errors > 0 {
 		fmt.Printf("%d errors ignored\n", mon.errors)
@@ -386,7 +386,7 @@ func StatusCmd(argv []string) error { //nolint:funlen
 	}
 	mon := NewStagingMonitor(workspace.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
 	opts := &ws.StatusOptions{PathFilter: pathFilter, Monitor: mon}
-	result, err := ws.Status(workspace.WorkspacePath, repository, opts, tmpDir)
+	result, err := ws.Status(workspace, repository, opts, tmpDir)
 	mon.Close()
 	if err != nil {
 		return err //nolint:wrapcheck

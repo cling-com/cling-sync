@@ -21,6 +21,8 @@ const (
 	StagingOnErrorAbort  StagingOnError = 2
 )
 
+var ErrNotInSync = errors.New("workspace is not in sync with repository")
+
 type StagingEntryMonitor interface {
 	OnStart(path string, dirEntry os.DirEntry)
 	OnAddBlock(path string, header *lib.BlockHeader, existed bool, dataSize int64)
@@ -38,10 +40,17 @@ type CommitOptions struct {
 
 // Commit all changes in the local directory.
 // `.cling` is always ignored.
-func Commit(src string, repository *lib.Repository, opts *CommitOptions, tmpDir string) (lib.RevisionId, error) {
+func Commit(ws *Workspace, repository *lib.Repository, opts *CommitOptions, tmpDir string) (lib.RevisionId, error) {
 	head, err := repository.Head()
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get head")
+	}
+	wsHead, err := ws.Head()
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get workspace head")
+	}
+	if wsHead != head {
+		return lib.RevisionId{}, ErrNotInSync
 	}
 	snapshotDir := filepath.Join(tmpDir, "snapshot")
 	stagingDir := filepath.Join(tmpDir, "staging")
@@ -54,18 +63,25 @@ func Commit(src string, repository *lib.Repository, opts *CommitOptions, tmpDir 
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	staging, err := NewStaging(src, repository, snapshot, opts.PathFilter, true, stagingDir, opts.Monitor)
+	staging, err := NewStaging(ws.WorkspacePath, repository, snapshot, opts.PathFilter, true, stagingDir, opts.Monitor)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stage changes")
 	}
 	if err := opts.OnBeforeCommit(); err != nil {
 		return lib.RevisionId{}, err
 	}
-	return staging.Commit( //nolint:wrapcheck
+	revisionId, err := staging.Commit(
 		repository,
 		snapshot,
 		&lib.CommitInfo{Author: opts.Author, Message: opts.Message},
 	)
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to commit")
+	}
+	if err := lib.WriteRef(ws.storage, "head", revisionId); err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to write workspace head reference - re-run commit")
+	}
+	return revisionId, nil
 }
 
 // Build a `lib.Staging` from the `src` directory.

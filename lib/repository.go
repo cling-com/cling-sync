@@ -117,7 +117,7 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 	if !rootRevisionId.IsRoot() {
 		return nil, Errorf("root revision ID is not zero")
 	}
-	if err := writeRef(storage, "head", rootRevisionId); err != nil {
+	if err := WriteRef(storage, "head", rootRevisionId); err != nil {
 		return nil, WrapErrorf(err, "failed to write head reference")
 	}
 	return OpenRepository(storage, passphrase)
@@ -266,7 +266,7 @@ func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHead
 }
 
 func (r *Repository) Head() (RevisionId, error) {
-	ref, err := readRef(r.storage, "head")
+	ref, err := ReadRef(r.storage, "head")
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to read head reference")
 	}
@@ -321,20 +321,20 @@ func (r *Repository) WriteRevision(revision *Revision, buf BlockBuf) (RevisionId
 		return RevisionId{}, WrapErrorf(err, "failed to write revision block")
 	}
 	revisionId := RevisionId(blockHeader.BlockId)
-	if err := writeRef(r.storage, "head", revisionId); err != nil {
+	if err := WriteRef(r.storage, "head", revisionId); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write head reference")
 	}
 	return revisionId, nil
 }
 
-func writeRef(storage Storage, name string, revisionId RevisionId) error {
+func WriteRef(storage Storage, name string, revisionId RevisionId) error {
 	if err := storage.WriteControlFile(ControlFileSectionRefs, name, []byte(hex.EncodeToString(revisionId[:]))); err != nil {
 		return WrapErrorf(err, "failed to write reference %s", name)
 	}
 	return nil
 }
 
-func readRef(storage Storage, name string) (RevisionId, error) {
+func ReadRef(storage Storage, name string) (RevisionId, error) {
 	data, err := storage.ReadControlFile(ControlFileSectionRefs, name)
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to read reference %s", name)

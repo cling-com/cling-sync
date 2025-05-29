@@ -82,6 +82,9 @@ This file contains the configuration of your cling workspace.
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create temporary directory")
 	}
+	if err := lib.WriteRef(storage, "head", lib.RevisionId{}); err != nil {
+		return nil, lib.WrapErrorf(err, "failed to write workspace head reference")
+	}
 	return &Workspace{remoteRepository, path, storage, tmpDir}, nil
 }
 
@@ -98,4 +101,12 @@ func (w *Workspace) Close() error {
 		return lib.WrapErrorf(err, "failed to remove temporary directory %s", w.tmpDir)
 	}
 	return nil
+}
+
+func (w *Workspace) Head() (lib.RevisionId, error) {
+	ref, err := lib.ReadRef(w.storage, "head")
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read head reference")
+	}
+	return ref, nil
 }

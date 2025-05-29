@@ -60,7 +60,7 @@ type StatusOptions struct {
 	Monitor    StagingEntryMonitor
 }
 
-func Status(src string, repository *lib.Repository, opts *StatusOptions, tmpDir string) (StatusFiles, error) {
+func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpDir string) (StatusFiles, error) {
 	head, err := repository.Head()
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get head")
@@ -76,7 +76,7 @@ func Status(src string, repository *lib.Repository, opts *StatusOptions, tmpDir 
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	staging, err := NewStaging(src, repository, snapshot, opts.PathFilter, false, stagingDir, opts.Monitor)
+	staging, err := NewStaging(ws.WorkspacePath, repository, snapshot, opts.PathFilter, false, stagingDir, opts.Monitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}

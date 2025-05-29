@@ -12,12 +12,11 @@ import (
 )
 
 type RepositoryTest struct {
-	Repository    *lib.Repository
-	Storage       lib.Storage
-	Workspace     *Workspace
-	WorkspacePath string
-	t             *testing.T
-	assert        lib.Assert
+	Repository        *lib.Repository
+	RepositoryStorage lib.Storage
+	Workspace         *Workspace
+	t                 *testing.T
+	assert            lib.Assert
 }
 
 func NewRepositoryTest(t *testing.T) *RepositoryTest {
@@ -37,12 +36,11 @@ func NewRepositoryTest(t *testing.T) *RepositoryTest {
 	workspace, err := NewWorkspace(workspacePath, RemoteRepository(repositoryDir))
 	assert.NoError(err)
 	return &RepositoryTest{
-		Repository:    repository,
-		Storage:       storage,
-		Workspace:     workspace,
-		WorkspacePath: workspace.WorkspacePath,
-		t:             t,
-		assert:        assert,
+		Repository:        repository,
+		RepositoryStorage: storage,
+		Workspace:         workspace,
+		t:                 t,
+		assert:            assert,
 	}
 }
 

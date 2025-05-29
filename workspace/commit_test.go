@@ -20,7 +20,7 @@ func TestCommit(t *testing.T) {
 		rt.AddLocal("b.txt", "..")
 		rt.AddLocal("c/1.txt", "...")
 		rt.AddLocal("c/d/2.txt", "....")
-		revId, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
 			{"a.txt", 1},
@@ -34,7 +34,7 @@ func TestCommit(t *testing.T) {
 		rt.RemoveLocal("c/d")
 		rt.RemoveLocal("b.txt")
 		rt.AddLocal("e.txt", ".....")
-		revId, err = Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId, err = Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
 			{"a.txt", 1},
@@ -42,6 +42,14 @@ func TestCommit(t *testing.T) {
 			{"c", 0},
 			{"c/1.txt", 3},
 		})
+
+		remoteHead, err := rt.Repository.Head()
+		assert.NoError(err)
+
+		workspaceHead, err := rt.Workspace.Head()
+		assert.NoError(err)
+
+		assert.Equal(remoteHead, workspaceHead)
 	})
 
 	t.Run("Removing a directory", func(t *testing.T) {
@@ -53,7 +61,7 @@ func TestCommit(t *testing.T) {
 		rt.AddLocal("c/1.txt", "...")
 		rt.AddLocal("c/d/2.txt", "....")
 
-		revId, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
 			{"a.txt", 1},
@@ -65,7 +73,7 @@ func TestCommit(t *testing.T) {
 		})
 
 		rt.RemoveLocal("c")
-		revId, err = Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId, err = Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
 			{"a.txt", 1},
@@ -86,7 +94,7 @@ func TestCommit(t *testing.T) {
 		assert.NoError(err)
 
 		revId, err := Commit(
-			rt.WorkspacePath,
+			rt.Workspace,
 			rt.Repository,
 			&CommitOptions{pathFilter, "author", "message", newTestStagingMonitor(), nopOnBeforeCommit},
 			t.TempDir(),
@@ -106,7 +114,7 @@ func TestCommit(t *testing.T) {
 		pathFilter, err = lib.NewPathExclusionFilter([]string{"**/*.txt", "**/e", "c"}, []string{})
 		assert.NoError(err)
 		revId, err = Commit(
-			rt.WorkspacePath,
+			rt.Workspace,
 			rt.Repository,
 			&CommitOptions{pathFilter, "author", "message", newTestStagingMonitor(), nopOnBeforeCommit},
 			t.TempDir(),
@@ -121,7 +129,7 @@ func TestCommit(t *testing.T) {
 		})
 
 		// Commit without ignoring any files.
-		revId, err = Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId, err = Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(revId, nil, []FileInfo{
 			{"a.txt", 1},
@@ -144,7 +152,7 @@ func TestCommit(t *testing.T) {
 		check := func(path string, fileMode os.FileMode, expected lib.ModeAndPerm) {
 			t.Helper()
 			assert.NoError(os.Chmod(rt.LocalPath(path), fileMode))
-			revId, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+			revId, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 			assert.NoError(err)
 			entries := rt.RevisionSnapshot(revId, nil)
 			assert.Equal(2, len(entries))
@@ -178,7 +186,7 @@ func TestCommit(t *testing.T) {
 		rt.AddLocal("a/b.txt", "123")
 		stat, err := os.Stat(rt.LocalPath("a/b.txt"))
 		assert.NoError(err)
-		revId, err := Commit(rt.WorkspacePath, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
 		assert.NoError(err)
 		entries := rt.RevisionSnapshot(revId, nil)
 		assert.Equal(2, len(entries))
@@ -205,5 +213,30 @@ func TestCommit(t *testing.T) {
 			assert.Equal(-1, md.BirthtimeSec)
 			assert.Equal(-1, int64(md.BirthtimeNSec))
 		}
+	})
+
+	t.Run("Workspace must be in sync with repository", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		rt := NewRepositoryTest(t)
+		rt.AddLocal("a.txt", "a")
+		revId1, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		assert.NoError(err)
+		rt.UpdateLocal("a.txt", "b")
+		revId2, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		assert.NoError(err)
+
+		// Workspace should be in sync with repository.
+		wsHead, err := rt.Workspace.Head()
+		assert.NoError(err)
+		assert.Equal(revId2, wsHead)
+
+		// "reset" workspace to revId1.
+		err = lib.WriteRef(rt.Workspace.storage, "head", revId1)
+		assert.NoError(err)
+
+		// Try to commit again.
+		_, err = Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		assert.ErrorIs(err, ErrNotInSync)
 	})
 }

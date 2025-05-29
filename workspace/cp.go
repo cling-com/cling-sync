@@ -39,7 +39,7 @@ type CpOptions struct {
 	PathFilter lib.PathFilter
 }
 
-func Cp(src string, repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir string) error {
+func Cp(repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir string) error {
 	snapshot, err := lib.NewRevisionSnapshot(repository, opts.RevisionId, tmpDir)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
