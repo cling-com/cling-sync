@@ -153,7 +153,7 @@ func TestFileMetadata(t *testing.T) {
 		assert.Equal(sut.MarshalledSize(), buf.Len())
 	})
 
-	t.Run("IsEqualIgnoringBlockIds", func(t *testing.T) {
+	t.Run("IsEqualRestorableAttributes", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 
@@ -177,55 +177,56 @@ func TestFileMetadata(t *testing.T) {
 				"Size",
 				"SymlinkTarget",
 				"UID",
-			}, actualFields, "FileMetadata field names have changed, make sure to update IsEqualIgnoringBlockIds",
+			}, actualFields, "FileMetadata field names have changed, make sure to update IsEqualRestorableAttributes",
 		)
 
 		actual := *base
-		assert.Equal(true, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(true, base.IsEqualRestorableAttributes(&actual))
 
 		actual = *base
 		actual.BlockIds = append(actual.BlockIds, fakeBlockId("3"))
-		assert.Equal(true, base.IsEqualIgnoringBlockIds(&actual), "BlockIds are ignored")
+		assert.Equal(true, base.IsEqualRestorableAttributes(&actual), "BlockIds are ignored")
 
 		actual = *base
 		actual.ModeAndPerm += 1
-		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
 
 		actual = *base
 		actual.MTimeSec += 1
-		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
 
 		actual = *base
 		actual.MTimeNSec += 1
-		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
 
 		actual = *base
 		actual.Size += 1
-		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
 
 		actual = *base
 		actual.FileHash[0] += 1
-		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
 
 		actual = *base
 		actual.SymlinkTarget += "_modified"
-		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
 
 		actual = *base
 		actual.UID += 1
-		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
 
 		actual = *base
 		actual.GID += 1
-		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
 
+		// Birthtime is ignored because it is not restorable (on most systems).
 		actual = *base
 		actual.BirthtimeSec += 1
-		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(true, base.IsEqualRestorableAttributes(&actual))
 
 		actual = *base
 		actual.BirthtimeNSec += 1
-		assert.Equal(false, base.IsEqualIgnoringBlockIds(&actual))
+		assert.Equal(true, base.IsEqualRestorableAttributes(&actual))
 	})
 }
 

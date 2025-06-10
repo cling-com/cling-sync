@@ -36,7 +36,7 @@ func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpDir str
 		revisions = append(revisions, &revision)
 		r = revision.Parent
 	}
-	tempWriter := NewRevisionTempWriter(tmpDir, defaultChunkSize)
+	tempWriter := NewRevisionTempWriter(tmpDir, DefaultRevisionTempChunkSize)
 	if err := revisionNWayMerge(repository, revisions, tempWriter); err != nil {
 		return nil, WrapErrorf(err, "failed to revision n-way merge revisions")
 	}

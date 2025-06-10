@@ -161,7 +161,7 @@ func CpCmd(argv []string) error { //nolint:funlen
 		&lib.PathInclusionFilter{Includes: []lib.PathPattern{pattern}},
 		&lib.PathExclusionFilter{Excludes: args.Exclude, Includes: args.Include},
 	}}
-	tmpDir, err := workspace.NewTmpDir("commit")
+	tmpDir, err := workspace.NewTmpDir("cp")
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
@@ -197,21 +197,18 @@ func CpCmd(argv []string) error { //nolint:funlen
 	return nil
 }
 
-func CommitCmd(argv []string) error { //nolint:funlen
+func MergeCmd(argv []string) error { //nolint:funlen
 	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help         bool
-		Message      string
-		Author       string
-		IgnoreErrors bool
-		Verbose      bool
-		NoProgress   bool
-		Exclude      []lib.PathPattern
-		Include      []lib.PathPattern
+		Help       bool
+		Message    string
+		Author     string
+		Verbose    bool
+		NoProgress bool
 	}{}
 	defaultAuthor := "<anonymous>"
 	whoami, err := user.Current()
@@ -219,30 +216,18 @@ func CommitCmd(argv []string) error { //nolint:funlen
 		defaultAuthor = whoami.Username
 	}
 	defaultMessage := "Synced with cling-sync"
-	flags := flag.NewFlagSet("commit", flag.ExitOnError)
+	flags := flag.NewFlagSet("merge", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
-	flags.BoolVar(&args.IgnoreErrors, "ignore-errors", false, "Ignore errors")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
-	pathPatternFlag(
-		flags,
-		"exclude",
-		"Exclude paths matching the given pattern (can be used multiple times).",
-		&args.Exclude,
-	)
-	pathPatternFlag(
-		flags,
-		"include",
-		"Include paths matching the given pattern (can be used multiple times).",
-		&args.Include,
-	)
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s commit\n\n", appName)
-		fmt.Fprintf(os.Stderr, "Synchronize all local changes to the repository.\n")
-		fmt.Fprintf(os.Stderr, "All files not present will be removed in the revision.\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s merge\n\n", appName)
+		fmt.Fprintf(os.Stderr, "Commit all local changes to the repository\n")
+		fmt.Fprintf(os.Stderr, "and merge all changes from the repository into the workspace.\n")
+		fmt.Fprintf(os.Stderr, "As a result, the workspace will be identical to the repository.\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -256,51 +241,44 @@ func CommitCmd(argv []string) error { //nolint:funlen
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("no positional arguments are required")
 	}
-	if len(args.Exclude) == 0 && len(args.Include) > 0 {
-		return lib.Errorf("include patterns can only be used with exclude patterns")
-	}
 	repository, err := openRepository(workspace)
 	if err != nil {
 		return err
 	}
-	pathFilter := &lib.PathExclusionFilter{Excludes: args.Exclude, Includes: args.Include}
-	tmpDir, err := workspace.NewTmpDir("commit")
-	if err != nil {
-		return err //nolint:wrapcheck
+	stagingMonitor := NewStagingMonitor(workspace.WorkspacePath, args.Verbose, args.NoProgress)
+	cpMonitor := NewCpMonitor(workspace.WorkspacePath, ws.CpOnExistsAbort, args.Verbose, false, args.NoProgress)
+	commitMonitor := NewCommitMonitor(args.Verbose, args.NoProgress)
+	opts := &ws.MergeOptions{
+		Author:         args.Author,
+		Message:        args.Message,
+		StagingMonitor: stagingMonitor,
+		CpMonitor:      cpMonitor,
+		CommitMonitor:  commitMonitor,
 	}
-	mon := NewStagingMonitor(workspace.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
-	opts := &ws.CommitOptions{
-		PathFilter: pathFilter,
-		Author:     args.Author,
-		Message:    args.Message,
-		Monitor:    mon,
-		OnBeforeCommit: func() error {
-			if args.Verbose {
-				fmt.Println("Committing")
-			}
-			return nil
-		},
-	}
-	revisionId, err := ws.Commit(workspace, repository, opts, tmpDir)
-	mon.Close()
-	if args.IgnoreErrors && mon.errors > 0 {
-		fmt.Printf("%d errors ignored\n", mon.errors)
-	}
-	if errors.Is(err, lib.ErrEmptyCommit) {
+	revisionId, err := ws.Merge(workspace, repository, opts)
+	stagingMonitor.Close()
+	if errors.Is(err, ws.ErrUpToDate) {
 		fmt.Println("No changes")
 		return nil
 	}
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
+	if commitMonitor.paths == 0 {
+		fmt.Println("No local changes, workspace is up to date now")
+		return nil
+	}
 	compressionRatio := "n/a"
-	if mon.rawBytesAdded > 0 {
-		compressionRatio = fmt.Sprintf("%.2f", float64(mon.compressedBytesAdded)/float64(mon.rawBytesAdded))
+	if commitMonitor.rawBytesAdded > 0 {
+		compressionRatio = fmt.Sprintf(
+			"%.2f",
+			float64(commitMonitor.compressedBytesAdded)/float64(commitMonitor.rawBytesAdded),
+		)
 	}
 	fmt.Printf(
 		"Revision %s (%s added, compressed: %s)\n",
 		revisionId,
-		ws.FormatBytes(mon.rawBytesAdded),
+		ws.FormatBytes(commitMonitor.rawBytesAdded),
 		compressionRatio,
 	)
 	return nil
@@ -313,18 +291,16 @@ func StatusCmd(argv []string) error { //nolint:funlen
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help         bool
-		Short        bool
-		IgnoreErrors bool
-		Verbose      bool
-		NoProgress   bool
-		Exclude      []lib.PathPattern
-		Include      []lib.PathPattern
+		Help       bool
+		Short      bool
+		Verbose    bool
+		NoProgress bool
+		Exclude    []lib.PathPattern
+		Include    []lib.PathPattern
 	}{}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Only show the number of added, updated, and deleted files")
-	flags.BoolVar(&args.IgnoreErrors, "ignore-errors", false, "Ignore errors")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	pathPatternFlag(
@@ -384,7 +360,7 @@ func StatusCmd(argv []string) error { //nolint:funlen
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	mon := NewStagingMonitor(workspace.WorkspacePath, args.Verbose, args.IgnoreErrors, args.NoProgress)
+	mon := NewStagingMonitor(workspace.WorkspacePath, args.Verbose, args.NoProgress)
 	opts := &ws.StatusOptions{PathFilter: pathFilter, Monitor: mon}
 	result, err := ws.Status(workspace, repository, opts, tmpDir)
 	mon.Close()
@@ -586,19 +562,22 @@ func openRepository(workspace *ws.Workspace) (*lib.Repository, error) {
 	return repository, nil
 }
 
-func pathPatternFlag(flags *flag.FlagSet, name string, usage string, value *[]lib.PathPattern) {
-	flags.Func(
-		name,
-		// todo: Centralize this description or add it everywhere patterns are used.
-		// todo: Add examples.
-		usage+"\n"+strings.TrimSpace(`
+func pathPatternDescription() string {
+	// todo: Add examples.
+	return strings.TrimSpace(`
 A pattern must match the full path or a directory within the path.
 Include patterns (see --include) can be used to override exclude patterns.
 Pattern syntax:
     **      matches any number of directories
     *       matches any number of characters in a single directory
     ?       matches a single character
-		`),
+	`)
+}
+
+func pathPatternFlag(flags *flag.FlagSet, name string, usage string, value *[]lib.PathPattern) {
+	flags.Func(
+		name,
+		usage+"\n"+pathPatternDescription(),
 		func(pattern string) error {
 			p, err := lib.NewPathPattern(pattern)
 			if err != nil {
@@ -618,7 +597,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: %s <command> [command arguments]\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Commands:\n")
 		fmt.Fprintf(os.Stderr, "  cp           Copy files from the repository to a local directory\n")
-		fmt.Fprintf(os.Stderr, "  commit       Synchronize local changes to the repository\n")
+		fmt.Fprintf(os.Stderr, "  merge        Merge changes from the repository and the workspace\n")
 		fmt.Fprintf(os.Stderr, "  init         Initialize a new repository\n")
 		fmt.Fprintf(os.Stderr, "  ls           List files in the repository\n")
 		fmt.Fprintf(os.Stderr, "  log          Show revision log\n")
@@ -639,8 +618,8 @@ func main() {
 		err = InitCmd(argv)
 	case "cp":
 		err = CpCmd(argv)
-	case "commit":
-		err = CommitCmd(argv)
+	case "merge":
+		err = MergeCmd(argv)
 	case "log":
 		err = LogCmd(argv)
 	case "ls":

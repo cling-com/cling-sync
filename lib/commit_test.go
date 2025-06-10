@@ -47,6 +47,47 @@ func TestCommit(t *testing.T) {
 		assert.Equal("test message2", revision.Message)
 		assert.Equal([]*RevisionEntry{e4}, entries)
 	})
+
+	t.Run("Empty commit", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		commit, err := NewCommit(repo, t.TempDir())
+		assert.NoError(err)
+		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+		assert.ErrorIs(err, ErrEmptyCommit)
+	})
+
+	t.Run("Head changed during commit", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+		head, err := repo.Head()
+		assert.NoError(err)
+
+		commit, err := NewCommit(repo, t.TempDir())
+		assert.NoError(err)
+
+		// Change the head.
+		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3}, BlockBuf{})
+		assert.NoError(err)
+		_, err = repo.WriteRevision(&Revision{
+			TimestampSec:  123456789,
+			TimestampNSec: 1234,
+			Message:       "test message",
+			Author:        "test author",
+			Parent:        head,
+			Blocks:        []BlockId{blockHeader.BlockId},
+		}, BlockBuf{})
+		assert.NoError(err)
+
+		// Try to commit with the head changed.
+		err = commit.Add(fakeRevisionEntry("a/1.txt", RevisionEntryAdd))
+		assert.NoError(err)
+		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+		assert.ErrorIs(err, ErrHeadChanged)
+	})
 }
 
 func readRevision(repo *Repository, revisionId RevisionId) (*Revision, []*RevisionEntry, error) {

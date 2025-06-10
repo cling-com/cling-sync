@@ -136,7 +136,7 @@ func TestRevisionTemp(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, defaultChunkSize)
+		sut := NewRevisionTempWriter(dir, DefaultRevisionTempChunkSize)
 
 		err := sut.Add(fakeRevisionEntry("/some/dir/fileb", RevisionEntryAdd))
 		assert.NoError(err)
@@ -154,7 +154,7 @@ func TestRevisionTemp(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, defaultChunkSize)
+		sut := NewRevisionTempWriter(dir, DefaultRevisionTempChunkSize)
 
 		err := sut.Add(fakeRevisionEntry("/some/dir/file", RevisionEntryAdd))
 		assert.NoError(err)
@@ -185,7 +185,7 @@ func TestRevisionTemp(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, defaultChunkSize)
+		sut := NewRevisionTempWriter(dir, DefaultRevisionTempChunkSize)
 
 		for _, path := range []string{"a.txt", "sub/a.txt", "b.txt"} {
 			err := sut.Add(fakeRevisionEntry(path, RevisionEntryAdd))
@@ -205,7 +205,7 @@ func TestRevisionTemp(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, defaultChunkSize)
+		sut := NewRevisionTempWriter(dir, DefaultRevisionTempChunkSize)
 
 		for _, path := range []string{"a.txt", "sub/a.txt", "b.txt"} {
 			err := sut.Add(fakeRevisionEntry(path, RevisionEntryAdd))

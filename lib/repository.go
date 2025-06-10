@@ -47,7 +47,10 @@ const (
 	StorageVersion    uint16 = 1
 )
 
-var ErrRootRevision = errors.New("root revision cannot be read")
+var (
+	ErrRootRevision = errors.New("root revision cannot be read")
+	ErrHeadChanged  = Errorf("head changed during commit")
+)
 
 type MasterKeyInfo struct {
 	EncryptionVersion       uint16
@@ -291,6 +294,7 @@ func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision
 
 // Write a revision and set it as the current HEAD.
 // A revision can only reference the current head as their parent.
+// Return `ErrHeadChanged` if the head has changed during the commit.
 func (r *Repository) WriteRevision(revision *Revision, buf BlockBuf) (RevisionId, error) {
 	if len(revision.Blocks) == 0 {
 		return RevisionId{}, Errorf("revision is empty")
@@ -310,7 +314,12 @@ func (r *Repository) WriteRevision(revision *Revision, buf BlockBuf) (RevisionId
 		return RevisionId{}, WrapErrorf(err, "failed to get head revision")
 	}
 	if revision.Parent != head {
-		return RevisionId{}, Errorf("revision parent %s does not match current head %s", revision.Parent, head)
+		return RevisionId{}, WrapErrorf(
+			ErrHeadChanged,
+			"revision parent %s does not match current head %s",
+			revision.Parent,
+			head,
+		)
 	}
 	revBuf := bytes.NewBuffer([]byte{})
 	if err := MarshalRevision(revision, revBuf); err != nil {

@@ -19,6 +19,7 @@ linters:
   disable:
     - cyclop
     - gocognit
+    - goconst
     - gocyclo
     - gomodguard
     - inamedparam

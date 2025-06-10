@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const defaultChunkSize = 4 * 1024 * 1024
+var ErrEmptyCommit = Errorf("empty commit")
 
 type Commit struct {
 	BaseRevision RevisionId
@@ -26,7 +26,7 @@ func NewCommit(repository *Repository, tmpDir string) (*Commit, error) {
 	if len(files) > 0 {
 		return nil, Errorf("temporary directory %s is not empty", tmpDir)
 	}
-	tempWriter := NewRevisionTempWriter(tmpDir, defaultChunkSize)
+	tempWriter := NewRevisionTempWriter(tmpDir, DefaultRevisionTempChunkSize)
 	return &Commit{head, repository, tempWriter, tmpDir}, nil
 }
 
@@ -42,6 +42,8 @@ type CommitInfo struct {
 	Message string
 }
 
+// Return `ErrHeadChanged` if the head has changed during the commit.
+// Return `ErrEmptyCommit` if the commit is empty.
 func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	sorted, err := c.tempWriter.Finalize()
 	if err != nil {

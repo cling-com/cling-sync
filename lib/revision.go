@@ -175,6 +175,10 @@ func UnmarshalRevisionEntry(r io.Reader) (*RevisionEntry, error) {
 	return &re, nil
 }
 
+type RevisionEntryReader interface {
+	Read() (*RevisionEntry, error)
+}
+
 type RevisionReader struct {
 	revision   *Revision
 	repository *Repository

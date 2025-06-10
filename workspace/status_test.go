@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"testing"
+	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
@@ -37,7 +38,7 @@ func TestStatus(t *testing.T) {
 		}, statusFilesString(status))
 
 		// Commit, workspace should be "clean" again.
-		_, err = Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		_, err = Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
 		assert.NoError(err)
@@ -47,7 +48,7 @@ func TestStatus(t *testing.T) {
 		// Add, remove, and update files.
 		rt.RemoveLocal("b.txt")
 		rt.AddLocal("e.txt", ".....")
-		rt.UpdateLocalMTime("c/1.txt")
+		rt.UpdateLocalMTime("c/1.txt", time.Now())
 
 		// "Dirty" workspace.
 		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
@@ -76,7 +77,7 @@ func TestStatus(t *testing.T) {
 		rt.AddLocal("c/d/2.txt", "....")
 
 		// Commit, workspace should be "clean".
-		_, err = Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		_, err = Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
 		assert.NoError(err)
@@ -96,7 +97,7 @@ func TestStatus(t *testing.T) {
 		}, statusFilesString(status))
 
 		// Commit, workspace should be "clean" again.
-		_, err = Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		_, err = Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
 		assert.NoError(err)
@@ -113,5 +114,5 @@ func statusFilesString(files []StatusFile) []string {
 }
 
 func fakeStatusOptions() *StatusOptions {
-	return &StatusOptions{nil, newTestStagingMonitor()}
+	return &StatusOptions{nil, NewTestStagingMonitor()}
 }

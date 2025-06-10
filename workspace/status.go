@@ -66,8 +66,8 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpD
 		return nil, lib.WrapErrorf(err, "failed to get head")
 	}
 	snapshotDir := filepath.Join(tmpDir, "snapshot")
-	stagingDir := filepath.Join(tmpDir, "staging")
-	for _, dir := range []string{snapshotDir, stagingDir} {
+	stagingTmpDir := filepath.Join(tmpDir, "staging")
+	for _, dir := range []string{snapshotDir, stagingTmpDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, lib.WrapErrorf(err, "failed to create temporary directory %s", dir)
 		}
@@ -76,13 +76,13 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpD
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	staging, err := NewStaging(ws.WorkspacePath, repository, snapshot, opts.PathFilter, false, stagingDir, opts.Monitor)
+	staging, err := NewStaging(ws.WorkspacePath, opts.PathFilter, stagingTmpDir, opts.Monitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}
-	revisionTemp, err := staging.MergeWithSnapshot(repository, snapshot)
+	revisionTemp, err := staging.MergeWithSnapshot(snapshot)
 	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to merge staging chunks")
+		return nil, lib.WrapErrorf(err, "failed to merge staging and revision snapshot")
 	}
 	if revisionTemp.Chunks() == 0 {
 		return []StatusFile{}, nil

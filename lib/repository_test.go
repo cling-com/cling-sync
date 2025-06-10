@@ -297,6 +297,29 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(revision, readRevision)
 	})
+
+	t.Run("Write revision not based on current head", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		repo, _ := testRepository(t)
+
+		// Create a revision that is not based on the current head.
+		revisionId := fakeRevisionId("1")
+		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3}, BlockBuf{})
+		assert.NoError(err)
+
+		revision := Revision{
+			TimestampSec:  time.Now().Unix(),
+			TimestampNSec: 1234,
+			Message:       "test message",
+			Author:        "test author",
+			Blocks:        []BlockId{blockHeader.BlockId},
+			Parent:        revisionId,
+		}
+		_, err = repo.WriteRevision(&revision, BlockBuf{})
+		assert.ErrorIs(err, ErrHeadChanged)
+	})
+
 	t.Run("Read empty root revision", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

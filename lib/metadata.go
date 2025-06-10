@@ -3,6 +3,7 @@ package lib
 import (
 	"io"
 	"io/fs"
+	"time"
 )
 
 // The lower bits represent attributes (see `Mode` constants).
@@ -176,6 +177,10 @@ type FileMetadata struct {
 	BirthtimeNSec int32  // -1 if not present.
 }
 
+func (fm *FileMetadata) MTime() time.Time {
+	return time.Unix(fm.MTimeSec, int64(fm.MTimeNSec))
+}
+
 func (fm *FileMetadata) HasGID() bool {
 	return fm.GID != 0xffffffff
 }
@@ -203,10 +208,10 @@ func (fm *FileMetadata) MarshalledSize() int {
 		4 // BirthtimeNSec
 }
 
-// Two FileMetadata objects are equal all of its fields except `BlockIds` are equal.
-// BlockIds are not compared because they should be the same if the `FileHash` is the same.
-// This enables us to implement a `status` command that does not add blocks to the repository.
-func (fm *FileMetadata) IsEqualIgnoringBlockIds(other *FileMetadata) bool {
+// Compare all attributes that can be restored like `ModeAndPerm`, `Size`, `FileHash` etc.
+// Fields like `BirthtimeSec` and `BirthtimeNSec` are not compared because they cannot be restored.
+// The `BlockIds` are not compared because they should be the same if the `FileHash` is the same.
+func (fm *FileMetadata) IsEqualRestorableAttributes(other *FileMetadata) bool {
 	return fm.ModeAndPerm == other.ModeAndPerm &&
 		fm.MTimeSec == other.MTimeSec &&
 		fm.MTimeNSec == other.MTimeNSec &&
@@ -214,9 +219,7 @@ func (fm *FileMetadata) IsEqualIgnoringBlockIds(other *FileMetadata) bool {
 		fm.FileHash == other.FileHash &&
 		fm.SymlinkTarget == other.SymlinkTarget &&
 		fm.UID == other.UID &&
-		fm.GID == other.GID &&
-		fm.BirthtimeSec == other.BirthtimeSec &&
-		fm.BirthtimeNSec == other.BirthtimeNSec
+		fm.GID == other.GID
 }
 
 func MarshalFileMetadata(f *FileMetadata, w io.Writer) error {

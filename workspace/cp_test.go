@@ -25,20 +25,20 @@ func TestCp(t *testing.T) {
 		rt.AddLocal("b.txt", "b")
 		rt.AddLocal("c/1.txt", "c1")
 		rt.AddLocal("c/d/2.txt", "c2")
-		revId1, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 
 		rt.UpdateLocal("a.txt", "A")
 		rt.AddLocal("c/3.txt", "c3")
 		rt.UpdateLocalMode("b.txt", 0o777)
-		revId2, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId2, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 
 		// Copy all from rev1.
 		assert.NoError(os.MkdirAll(tmp, 0o700))
 		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
-		assert.Equal([]PathInfo{
+		assert.Equal([]FileInfo{
 			{"a.txt", 0o600, 1, "a"},
 			{"b.txt", 0o600, 1, "b"},
 			{"c", 0o700 | os.ModeDir, 0, ""},
@@ -52,7 +52,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(os.MkdirAll(tmp, 0o700))
 		err = Cp(rt.Repository, out, &CpOptions{revId2, NewTestCpMonitorOverwrite(), nil}, tmp)
 		assert.NoError(err)
-		assert.Equal([]PathInfo{
+		assert.Equal([]FileInfo{
 			{"a.txt", 0o600, 1, "A"},
 			{"b.txt", 0o777, 1, "b"},
 			{"c", 0o700 | os.ModeDir, 0, ""},
@@ -80,7 +80,7 @@ func TestCp(t *testing.T) {
 		rt.AddLocal("c/1.txt", "c1")
 		rt.UpdateLocalMode("c", 0o500)
 
-		revId1, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 
 		// Copy all from the rev1.
@@ -88,7 +88,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(os.MkdirAll(tmp, 0o700))
 		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
-		assert.Equal([]PathInfo{
+		assert.Equal([]FileInfo{
 			{"c", 0o500 | os.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 2, "c1"},
 		}, readDir(t, out))
@@ -106,7 +106,7 @@ func TestCp(t *testing.T) {
 		rt.AddLocal("b.txt", "b")
 		rt.AddLocal("c/1.txt", "c1")
 		rt.AddLocal("c/d/2.txt", "c2")
-		revId1, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 
 		pattern, err := lib.NewPathPattern("c/**/*")
@@ -114,7 +114,7 @@ func TestCp(t *testing.T) {
 		pathFilter := &lib.PathInclusionFilter{Includes: []lib.PathPattern{pattern}}
 		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), pathFilter}, tmp)
 		assert.NoError(err)
-		assert.Equal([]PathInfo{
+		assert.Equal([]FileInfo{
 			{"c", 0o700 | os.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 2, "c1"},
 			{"c/d", 0o700 | os.ModeDir, 0, ""},
@@ -156,7 +156,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Commit.
-		revId1, err := Commit(rt.Workspace, rt.Repository, fakeCommitConfig(), t.TempDir())
+		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 
 		// Copy all from the rev1.
@@ -179,20 +179,16 @@ func TestCp(t *testing.T) {
 	})
 }
 
-type PathInfo struct {
-	Path    string
-	Mode    os.FileMode
-	Size    int64
-	Content string
-}
-
-func readDir(t *testing.T, basePath string) []PathInfo {
+func readDir(t *testing.T, basePath string) []FileInfo {
 	t.Helper()
-	pathInfos := []PathInfo{}
+	fileInfos := []FileInfo{}
 	assert := lib.NewAssert(t)
 	err := filepath.WalkDir(basePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if filepath.Base(path) == ".cling" {
+			return filepath.SkipDir
 		}
 		name, err := filepath.Rel(basePath, path)
 		assert.NoError(err)
@@ -202,14 +198,14 @@ func readDir(t *testing.T, basePath string) []PathInfo {
 		info, err := os.Stat(path)
 		assert.NoError(err)
 		content := ""
-		var size int64
+		var size int
 		if !info.IsDir() {
 			c, err := os.ReadFile(path)
 			assert.NoError(err)
 			content = string(c)
-			size = info.Size()
+			size = int(info.Size())
 		}
-		pathInfos = append(pathInfos, PathInfo{
+		fileInfos = append(fileInfos, FileInfo{
 			Path:    name,
 			Mode:    info.Mode(),
 			Size:    size,
@@ -218,7 +214,7 @@ func readDir(t *testing.T, basePath string) []PathInfo {
 		return nil
 	})
 	assert.NoError(err)
-	return pathInfos
+	return fileInfos
 }
 
 type TestCpMonitor struct {

@@ -59,6 +59,7 @@ func Cp(repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir s
 		return nil
 	}
 	defer restoreDirFileModes() //nolint:errcheck
+	blockBuf := lib.BlockBuf{}
 	for {
 		entry, err := reader.Read()
 		if errors.Is(err, io.EOF) {
@@ -69,7 +70,7 @@ func Cp(repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir s
 		}
 		target := filepath.Join(targetPath, entry.Path.FSString())
 		mon.OnStart(entry, target)
-		if err := restore(entry, repository, target, mon); err != nil {
+		if err := restore(entry, repository, target, mon, blockBuf); err != nil {
 			return lib.WrapErrorf(err, "failed to restore %s", target)
 		}
 		if err := restoreFileMode(target, entry.Metadata); err != nil {
@@ -102,7 +103,13 @@ func Cp(repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir s
 	return nil
 }
 
-func restore(entry *lib.RevisionEntry, repository *lib.Repository, target string, mon CpMonitor) error { //nolint:funlen
+func restore( //nolint:funlen
+	entry *lib.RevisionEntry,
+	repository *lib.Repository,
+	target string,
+	mon CpMonitor,
+	blockBuf lib.BlockBuf,
+) error {
 	md := entry.Metadata
 	if md.ModeAndPerm.IsDir() {
 		if err := os.MkdirAll(target, 0o700); err != nil {
@@ -140,7 +147,6 @@ func restore(entry *lib.RevisionEntry, repository *lib.Repository, target string
 			return lib.WrapErrorf(err, "failed to open file %s for writing", target)
 		}
 		defer f.Close() //nolint:errcheck
-		blockBuf := lib.BlockBuf{}
 		for _, blockId := range entry.Metadata.BlockIds {
 			data, _, err := repository.ReadBlock(blockId, blockBuf)
 			if err != nil {

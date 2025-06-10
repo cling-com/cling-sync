@@ -114,6 +114,10 @@ func TestRevision(t *testing.T) {
 	})
 }
 
+func fakeRevisionId(s string) RevisionId {
+	return RevisionId(fakeSHA256(s))
+}
+
 func fakeRevision(parent RevisionId) *Revision {
 	return &Revision{
 		TimestampSec:  123456789,

@@ -26,25 +26,111 @@ func PrintErr(msg string, args ...any) {
 	fmt.Fprintf(os.Stderr, s+msg+"\n", args...)
 }
 
-type StagingMonitor struct {
+type CommitMonitor struct {
 	Verbose              bool
-	IgnoreErrors         bool
 	NoProgress           bool
-	WorkspaceDir         string
+	startTime            time.Time
 	paths                int
-	excluded             int
 	rawBytesAdded        int64
 	compressedBytesAdded int64
-	totalFileSizes       int64
-	errors               int
-	ignoredError         bool
-	startTime            time.Time
+	rawBytesReused       int64
 }
 
-func NewStagingMonitor(workspaceDir string, verbose, ignoreErrors, noProgress bool) *StagingMonitor {
+func NewCommitMonitor(verbose, noProgress bool) *CommitMonitor {
+	return &CommitMonitor{ //nolint:exhaustruct
+		Verbose:    verbose,
+		NoProgress: noProgress,
+	}
+}
+
+func (m *CommitMonitor) OnBeforeCommit() error {
+	if m.Verbose {
+		fmt.Println("Committing")
+	}
+	return nil
+}
+
+func (m *CommitMonitor) OnStart(entry *lib.RevisionEntry) {
+	if m.startTime.IsZero() {
+		m.startTime = time.Now()
+	}
+	m.paths += 1
+	m.progress()
+	if !m.Verbose {
+		return
+	}
+	fmt.Printf("%s\n", entry.Path.FSString())
+}
+
+func (m *CommitMonitor) OnAddBlock(entry *lib.RevisionEntry, header *lib.BlockHeader, existed bool, dataSize int64) {
+	if existed {
+		m.rawBytesReused += dataSize
+	} else {
+		m.rawBytesAdded += dataSize
+		m.compressedBytesAdded += int64(header.EncryptedDataSize) - lib.TotalCipherOverhead
+	}
+	m.progress()
+	if !m.Verbose {
+		return
+	}
+	if existed {
+		fmt.Printf("  block  %s %6s (old)\n", header.BlockId, ws.FormatBytes(dataSize))
+		return
+	}
+	if header.Flags&lib.BlockFlagDeflate == lib.BlockFlagDeflate {
+		fmt.Printf(
+			"  block  %s %6s (new) (compressed: %.2f)\n",
+			header.BlockId,
+			ws.FormatBytes(dataSize),
+			float64(header.EncryptedDataSize-lib.TotalCipherOverhead)/float64(dataSize),
+		)
+		return
+	}
+	fmt.Printf("  block  %s %6s (new)\n", header.BlockId, ws.FormatBytes(dataSize))
+}
+
+func (m *CommitMonitor) OnEnd(entry *lib.RevisionEntry) {
+	m.progress()
+	if !m.Verbose {
+		return
+	}
+	if entry.Metadata.ModeAndPerm.IsDir() {
+		fmt.Printf("  %-6s (directory)\n", entry.Type)
+		return
+	}
+	fmt.Printf(
+		"  %-6s %s %6s\n",
+		entry.Type,
+		hex.EncodeToString(entry.Metadata.FileHash[:]),
+		ws.FormatBytes(entry.Metadata.Size),
+	)
+}
+
+func (m *CommitMonitor) progress() {
+	if m.Verbose || m.NoProgress || !IsTerm(os.Stderr) {
+		return
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("adding %d paths", m.paths))
+	mbs := (float64(m.rawBytesAdded) / float64(time.Since(m.startTime).Seconds()))
+	sb.WriteString(fmt.Sprintf(" (%s at %s/s)", ws.FormatBytes(m.rawBytesAdded), ws.FormatBytes(int64(mbs))))
+	clearLine()
+	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
+}
+
+type StagingMonitor struct {
+	Verbose        bool
+	NoProgress     bool
+	WorkspaceDir   string
+	paths          int
+	excluded       int
+	totalFileSizes int64
+	startTime      time.Time
+}
+
+func NewStagingMonitor(workspaceDir string, verbose, noProgress bool) *StagingMonitor {
 	return &StagingMonitor{ //nolint:exhaustruct
 		Verbose:      verbose,
-		IgnoreErrors: ignoreErrors,
 		NoProgress:   noProgress,
 		WorkspaceDir: workspaceDir,
 	}
@@ -54,7 +140,6 @@ func (m *StagingMonitor) OnStart(path string, dirEntry os.DirEntry) {
 	if m.startTime.IsZero() {
 		m.startTime = time.Now()
 	}
-	m.ignoredError = false
 	m.paths++
 	m.progress()
 	if !m.Verbose {
@@ -62,50 +147,6 @@ func (m *StagingMonitor) OnStart(path string, dirEntry os.DirEntry) {
 	}
 	path, _ = filepath.Rel(m.WorkspaceDir, path)
 	fmt.Printf("%s\n", path)
-}
-
-func (m *StagingMonitor) OnAddBlock(path string, header *lib.BlockHeader, existed bool, dataSize int64) {
-	if !existed {
-		m.rawBytesAdded += dataSize
-		m.compressedBytesAdded += int64(header.EncryptedDataSize) - lib.TotalCipherOverhead
-	}
-	blockId := header.BlockId
-	m.progress()
-	if !m.Verbose {
-		return
-	}
-	if existed {
-		fmt.Printf("  block %s %6s (old)\n", blockId, ws.FormatBytes(dataSize))
-		return
-	}
-	if header.Flags&lib.BlockFlagDeflate == lib.BlockFlagDeflate {
-		fmt.Printf(
-			"  block %s %6s (new) (compressed: %.2f)\n",
-			blockId,
-			ws.FormatBytes(dataSize),
-			float64(header.EncryptedDataSize-lib.TotalCipherOverhead)/float64(dataSize),
-		)
-		return
-	}
-	fmt.Printf("  block %s %6s (new)\n", blockId, ws.FormatBytes(dataSize))
-}
-
-func (m *StagingMonitor) OnError(path string, err error) ws.StagingOnError {
-	m.errors++
-	if !m.IgnoreErrors {
-		return ws.StagingOnErrorAbort
-	}
-	m.ignoredError = true
-	if m.isProgress() {
-		fmt.Fprintf(os.Stderr, "\r")
-	}
-	if m.Verbose {
-		fmt.Printf("  ignoring error\n    %s\n", strings.ReplaceAll(err.Error(), "\n", "\n    "))
-	} else {
-		fmt.Printf("%s\n  %s\n", path, strings.ReplaceAll(err.Error(), "\n", "\n  "))
-	}
-	m.progress()
-	return ws.StagingOnErrorIgnore
 }
 
 func (m *StagingMonitor) OnEnd(path string, excluded bool, metadata *lib.FileMetadata) {
@@ -121,7 +162,7 @@ func (m *StagingMonitor) OnEnd(path string, excluded bool, metadata *lib.FileMet
 		m.totalFileSizes += metadata.Size
 	}
 	m.progress()
-	if !m.Verbose || m.ignoredError {
+	if !m.Verbose {
 		return
 	}
 	if metadata != nil && metadata.ModeAndPerm.IsDir() {
@@ -144,19 +185,12 @@ func (m *StagingMonitor) progress() {
 		return
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%d paths scanned", (m.paths - m.excluded)))
+	sb.WriteString(fmt.Sprintf("scanned %d paths", (m.paths - m.excluded)))
 	if m.excluded > 0 {
 		sb.WriteString(fmt.Sprintf(" (%d excluded)", m.excluded))
 	}
-	if m.errors > 0 {
-		sb.WriteString(fmt.Sprintf(", %d errors", m.errors))
-	}
 	mbs := (float64(m.totalFileSizes) / float64(time.Since(m.startTime).Seconds()))
 	sb.WriteString(fmt.Sprintf(" (%s at %s/s)", ws.FormatBytes(m.totalFileSizes), ws.FormatBytes(int64(mbs))))
-	if m.rawBytesAdded > 0 {
-		compressed := float64(m.compressedBytesAdded) / float64(m.rawBytesAdded)
-		sb.WriteString(fmt.Sprintf(", %s added (compression: %.2f)", ws.FormatBytes(m.rawBytesAdded), compressed))
-	}
 	clearLine()
 	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
 }
