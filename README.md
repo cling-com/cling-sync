@@ -1,8 +1,51 @@
 # cling-sync: The Secure Forever Store
 
+> [!WARNING]
+> This project is still in development. The format on disk might change at any time and 
+> there might be no way to convert data from one version to another. Also, expect some bugs.
+
 ## Synopsis
 
 cling-sync is a _client-side encrypted_, _revisional_ archival storage system.
+
+
+## Usage
+
+**Build the Command Line Interface (CLI) tool:**
+
+Install [Go](https://go.dev/doc/install) version 1.24.2 or later and run:
+
+    ./build.sh cli
+
+**Run the CLI tool:**
+
+    ./cling-sync <command>
+
+See `./cling-sync --help` for more information.
+
+### Example Workflow
+
+**Initialize a new repository attached to the current directory:**
+
+    cling-sync init /path/to/repository
+
+This will create a new repository at `/path/to/repository` where all encrypted data is stored.
+Additionally, a `.cling` directory is created in the current directory that ties the repository
+to this directory.
+
+Examine `/path/to/repository/.cling/repository.txt` to learn how to backup the encryption keys.
+
+**Merge the local workspace with the repository:**
+
+    cling-sync merge
+
+This will copy all new or modified files from the repository and delete all files that are not in
+the repository's latest revision. After this, changes from the local workspace are committed to the
+repository. If there are conflicts, the user is asked to resolve them.
+
+**Show the status of the workspace**
+
+    cling-sync status
 
 ## Cryptography Overview
 

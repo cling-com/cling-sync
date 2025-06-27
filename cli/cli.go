@@ -610,6 +610,11 @@ func main() {
 		flag.Usage()
 		os.Exit(0)
 	}
+	if flag.NArg() < 1 {
+		fmt.Fprintf(os.Stderr, "Missing command\n\n")
+		flag.Usage()
+		os.Exit(1)
+	}
 	argv := flag.Args()[1:]
 	cmd := flag.Arg(0)
 	var err error
