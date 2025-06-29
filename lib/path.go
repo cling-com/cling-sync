@@ -100,6 +100,18 @@ func NewPathPattern(pattern string) (PathPattern, error) {
 	return PathPattern{parts: parts}, nil
 }
 
+func NewPathPatters(patterns []string) ([]PathPattern, error) {
+	pp := []PathPattern{}
+	for _, pattern := range patterns {
+		p, err := NewPathPattern(pattern)
+		if err != nil {
+			return nil, err
+		}
+		pp = append(pp, p)
+	}
+	return pp, nil
+}
+
 func (pp PathPattern) Match(p string) bool {
 	if p == "" {
 		return false
@@ -191,21 +203,13 @@ type PathExclusionFilter struct {
 
 // Parse the exclude and include patterns and create a PathFilter.
 func NewPathExclusionFilter(excludes []string, includes []string) (*PathExclusionFilter, error) {
-	e := []PathPattern{}
-	for _, pattern := range excludes {
-		pp, err := NewPathPattern(pattern)
-		if err != nil {
-			return nil, err
-		}
-		e = append(e, pp)
+	e, err := NewPathPatters(excludes)
+	if err != nil {
+		return nil, err
 	}
-	i := []PathPattern{}
-	for _, pattern := range includes {
-		pp, err := NewPathPattern(pattern)
-		if err != nil {
-			return nil, err
-		}
-		i = append(i, pp)
+	i, err := NewPathPatters(includes)
+	if err != nil {
+		return nil, err
 	}
 	return &PathExclusionFilter{Excludes: e, Includes: i}, nil
 }
@@ -226,6 +230,14 @@ func (pef *PathExclusionFilter) Include(p string) bool {
 
 type PathInclusionFilter struct {
 	Includes []PathPattern
+}
+
+func NewPathInclusionFilter(includes []string) (*PathInclusionFilter, error) {
+	patterns, err := NewPathPatters(includes)
+	if err != nil {
+		return nil, err
+	}
+	return &PathInclusionFilter{Includes: patterns}, nil
 }
 
 func (pif *PathInclusionFilter) Include(p string) bool {

@@ -2,7 +2,9 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 type RevisionLog struct {
 	RevisionId lib.RevisionId
 	Revision   lib.Revision
+	Files      []StatusFile
 }
 
 // Return the log in long format (a bit like `git log`).
@@ -42,7 +45,12 @@ func (l *RevisionLog) Short() string {
 	return fmt.Sprintf("%s %s %s", l.RevisionId.Long(), date, strings.ReplaceAll(r.Message, "\n", " "))
 }
 
-func Log(repository *lib.Repository) ([]RevisionLog, error) {
+type LogOptions struct {
+	PathFilter lib.PathFilter
+	Status     bool
+}
+
+func Log(repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
 	head, err := repository.Head()
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get head revision")
@@ -55,7 +63,33 @@ func Log(repository *lib.Repository) ([]RevisionLog, error) {
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read revision %s", revisionId)
 		}
-		logs = append(logs, RevisionLog{revisionId, revision})
+		files := []StatusFile{}
+		matchedAtLeastOnePath := false
+		if opts.Status || opts.PathFilter != nil {
+			revisionReader := lib.NewRevisionReader(repository, &revision, blockBuf)
+			for {
+				entry, err := revisionReader.Read()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					return nil, lib.WrapErrorf(err, "failed to read revision %s", revisionId)
+				}
+				if opts.PathFilter != nil && !opts.PathFilter.Include(string(entry.Path)) {
+					continue
+				}
+				matchedAtLeastOnePath = true
+				if opts.Status {
+					files = append(files, StatusFile{entry.Path.FSString(), entry.Type, entry.Metadata})
+				}
+			}
+		}
+		if !opts.Status {
+			files = nil
+		}
+		if opts.PathFilter == nil || matchedAtLeastOnePath {
+			logs = append(logs, RevisionLog{revisionId, revision, files})
+		}
 		revisionId = revision.Parent
 	}
 	return logs, nil

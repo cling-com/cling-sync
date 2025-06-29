@@ -28,7 +28,11 @@ func (f StatusFile) Format() string {
 	default:
 		panic(fmt.Sprintf("invalid revision entry type %d", f.Type))
 	}
-	return fmt.Sprintf("%s %s", typeStr, f.Path)
+	path := f.Path
+	if f.Metadata.ModeAndPerm.IsDir() {
+		path += "/"
+	}
+	return fmt.Sprintf("%s %s", typeStr, path)
 }
 
 type StatusFiles []StatusFile

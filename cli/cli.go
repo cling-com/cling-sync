@@ -525,26 +525,28 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	return nil
 }
 
-func LogCmd(argv []string, passphraseFromStdin bool) error {
+func LogCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help  bool
-		Short bool
+		Help   bool
+		Short  bool
+		Status bool
 	}{}
 	flags := flag.NewFlagSet("log", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Show short log")
+	flags.BoolVar(&args.Status, "status", false, "Show status of paths affected in a revision")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s log [pattern]\n\n", appName)
 		fmt.Fprint(os.Stderr, "Show revision log.\n\n")
 		fmt.Fprint(os.Stderr, "  [pattern] (optional)\n")
 		fmt.Fprint(os.Stderr, "        Show log only for paths matching the given pattern.\n")
 		fmt.Fprint(os.Stderr, pathPatternDescription("        "))
-		fmt.Fprint(os.Stderr, "\nFlags:\n")
+		fmt.Fprint(os.Stderr, "\n\nFlags:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(argv); err != nil {
@@ -554,19 +556,28 @@ func LogCmd(argv []string, passphraseFromStdin bool) error {
 		flags.Usage()
 		return nil
 	}
-	if len(flags.Args()) != 0 {
-		return lib.Errorf("no positional arguments are required")
+	if len(flags.Args()) > 1 {
+		return lib.Errorf("too many positional arguments")
+	}
+	var pathFilter lib.PathFilter
+	if len(flags.Args()) == 1 {
+		p, err := lib.NewPathPattern(flags.Arg(0))
+		if err != nil {
+			return lib.WrapErrorf(err, "invalid pattern: %s", flags.Arg(0))
+		}
+		pathFilter = &lib.PathInclusionFilter{Includes: []lib.PathPattern{p}}
 	}
 	repository, err := openRepository(workspace, passphraseFromStdin)
 	if err != nil {
 		return err
 	}
-	logs, err := ws.Log(repository)
+	opts := &ws.LogOptions{PathFilter: pathFilter, Status: args.Status}
+	logs, err := ws.Log(repository, opts)
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
 	if len(logs) == 0 {
-		fmt.Println("Empty repository")
+		fmt.Println("No revisions")
 	}
 	for i, log := range logs {
 		if args.Short {
@@ -576,6 +587,16 @@ func LogCmd(argv []string, passphraseFromStdin bool) error {
 				fmt.Println()
 			}
 			fmt.Println(log.Long())
+		}
+		if !args.Status {
+			continue
+		}
+		fmt.Println()
+		for _, file := range log.Files {
+			fmt.Printf("    %s\n", file.Format())
+		}
+		if args.Short && i < len(logs)-1 {
+			fmt.Println()
 		}
 	}
 	return nil

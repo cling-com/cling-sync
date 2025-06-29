@@ -31,9 +31,9 @@ func TestStatus(t *testing.T) {
 		assert.Equal([]string{
 			"A a.txt",
 			"A b.txt",
-			"A c",
+			"A c/",
 			"A c/1.txt",
-			"A c/d",
+			"A c/d/",
 			"A c/d/2.txt",
 		}, statusFilesString(status))
 
@@ -90,9 +90,9 @@ func TestStatus(t *testing.T) {
 		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
 		assert.NoError(err)
 		assert.Equal([]string{
-			"D c",
+			"D c/",
 			"D c/1.txt",
-			"D c/d",
+			"D c/d/",
 			"D c/d/2.txt",
 		}, statusFilesString(status))
 
