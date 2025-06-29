@@ -5,8 +5,8 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
-	"syscall"
 	"testing"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -170,12 +170,23 @@ func TestCp(t *testing.T) {
 		assert.Equal(stat.Mode()&os.ModePerm, cpStat.Mode())
 		assert.Equal(stat.Size(), cpStat.Size())
 		assert.Equal(stat.ModTime(), cpStat.ModTime())
-		if sys, ok := stat.Sys().(*syscall.Stat_t); ok {
-			cpSys, ok := cpStat.Sys().(*syscall.Stat_t)
-			assert.Equal(true, ok)
-			assert.Equal(sys.Gid, cpSys.Gid)
-			assert.Equal(sys.Uid, cpSys.Uid)
+		// Verify extended metadata if supported. We use `EnhanceMetadata` to test this,
+		// because it is provides platform specific implementations.
+		md := lib.FileMetadata{GID: lib.UIDUnset, UID: lib.UIDUnset} //nolint:exhaustruct
+		EnhanceMetadata(&md, stat)
+		if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+			assert.NotEqual(lib.UIDUnset, md.UID, "uid should be set on darwin and linux")
+			assert.NotEqual(lib.UIDUnset, md.GID, "gid should be set on darwin and linux")
 		}
+		cpMd := lib.FileMetadata{GID: lib.UIDUnset, UID: lib.UIDUnset} //nolint:exhaustruct
+		EnhanceMetadata(&cpMd, cpStat)
+		// We don't want to compare `BirthtimeSec` and `BirthtimeNSec` because `Birthtime` is not
+		// restored and cannot be restored.
+		md.BirthtimeSec = 0
+		md.BirthtimeNSec = 0
+		cpMd.BirthtimeSec = 0
+		cpMd.BirthtimeNSec = 0
+		assert.Equal(md, cpMd)
 	})
 }
 

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -84,12 +83,7 @@ func (wt *WorkspaceTest) LocalFileMetadata(path string) *lib.FileMetadata {
 	if stat.IsDir() {
 		md.Size = 0
 	}
-	if sys, ok := stat.Sys().(*syscall.Stat_t); ok {
-		md.BirthtimeSec = sys.Birthtimespec.Sec
-		md.BirthtimeNSec = int32(sys.Birthtimespec.Nsec) //nolint:gosec
-		md.GID = sys.Gid
-		md.UID = sys.Uid
-	}
+	EnhanceMetadata(md, stat)
 	return md
 }
 

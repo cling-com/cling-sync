@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
@@ -252,17 +251,6 @@ func computeFileHash(path string, fileInfo os.FileInfo) (lib.FileMetadata, error
 
 func newFileMetadata(fileInfo fs.FileInfo, fileHash lib.Sha256, blockIds []lib.BlockId) lib.FileMetadata {
 	mtime := fileInfo.ModTime().UTC()
-	fileSys := fileInfo.Sys()
-	var gid uint32 = 0xffffffff
-	var uid uint32 = 0xffffffff
-	var birthtimeSec int64 = -1
-	var birthtimeNSec int32 = -1
-	if stat, ok := fileSys.(*syscall.Stat_t); ok {
-		gid = stat.Gid
-		uid = stat.Uid
-		birthtimeSec = stat.Birthtimespec.Sec
-		birthtimeNSec = int32(stat.Birthtimespec.Nsec) //nolint:gosec
-	}
 	var size int64
 	if !fileInfo.IsDir() {
 		size = fileInfo.Size()
@@ -277,10 +265,11 @@ func newFileMetadata(fileInfo fs.FileInfo, fileHash lib.Sha256, blockIds []lib.B
 
 		SymlinkTarget: "", // todo: handle symlinks
 
-		UID:           uid,
-		GID:           gid,
-		BirthtimeSec:  birthtimeSec,
-		BirthtimeNSec: birthtimeNSec,
+		UID:           lib.UIDUnset,
+		GID:           lib.UIDUnset,
+		BirthtimeSec:  lib.BirthtimeUnset,
+		BirthtimeNSec: lib.BirthtimeUnset,
 	}
+	EnhanceMetadata(&md, fileInfo)
 	return md
 }

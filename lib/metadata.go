@@ -157,6 +157,9 @@ const (
 	ModeSetGID  = 1 << 13
 	ModeSticky  = 1 << 14
 	ModeType    = ModeDir | ModeSymlink
+
+	UIDUnset       = 0xffffffff
+	BirthtimeUnset = -1
 )
 
 type FileMetadata struct {
@@ -171,10 +174,10 @@ type FileMetadata struct {
 	SymlinkTarget string
 
 	// *nix specific fields.
-	UID           uint32 // 2^31 if not present.
-	GID           uint32 // 2^31 if not present.
-	BirthtimeSec  int64  // -1 if not present.
-	BirthtimeNSec int32  // -1 if not present.
+	UID           uint32 // 2^31 (UIDUnset) if not present.
+	GID           uint32 // 2^31 (UIDUnset) if not present.
+	BirthtimeSec  int64  // -1 (BirthtimeUnset) if not present.
+	BirthtimeNSec int32  // -1 (BirthtimeUnset) if not present.
 }
 
 func (fm *FileMetadata) MTime() time.Time {
@@ -182,15 +185,15 @@ func (fm *FileMetadata) MTime() time.Time {
 }
 
 func (fm *FileMetadata) HasGID() bool {
-	return fm.GID != 0xffffffff
+	return fm.GID != UIDUnset
 }
 
 func (fm *FileMetadata) HasUID() bool {
-	return fm.UID != 0xffffffff
+	return fm.UID != UIDUnset
 }
 
 func (fm *FileMetadata) HasBirthtime() bool {
-	return fm.BirthtimeSec != -1
+	return fm.BirthtimeSec != BirthtimeUnset
 }
 
 func (fm *FileMetadata) MarshalledSize() int {
