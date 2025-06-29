@@ -20,26 +20,19 @@ import (
 
 const appName = "cling-sync"
 
-func InitCmd(argv []string) error { //nolint:funlen
+func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
 		Help                bool
 		AllowWeakPassphrase bool
-		PassphraseFromStdin bool
 	}{}
 	flags := flag.NewFlagSet("init", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.AllowWeakPassphrase, "allow-weak-passphrase", false, "Allow weak passphrase")
-	flags.BoolVar(
-		&args.PassphraseFromStdin,
-		"passphrase-from-stdin",
-		false,
-		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
-	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s init <dst>\n\n", appName)
-		fmt.Fprintf(os.Stderr, "Initialize a new repository at <dst>.\n")
-		fmt.Fprintf(os.Stderr, "The destination directory <dst> must not exist or must be empty.\n")
-		fmt.Fprintf(os.Stderr, "\nFlags:\n")
+		fmt.Fprint(os.Stderr, "Initialize a new repository at <dst>.\n")
+		fmt.Fprint(os.Stderr, "The destination directory <dst> must not exist or must be empty.\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(argv); err != nil {
@@ -51,11 +44,11 @@ func InitCmd(argv []string) error { //nolint:funlen
 	if len(flags.Args()) != 1 {
 		return lib.Errorf("one positional argument is required: <dst>")
 	}
-	if !IsTerm(os.Stdin) && !args.PassphraseFromStdin {
+	if !IsTerm(os.Stdin) && !passphraseFromStdin {
 		return lib.Errorf("a new repository can only be created in an interactive terminal session")
 	}
 	var passphrase []byte
-	if args.PassphraseFromStdin {
+	if passphraseFromStdin {
 		var err error
 		passphrase, err = io.ReadAll(os.Stdin)
 		if err != nil {
@@ -79,7 +72,7 @@ func InitCmd(argv []string) error { //nolint:funlen
 			return err //nolint:wrapcheck
 		}
 	}
-	if !args.PassphraseFromStdin {
+	if !passphraseFromStdin {
 		_, err := fmt.Fprint(os.Stdout, "Repeat passphrase: ")
 		if err != nil {
 			return err //nolint:wrapcheck
@@ -112,22 +105,21 @@ func InitCmd(argv []string) error { //nolint:funlen
 	return nil
 }
 
-func CpCmd(argv []string) error { //nolint:funlen
+func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help                bool
-		Revision            string
-		IgnoreErrors        bool
-		Verbose             bool
-		NoProgress          bool
-		Overwrite           bool
-		Exclude             []lib.PathPattern
-		Include             []lib.PathPattern
-		PassphraseFromStdin bool
+		Help         bool
+		Revision     string
+		IgnoreErrors bool
+		Verbose      bool
+		NoProgress   bool
+		Overwrite    bool
+		Exclude      []lib.PathPattern
+		Include      []lib.PathPattern
 	}{}
 	flags := flag.NewFlagSet("cp", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
@@ -137,29 +129,29 @@ func CpCmd(argv []string) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Overwrite, "overwrite", false, "Overwrite existing files")
-	flags.BoolVar(
-		&args.PassphraseFromStdin,
-		"passphrase-from-stdin",
-		false,
-		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
-	)
 	pathPatternFlag(
 		flags,
 		"exclude",
-		"Exclude paths matching the given pattern (can be used multiple times).",
+		"Exclude paths matching the given pattern (can be used multiple times).\nThe pattern syntax is the same as for the <pattern> argument.",
 		&args.Exclude,
 	)
 	pathPatternFlag(
 		flags,
 		"include",
-		"Include paths matching the given pattern (can be used multiple times).",
+		"Override --exclude patterns and include paths matching the given pattern (can be used multiple times).\nThe pattern syntax is the same as for the <pattern> argument.",
 		&args.Include,
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s cp <pattern> <target>\n\n", appName)
-		fmt.Fprintf(os.Stderr, "Copy files from the repository to a local directory.\n")
-		fmt.Fprintf(os.Stderr, "The pattern syntax is the same as for the `--exclude` option.\n")
-		fmt.Fprintf(os.Stderr, "\nFlags:\n")
+		fmt.Fprint(os.Stderr, "Copy files from the repository to a local directory.\n\n")
+		fmt.Fprint(os.Stderr, "  <pattern>\n")
+		fmt.Fprint(
+			os.Stderr,
+			"        Repository paths matching the given pattern are copied.\n"+pathPatternDescription("        "),
+		)
+		fmt.Fprint(os.Stderr, "\n  <target>\n")
+		fmt.Fprint(os.Stderr, "        The target directory where the files are copied to.")
+		fmt.Fprint(os.Stderr, "\n\nFlags:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(argv); err != nil {
@@ -175,7 +167,7 @@ func CpCmd(argv []string) error { //nolint:funlen
 	if len(args.Exclude) == 0 && len(args.Include) > 0 {
 		return lib.Errorf("include patterns can only be used with exclude patterns")
 	}
-	repository, err := openRepository(workspace, args.PassphraseFromStdin)
+	repository, err := openRepository(workspace, passphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -223,19 +215,18 @@ func CpCmd(argv []string) error { //nolint:funlen
 	return nil
 }
 
-func MergeCmd(argv []string) error { //nolint:funlen
+func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help                bool
-		Message             string
-		Author              string
-		Verbose             bool
-		NoProgress          bool
-		PassphraseFromStdin bool
+		Help       bool
+		Message    string
+		Author     string
+		Verbose    bool
+		NoProgress bool
 	}{}
 	defaultAuthor := "<anonymous>"
 	whoami, err := user.Current()
@@ -248,20 +239,14 @@ func MergeCmd(argv []string) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
-	flags.BoolVar(
-		&args.PassphraseFromStdin,
-		"passphrase-from-stdin",
-		false,
-		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
-	)
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s merge\n\n", appName)
-		fmt.Fprintf(os.Stderr, "Commit all local changes to the repository\n")
-		fmt.Fprintf(os.Stderr, "and merge all changes from the repository into the workspace.\n")
-		fmt.Fprintf(os.Stderr, "As a result, the workspace will be identical to the repository.\n")
-		fmt.Fprintf(os.Stderr, "\nFlags:\n")
+		fmt.Fprint(os.Stderr, "Commit all local changes to the repository\n")
+		fmt.Fprint(os.Stderr, "and merge all changes from the repository into the workspace.\n")
+		fmt.Fprint(os.Stderr, "As a result, the workspace will be identical to the repository.\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(argv); err != nil {
@@ -274,7 +259,7 @@ func MergeCmd(argv []string) error { //nolint:funlen
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("no positional arguments are required")
 	}
-	repository, err := openRepository(workspace, args.PassphraseFromStdin)
+	repository, err := openRepository(workspace, passphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -317,21 +302,20 @@ func MergeCmd(argv []string) error { //nolint:funlen
 	return nil
 }
 
-func StatusCmd(argv []string) error { //nolint:funlen
+func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help                bool
-		Short               bool
-		Verbose             bool
-		NoProgress          bool
-		Exclude             []lib.PathPattern
-		Include             []lib.PathPattern
-		PassphraseFromStdin bool
-		NoSummary           bool
+		Help       bool
+		Short      bool
+		Verbose    bool
+		NoProgress bool
+		Exclude    []lib.PathPattern
+		Include    []lib.PathPattern
+		NoSummary  bool
 	}{}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
@@ -339,30 +323,27 @@ func StatusCmd(argv []string) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.NoSummary, "no-summary", false, "Do not show a summary at the end")
-	flags.BoolVar(
-		&args.PassphraseFromStdin,
-		"passphrase-from-stdin",
-		false,
-		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
-	)
 	pathPatternFlag(
 		flags,
 		"exclude",
-		"Exclude paths matching the given pattern (can be used multiple times).",
+		"Exclude paths matching the given pattern (can be used multiple times).\nThe pattern syntax is the same as the [pattern] argument.",
 		&args.Exclude,
 	)
 	pathPatternFlag(
 		flags,
 		"include",
-		"Include paths matching the given pattern (can be used multiple times).",
+		"Override --exclude patterns and include paths matching the given pattern (can be used multiple times).\nThe pattern syntax is the same as the [pattern] argument.",
 		&args.Include,
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s status [pattern]\n\n", appName)
-		fmt.Fprintf(os.Stderr, "Show the difference between the working directory and the repository.\n\n")
-		fmt.Fprintf(os.Stderr, "  pattern\n")
-		fmt.Fprintf(os.Stderr, "        The pattern syntax is the same as for the `--exclude` option.\n")
-		fmt.Fprintf(os.Stderr, "\nFlags:\n")
+		fmt.Fprint(os.Stderr, "Show the difference between the working directory and the repository.\n\n")
+		fmt.Fprint(os.Stderr, "  [pattern] (optional)\n")
+		fmt.Fprint(
+			os.Stderr,
+			"        Show status only for paths matching the given pattern.\n"+pathPatternDescription("        "),
+		)
+		fmt.Fprint(os.Stderr, "\n\nFlags:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(argv); err != nil {
@@ -394,7 +375,7 @@ func StatusCmd(argv []string) error { //nolint:funlen
 			pathFilter = exclusionFilter
 		}
 	}
-	repository, err := openRepository(workspace, args.PassphraseFromStdin)
+	repository, err := openRepository(workspace, passphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -422,20 +403,19 @@ func StatusCmd(argv []string) error { //nolint:funlen
 	return nil
 }
 
-func LsCmd(argv []string) error { //nolint:funlen
+func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help                bool
-		Revision            string
-		Short               bool
-		Human               bool
-		PassphraseFromStdin bool
-		TimestampFormat     string
-		ShortFileMode       bool
+		Help            bool
+		Revision        string
+		Short           bool
+		Human           bool
+		TimestampFormat string
+		ShortFileMode   bool
 	}{
 		TimestampFormat: time.RFC3339,
 	}
@@ -448,12 +428,6 @@ func LsCmd(argv []string) error { //nolint:funlen
 		"human",
 		false,
 		"Show human readable file sizes (same as `--timestamp-format=rfc3339 --full-file-mode`)",
-	)
-	flags.BoolVar(
-		&args.PassphraseFromStdin,
-		"passphrase-from-stdin",
-		false,
-		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
 	)
 	flags.Func(
 		"timestamp-format",
@@ -477,10 +451,10 @@ func LsCmd(argv []string) error { //nolint:funlen
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s ls [pattern]\n\n", appName)
-		fmt.Fprintf(os.Stderr, "List files in the repository.\n\n")
-		fmt.Fprintf(os.Stderr, "  pattern\n")
-		fmt.Fprintf(os.Stderr, "        The pattern syntax is the same as for the `commit --ignore` option.\n")
-		fmt.Fprintf(os.Stderr, "\nFlags:\n")
+		fmt.Fprint(os.Stderr, "List files in the repository.\n\n")
+		fmt.Fprint(os.Stderr, "  pattern\n")
+		fmt.Fprint(os.Stderr, "        The pattern syntax is the same as for the `commit --ignore` option.\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(argv); err != nil {
@@ -501,7 +475,7 @@ func LsCmd(argv []string) error { //nolint:funlen
 	if len(flags.Args()) > 1 {
 		return lib.Errorf("too many positional arguments")
 	}
-	repository, err := openRepository(workspace, args.PassphraseFromStdin)
+	repository, err := openRepository(workspace, passphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -551,30 +525,26 @@ func LsCmd(argv []string) error { //nolint:funlen
 	return nil
 }
 
-func LogCmd(argv []string) error {
+func LogCmd(argv []string, passphraseFromStdin bool) error {
 	workspace, err := ws.OpenWorkspace(".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help                bool
-		Short               bool
-		PassphraseFromStdin bool
+		Help  bool
+		Short bool
 	}{}
 	flags := flag.NewFlagSet("log", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Show short log")
-	flags.BoolVar(
-		&args.PassphraseFromStdin,
-		"passphrase-from-stdin",
-		false,
-		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
-	)
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s log\n\n", appName)
-		fmt.Fprintf(os.Stderr, "Show revision log.n")
-		fmt.Fprintf(os.Stderr, "\nFlags:\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s log [pattern]\n\n", appName)
+		fmt.Fprint(os.Stderr, "Show revision log.\n\n")
+		fmt.Fprint(os.Stderr, "  [pattern] (optional)\n")
+		fmt.Fprint(os.Stderr, "        Show log only for paths matching the given pattern.\n")
+		fmt.Fprint(os.Stderr, pathPatternDescription("        "))
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(argv); err != nil {
@@ -587,7 +557,7 @@ func LogCmd(argv []string) error {
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("no positional arguments are required")
 	}
-	repository, err := openRepository(workspace, args.PassphraseFromStdin)
+	repository, err := openRepository(workspace, passphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -661,22 +631,21 @@ func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Rep
 	return repository, nil
 }
 
-func pathPatternDescription() string {
+func pathPatternDescription(indent string) string {
 	// todo: Add examples.
-	return strings.TrimSpace(`
+	return indent + strings.ReplaceAll(strings.TrimSpace(`
 A pattern must match the full path or a directory within the path.
-Include patterns (see --include) can be used to override exclude patterns.
 Pattern syntax:
     **      matches any number of directories
     *       matches any number of characters in a single directory
     ?       matches a single character
-	`)
+	`), "\n", "\n"+indent)
 }
 
 func pathPatternFlag(flags *flag.FlagSet, name string, usage string, value *[]lib.PathPattern) {
 	flags.Func(
 		name,
-		usage+"\n"+pathPatternDescription(),
+		usage,
 		func(pattern string) error {
 			p, err := lib.NewPathPattern(pattern)
 			if err != nil {
@@ -690,27 +659,36 @@ func pathPatternFlag(flags *flag.FlagSet, name string, usage string, value *[]li
 
 func main() {
 	args := struct { //nolint:exhaustruct
-		Help bool
+		Help                bool
+		PassphraseFromStdin bool
 	}{}
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s <command> [command arguments]\n\n", appName)
-		fmt.Fprintf(os.Stderr, "Commands:\n")
-		fmt.Fprintf(os.Stderr, "  cp           Copy files from the repository to a local directory\n")
-		fmt.Fprintf(os.Stderr, "  merge        Merge changes from the repository and the workspace\n")
-		fmt.Fprintf(os.Stderr, "  init         Initialize a new repository\n")
-		fmt.Fprintf(os.Stderr, "  ls           List files in the repository\n")
-		fmt.Fprintf(os.Stderr, "  log          Show revision log\n")
-		fmt.Fprintf(os.Stderr, "  status       Show repository status\n")
+		fmt.Fprint(os.Stderr, "Commands:\n")
+		fmt.Fprint(os.Stderr, "  cp           Copy files from the repository to a local directory\n")
+		fmt.Fprint(os.Stderr, "  init         Initialize a new repository\n")
+		fmt.Fprint(os.Stderr, "  ls           List files in the repository\n")
+		fmt.Fprint(os.Stderr, "  log          Show revision log\n")
+		fmt.Fprint(os.Stderr, "  merge        Merge changes from the repository and the workspace\n")
+		fmt.Fprint(os.Stderr, "  status       Show repository status\n")
+		fmt.Fprint(os.Stderr, "\nGlobal flags:\n")
+		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nRun '%s <command> --help' for more information on a command.\n", appName)
 	}
 	flag.BoolVar(&args.Help, "help", false, "Show help message")
+	flag.BoolVar(
+		&args.PassphraseFromStdin,
+		"passphrase-from-stdin",
+		false,
+		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
+	)
 	flag.Parse()
 	if args.Help {
 		flag.Usage()
 		os.Exit(0)
 	}
 	if flag.NArg() < 1 {
-		fmt.Fprintf(os.Stderr, "Missing command\n\n")
+		PrintErr("Missing command\n")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -719,17 +697,17 @@ func main() {
 	var err error
 	switch cmd {
 	case "init":
-		err = InitCmd(argv)
+		err = InitCmd(argv, args.PassphraseFromStdin)
 	case "cp":
-		err = CpCmd(argv)
+		err = CpCmd(argv, args.PassphraseFromStdin)
 	case "merge":
-		err = MergeCmd(argv)
+		err = MergeCmd(argv, args.PassphraseFromStdin)
 	case "log":
-		err = LogCmd(argv)
+		err = LogCmd(argv, args.PassphraseFromStdin)
 	case "ls":
-		err = LsCmd(argv)
+		err = LsCmd(argv, args.PassphraseFromStdin)
 	case "status":
-		err = StatusCmd(argv)
+		err = StatusCmd(argv, args.PassphraseFromStdin)
 	case "":
 		flag.Usage()
 		os.Exit(0)

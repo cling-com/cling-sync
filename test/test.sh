@@ -32,7 +32,7 @@ cling_sync() {
     if [ "$command" == "status" ] || [ "$command" == "merge" ]; then
         command=$command" --no-progress"
     fi
-    echo -n "$passphrase" | cling-sync $command --passphrase-from-stdin "$@"
+    echo -n "$passphrase" | cling-sync --passphrase-from-stdin $command "$@"
 }
 
 setup() {
