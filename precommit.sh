@@ -18,6 +18,8 @@ if [ $# -eq 0 ]; then
     for mod in lib workspace cli; do
         run "$mod"
     done
+    echo "integration tests"
+    bash test/test.sh > /dev/null
 else
     run "$1"
 fi

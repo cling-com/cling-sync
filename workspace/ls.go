@@ -30,7 +30,7 @@ func (f *LsFile) String() string {
 type LsFormat struct {
 	FullPath bool
 	FullMode bool
-	// A `time.Format` string or the special value "relative".
+	// A `time.Format` string or one of the special values "relative", "unix", or "unix-fraction".
 	TimestampFormat   string
 	HumanReadableSize bool
 }
@@ -38,13 +38,18 @@ type LsFormat struct {
 func (f *LsFile) Format(format *LsFormat) string {
 	mtime := time.Unix(f.Metadata.MTimeSec, int64(f.Metadata.MTimeNSec))
 	var mtimeStr string
-	if format.TimestampFormat == "relative" {
+	switch format.TimestampFormat {
+	case "relative":
 		if time.Since(mtime) < time.Hour*24*365 {
 			mtimeStr = mtime.Format("Jan _2 15:04")
 		} else {
 			mtimeStr = mtime.Format("Jan _2  2006")
 		}
-	} else {
+	case "unix-fraction":
+		mtimeStr = fmt.Sprintf("%d.%09d0", mtime.Unix(), mtime.Nanosecond())
+	case "unix":
+		mtimeStr = fmt.Sprintf("%d", mtime.Unix())
+	default:
 		mtimeStr = mtime.Format(format.TimestampFormat)
 	}
 	var size string
@@ -69,9 +74,9 @@ func (f *LsFile) Format(format *LsFormat) string {
 		mode = f.Metadata.ModeAndPerm.ShortString()
 	}
 	if format.HumanReadableSize {
-		return fmt.Sprintf("%s %6s %s %s", mode, size, mtimeStr, path)
+		return fmt.Sprintf("%s %6s %s  %s", mode, size, mtimeStr, path)
 	} else {
-		return fmt.Sprintf("%s %12s %s %s", mode, size, mtimeStr, path)
+		return fmt.Sprintf("%s %12s %s  %s", mode, size, mtimeStr, path)
 	}
 }
 

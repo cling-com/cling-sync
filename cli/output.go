@@ -320,5 +320,5 @@ func clearLine() {
 		fmt.Fprint(os.Stderr, "\n")
 		return
 	}
-	fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", cols))
+	fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", cols)+"\r")
 }

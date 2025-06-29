@@ -5,8 +5,8 @@ set -eu
 
 if [ $# -ne 1 ]; then
     echo "Usage: $0 target"
-    echo "  tagetts:"
-    echo "    cli - build the CLI as `./cling-sync`"
+    echo "  Targets:"
+    echo "    cli - build the CLI as \`./cling-sync\`"
     exit 1
 fi
 

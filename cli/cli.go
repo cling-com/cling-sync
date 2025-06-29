@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -20,16 +21,20 @@ import (
 const appName = "cling-sync"
 
 func InitCmd(argv []string) error { //nolint:funlen
-	if !IsTerm(os.Stdin) {
-		return lib.Errorf("a new repository can only be created in an interactive terminal session")
-	}
 	args := struct { //nolint:exhaustruct
-		Help              bool
-		AllowWeakPassword bool
+		Help                bool
+		AllowWeakPassphrase bool
+		PassphraseFromStdin bool
 	}{}
 	flags := flag.NewFlagSet("init", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
-	flags.BoolVar(&args.AllowWeakPassword, "allow-weak-password", false, "Allow weak password")
+	flags.BoolVar(&args.AllowWeakPassphrase, "allow-weak-passphrase", false, "Allow weak passphrase")
+	flags.BoolVar(
+		&args.PassphraseFromStdin,
+		"passphrase-from-stdin",
+		false,
+		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
+	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s init <dst>\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Initialize a new repository at <dst>.\n")
@@ -46,32 +51,46 @@ func InitCmd(argv []string) error { //nolint:funlen
 	if len(flags.Args()) != 1 {
 		return lib.Errorf("one positional argument is required: <dst>")
 	}
-	_, err := fmt.Fprint(os.Stderr, "Enter passphrase: ")
-	if err != nil {
-		return err //nolint:wrapcheck
+	if !IsTerm(os.Stdin) && !args.PassphraseFromStdin {
+		return lib.Errorf("a new repository can only be created in an interactive terminal session")
 	}
-	passphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to read passphrase")
+	var passphrase []byte
+	if args.PassphraseFromStdin {
+		var err error
+		passphrase, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to read passphrase from stdin")
+		}
+	} else {
+		_, err := fmt.Fprint(os.Stderr, "Enter passphrase: ")
+		if err != nil {
+			return err //nolint:wrapcheck
+		}
+		passphrase, err = term.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to read passphrase")
+		}
+		_, _ = fmt.Fprintln(os.Stdout)
 	}
-	_, _ = fmt.Fprintln(os.Stdout)
 	if err := lib.CheckPassphraseStrength(passphrase); err != nil {
-		if args.AllowWeakPassword {
+		if args.AllowWeakPassphrase {
 			fmt.Fprintf(os.Stderr, "\nWarning: %s\n", err.Error())
 		} else {
 			return err //nolint:wrapcheck
 		}
 	}
-	_, err = fmt.Fprint(os.Stdout, "Repeat passphrase: ")
-	if err != nil {
-		return err //nolint:wrapcheck
-	}
-	passphraseRepeat, err := term.ReadPassword(int(os.Stdin.Fd()))
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to read passphrase")
-	}
-	if string(passphrase) != string(passphraseRepeat) {
-		return lib.Errorf("passphrases do not match")
+	if !args.PassphraseFromStdin {
+		_, err := fmt.Fprint(os.Stdout, "Repeat passphrase: ")
+		if err != nil {
+			return err //nolint:wrapcheck
+		}
+		passphraseRepeat, err := term.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to read passphrase")
+		}
+		if string(passphrase) != string(passphraseRepeat) {
+			return lib.Errorf("passphrases do not match")
+		}
 	}
 	repositoryPath, err := filepath.Abs(flags.Arg(0))
 	if err != nil {
@@ -100,14 +119,15 @@ func CpCmd(argv []string) error { //nolint:funlen
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help         bool
-		Revision     string
-		IgnoreErrors bool
-		Verbose      bool
-		NoProgress   bool
-		Overwrite    bool
-		Exclude      []lib.PathPattern
-		Include      []lib.PathPattern
+		Help                bool
+		Revision            string
+		IgnoreErrors        bool
+		Verbose             bool
+		NoProgress          bool
+		Overwrite           bool
+		Exclude             []lib.PathPattern
+		Include             []lib.PathPattern
+		PassphraseFromStdin bool
 	}{}
 	flags := flag.NewFlagSet("cp", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
@@ -117,6 +137,12 @@ func CpCmd(argv []string) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Overwrite, "overwrite", false, "Overwrite existing files")
+	flags.BoolVar(
+		&args.PassphraseFromStdin,
+		"passphrase-from-stdin",
+		false,
+		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
+	)
 	pathPatternFlag(
 		flags,
 		"exclude",
@@ -149,7 +175,7 @@ func CpCmd(argv []string) error { //nolint:funlen
 	if len(args.Exclude) == 0 && len(args.Include) > 0 {
 		return lib.Errorf("include patterns can only be used with exclude patterns")
 	}
-	repository, err := openRepository(workspace)
+	repository, err := openRepository(workspace, args.PassphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -204,11 +230,12 @@ func MergeCmd(argv []string) error { //nolint:funlen
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help       bool
-		Message    string
-		Author     string
-		Verbose    bool
-		NoProgress bool
+		Help                bool
+		Message             string
+		Author              string
+		Verbose             bool
+		NoProgress          bool
+		PassphraseFromStdin bool
 	}{}
 	defaultAuthor := "<anonymous>"
 	whoami, err := user.Current()
@@ -221,6 +248,12 @@ func MergeCmd(argv []string) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	flags.BoolVar(
+		&args.PassphraseFromStdin,
+		"passphrase-from-stdin",
+		false,
+		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
+	)
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
 	flags.Usage = func() {
@@ -241,7 +274,7 @@ func MergeCmd(argv []string) error { //nolint:funlen
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("no positional arguments are required")
 	}
-	repository, err := openRepository(workspace)
+	repository, err := openRepository(workspace, args.PassphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -291,18 +324,27 @@ func StatusCmd(argv []string) error { //nolint:funlen
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help       bool
-		Short      bool
-		Verbose    bool
-		NoProgress bool
-		Exclude    []lib.PathPattern
-		Include    []lib.PathPattern
+		Help                bool
+		Short               bool
+		Verbose             bool
+		NoProgress          bool
+		Exclude             []lib.PathPattern
+		Include             []lib.PathPattern
+		PassphraseFromStdin bool
+		NoSummary           bool
 	}{}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Only show the number of added, updated, and deleted files")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	flags.BoolVar(&args.NoSummary, "no-summary", false, "Do not show a summary at the end")
+	flags.BoolVar(
+		&args.PassphraseFromStdin,
+		"passphrase-from-stdin",
+		false,
+		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
+	)
 	pathPatternFlag(
 		flags,
 		"exclude",
@@ -352,7 +394,7 @@ func StatusCmd(argv []string) error { //nolint:funlen
 			pathFilter = exclusionFilter
 		}
 	}
-	repository, err := openRepository(workspace)
+	repository, err := openRepository(workspace, args.PassphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -374,8 +416,9 @@ func StatusCmd(argv []string) error { //nolint:funlen
 	for _, file := range result {
 		fmt.Println(file.Format())
 	}
-	fmt.Println()
-	fmt.Println(result.Summary())
+	if !args.NoSummary {
+		fmt.Println(result.Summary())
+	}
 	return nil
 }
 
@@ -386,16 +429,52 @@ func LsCmd(argv []string) error { //nolint:funlen
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help     bool
-		Revision string
-		Short    bool
-		Human    bool
-	}{}
+		Help                bool
+		Revision            string
+		Short               bool
+		Human               bool
+		PassphraseFromStdin bool
+		TimestampFormat     string
+		ShortFileMode       bool
+	}{
+		TimestampFormat: time.RFC3339,
+	}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
-	flags.BoolVar(&args.Short, "short", false, "Show short listing")
-	flags.BoolVar(&args.Human, "human", false, "Show human readable file sizes")
+	flags.BoolVar(&args.Short, "short", false, "Show short listing (same as `--timestamp-format=relative`)")
+	flags.BoolVar(
+		&args.Human,
+		"human",
+		false,
+		"Show human readable file sizes (same as `--timestamp-format=rfc3339 --full-file-mode`)",
+	)
+	flags.BoolVar(
+		&args.PassphraseFromStdin,
+		"passphrase-from-stdin",
+		false,
+		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
+	)
+	flags.Func(
+		"timestamp-format",
+		"Timestamp format: relative, rfc3339, unix, unix-fraction (default rfc3339)",
+		func(value string) error {
+			if value != "relative" && value != "rfc3339" && value != "unix" && value != "unix-fraction" {
+				return lib.Errorf("invalid timestamp-format: %s", value)
+			}
+			if value == "rfc3339" {
+				value = time.RFC3339
+			}
+			args.TimestampFormat = value
+			return nil
+		},
+	)
+	flags.BoolVar(
+		&args.ShortFileMode,
+		"short-file-mode",
+		false,
+		"Show short file mode (only permissions and file type)",
+	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s ls [pattern]\n\n", appName)
 		fmt.Fprintf(os.Stderr, "List files in the repository.\n\n")
@@ -422,7 +501,7 @@ func LsCmd(argv []string) error { //nolint:funlen
 	if len(flags.Args()) > 1 {
 		return lib.Errorf("too many positional arguments")
 	}
-	repository, err := openRepository(workspace)
+	repository, err := openRepository(workspace, args.PassphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -439,14 +518,18 @@ func LsCmd(argv []string) error { //nolint:funlen
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	timestampFormat := time.RFC3339
 	if args.Short {
-		timestampFormat = "relative"
+		args.TimestampFormat = "relative"
+		args.ShortFileMode = true
+	}
+	if args.Human {
+		args.TimestampFormat = "rfc3339"
+		args.ShortFileMode = false
 	}
 	format := &ws.LsFormat{
-		FullPath:          !args.Short,
-		FullMode:          !args.Short,
-		TimestampFormat:   timestampFormat,
+		FullPath:          true,
+		FullMode:          !args.ShortFileMode,
+		TimestampFormat:   args.TimestampFormat,
 		HumanReadableSize: args.Human,
 	}
 	dirFormat := *format
@@ -475,12 +558,19 @@ func LogCmd(argv []string) error {
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help  bool
-		Short bool
+		Help                bool
+		Short               bool
+		PassphraseFromStdin bool
 	}{}
 	flags := flag.NewFlagSet("log", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Show short log")
+	flags.BoolVar(
+		&args.PassphraseFromStdin,
+		"passphrase-from-stdin",
+		false,
+		"Read passphrase from stdin - useful for scripting, but use with caution as it might expose the passphrase",
+	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s log\n\n", appName)
 		fmt.Fprintf(os.Stderr, "Show revision log.n")
@@ -497,7 +587,7 @@ func LogCmd(argv []string) error {
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("no positional arguments are required")
 	}
-	repository, err := openRepository(workspace)
+	repository, err := openRepository(workspace, args.PassphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -538,19 +628,28 @@ func revisionId(repository *lib.Repository, revision string) (lib.RevisionId, er
 	return revisionId, nil
 }
 
-func openRepository(workspace *ws.Workspace) (*lib.Repository, error) {
-	if !IsTerm(os.Stdin) {
+func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Repository, error) {
+	if !IsTerm(os.Stdin) && !passphraseFromStdin {
 		return nil, lib.Errorf("this command can only be run in an interactive terminal session")
 	}
-	_, err := fmt.Fprint(os.Stderr, "Enter passphrase: ")
-	if err != nil {
-		return nil, err //nolint:wrapcheck
+	var passphrase []byte
+	if passphraseFromStdin {
+		var err error
+		passphrase, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to read passphrase from stdin")
+		}
+	} else {
+		_, err := fmt.Fprint(os.Stderr, "Enter passphrase: ")
+		if err != nil {
+			return nil, err //nolint:wrapcheck
+		}
+		passphrase, err = term.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to read passphrase")
+		}
+		fmt.Fprint(os.Stderr, "\r                          \r")
 	}
-	passphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to read passphrase")
-	}
-	fmt.Fprint(os.Stderr, "\r                          \r")
 	storage, err := lib.NewFileStorage(string(workspace.RemoteRepository), lib.StoragePurposeRepository)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
