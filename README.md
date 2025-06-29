@@ -14,7 +14,7 @@ cling-sync is a _client-side encrypted_, _revisional_ archival storage system.
 
 Install [Go](https://go.dev/doc/install) version 1.24.2 or later and run:
 
-    ./build.sh cli
+    ./build.sh build cli
 
 **Run the CLI tool:**
 
