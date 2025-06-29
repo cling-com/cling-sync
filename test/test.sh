@@ -37,7 +37,7 @@ cling_sync() {
 
 setup() {
     cd ..
-    ./build.sh cli
+    ./build.sh build cli >/dev/null
     cd test
     rm -rf work
 

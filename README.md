@@ -1,13 +1,12 @@
 # cling-sync: The Secure Forever Store
 
 > [!WARNING]
-> This project is still in development. The format on disk might change at any time and 
+> This project is still in development. The format on disk might change at any time and
 > there might be no way to convert data from one version to another. Also, expect some bugs.
 
 ## Synopsis
 
 cling-sync is a _client-side encrypted_, _revisional_ archival storage system.
-
 
 ## Usage
 
@@ -22,6 +21,14 @@ Install [Go](https://go.dev/doc/install) version 1.24.2 or later and run:
     ./cling-sync <command>
 
 See `./cling-sync --help` for more information.
+
+## OS Support
+
+Currently, the main focus is on supporting MacOS and Linux. It should work on Windows, but is not
+tested at the moment.
+
+The fact that `cling-sync` is written in plain Go (no CGO) and uses only the standard library
+with a few select `golang.org/x` dependencies should make it highly portable.
 
 ### Example Workflow
 
@@ -47,6 +54,13 @@ repository. If there are conflicts, the user is asked to resolve them.
 
     cling-sync status
 
+**Show the log of revisions**
+
+    cling-sync log 'path/to/somewhere/**/*.txt' --status
+
+Show all revisions that contain a path that matches the pattern and show all paths that were added,
+updated, or deleted.
+
 ## Cryptography Overview
 
 Let's look at a birds view of how cryptography is used.
@@ -55,6 +69,8 @@ The repository cryptography relies on these values you can find in `.cling/repos
 - An encrypted 32-byte **Key Encryption Key (KEK)** that is the root key used to derive all other
   _Data Encryption Keys (DEK)_.
 
+- A 32 byte **Block ID HMAC Key** that is used to sign the block id based on the content.
+
 - A 32 byte **User Key Salt** that is used in the Key Derivation Function (KDF) to derive
   an encryption key to encrypt/decrypt the KEK.
 
@@ -62,11 +78,11 @@ Both of these values are not strictly secret - the passphrase is still needed to
 
 ### Algorithms Used
 
-| Purpose                  | Algorithm                   | Notes                                              |
-|--------------------------|-----------------------------|-----------------------------------------------------|
-| Key derivation           | Argon2id                    | 5 iterations, 64MB RAM, 1 thread                   |
-| Encryption (all data)    | XChaCha20-Poly1305 (AEAD)   | Nonce-misuse resistant; 24B nonce, 16B tag         |
-| Block ID generation      | HMAC-SHA256                 | Uses per-repo secret HMAC key                      |
+| Purpose               | Algorithm                 | Notes                                      |
+| --------------------- | ------------------------- | ------------------------------------------ |
+| Key derivation        | Argon2id                  | 5 iterations, 64MB RAM, 1 thread           |
+| Encryption (all data) | XChaCha20-Poly1305 (AEAD) | Nonce-misuse resistant; 24B nonce, 16B tag |
+| Block ID generation   | HMAC-SHA256               | Uses per-repo secret HMAC key              |
 
 ### User Authentication / KEK Encryption
 
@@ -74,8 +90,7 @@ The flow to arrive at the KEK:
 
 - The user provides their passphrase
 
-- The **Argon2id KDF** _(5 iterations, 64MB RAM, 1 thread)_ is used to derive a key from the
-  _passphrase_ and the _User Key Salt_.
+- The **Argon2id KDF** is used to derive a key from the _passphrase_ and the _User Key Salt_.
 
 - That key is then used to decrypt the encrypted KEK.
 
@@ -83,15 +98,16 @@ The flow to arrive at the KEK:
 
 #### Block IDs
 
-A repository wide HMAC key is derived from the KEK like this: `SHA256(kek + "-blockId")`.
-
-That HMAC key is then used to calculate the block id like this: `HMAC(SHA256(blockContent), HMACKey)`
+The repository wide _Block ID HMAC Key_ key is then used to sign the
+block id like this: `HMAC(SHA256(blockContent), HMACKey)`. This makes block ids based on the
+contents of the block (i.e. blocks are content addressable), but signing the content SHA256 hash
+makes it impossible to guess the content of a block.
 
 #### Data Encryption
 
 The content of files are stored in blocks of up to _8MB_ in size. Each block is encrypted with
-a unique, random 32 byte _Data Encryption Key (DEK)_. That DEK is then stored alongside the random
-nonce used in the block header (see below).
+a unique, random 32 byte _Data Encryption Key (DEK)_. That _DEK_ is encrypted with th _KEK_ and
+stored alongside the random nonce used in the block header (see below).
 
 ## File Formats
 
@@ -101,44 +117,43 @@ All integer types are written as little-endian, and all strings are UTF-8 encode
 
 `FileMetadata` is serialized to:
 
-| Size (bytes)  | Type      | Field             | Description                                   |
-|----------------|-----------|--------------------|-----------------------------------------------|
-| 2             | uint16    | _format version_  | Serialization format version (`0x01`)         |
-| _(12)_        | _timespec_| **SyncTime**      | Time of sync                                  |
-| 8             | int64     | - SyncTimeSec     | Time of sync (seconds since epoch)            |
-| 4             | int32     | - SyncTimeNsec    | Time of sync (nanoseconds)                    |
-| 8             | uint64    | ModeAndPerm       | File mode and permission flags (see below)    |
-| _(12)_        | _timespec_| **MTime**         | File modification time                        |
-| 8             | int64     | - MTimeSec        | File modification time (seconds since epoch)  | 
-| 4             | int32     | - MTimeNsec       | File modification time (nanoseconds)          |
-| 8             | int64     | Size              | File size                                     |
-| 32            | SHA256    | FileHash          | Hash of the file contents                     |
-|               | _array_   | **BlockIds**      | Block IDs of the file contents                |
-| 2             | uint16    | - Length          | Number of block IDs (N)                       |
-| 32 * N        | BlockId   | - BlockIds        | Block IDs (N)                                 |
-|               | _string_  | **Target**        | Either the symlink or move target path        |
-| 2             | uint16    | - Length          | Length of target file name (M)                |
-| M             | uint8     | - Bytes           | utf-8 encoded string                          |
-| 4             | uint32    | UID               | Optional: Owner of the file (2^31 if missing) |
-| 4             | uint32    | GID               | Optional: Group of the file (2^31 if missing) |
-| _(12)_        | _timespec_| **Birthtime**     | Optional: File creation time                  |
-| 8             | int64     | - BirthtimeSec    | File creation time (seconds since epoch) or -1|
-| 4             | int32     | - BirthtimeNsec   | File creation time (nanoseconds) or -1        |
-
+| Size (bytes) | Type       | Field            | Description                                    |
+| ------------ | ---------- | ---------------- | ---------------------------------------------- |
+| 2            | uint16     | _format version_ | Serialization format version (`0x01`)          |
+| _(12)_       | _timespec_ | **SyncTime**     | Time of sync                                   |
+| 8            | int64      | - SyncTimeSec    | Time of sync (seconds since epoch)             |
+| 4            | int32      | - SyncTimeNsec   | Time of sync (nanoseconds)                     |
+| 8            | uint64     | ModeAndPerm      | File mode and permission flags (see below)     |
+| _(12)_       | _timespec_ | **MTime**        | File modification time                         |
+| 8            | int64      | - MTimeSec       | File modification time (seconds since epoch)   |
+| 4            | int32      | - MTimeNsec      | File modification time (nanoseconds)           |
+| 8            | int64      | Size             | File size                                      |
+| 32           | SHA256     | FileHash         | Hash of the file contents                      |
+|              | _array_    | **BlockIds**     | Block IDs of the file contents                 |
+| 2            | uint16     | - Length         | Number of block IDs (N)                        |
+| 32 \* N      | BlockId    | - BlockIds       | Block IDs (N)                                  |
+|              | _string_   | **Target**       | Either the symlink or move target path         |
+| 2            | uint16     | - Length         | Length of target file name (M)                 |
+| M            | uint8      | - Bytes          | utf-8 encoded string                           |
+| 4            | uint32     | UID              | Optional: Owner of the file (2^31 if missing)  |
+| 4            | uint32     | GID              | Optional: Group of the file (2^31 if missing)  |
+| _(12)_       | _timespec_ | **Birthtime**    | Optional: File creation time                   |
+| 8            | int64      | - BirthtimeSec   | File creation time (seconds since epoch) or -1 |
+| 4            | int32      | - BirthtimeNsec  | File creation time (nanoseconds) or -1         |
 
 ### Block
 
 `Block` is serialized to:
 
-| Size (bytes)  | Type      | Field             | Description                                   |
-|----------------|-----------|--------------------|-----------------------------------------------|
-| _(96)_        |           | **Header**        | Header of the block                           |
-| 2             | uint16    | _format version_  | Serialization format version (`0x01`)         |
-| 8             | uint64    | Flags             | Flags for the block (see below)               |
-| 72            | EncKey    | EncryptedDEK      | Block's encryption key (encrypted with KEK)   |
-| 4             | uint32    | DataSize          | Size of the following data (N)                |
-| 10            |           | _padding_         | Header padding to 96 bytes                    |
-| N             | uint8     | **Data**          | Encrypted data of the block                   |
+| Size (bytes) | Type   | Field            | Description                                 |
+| ------------ | ------ | ---------------- | ------------------------------------------- |
+| _(96)_       |        | **Header**       | Header of the block                         |
+| 2            | uint16 | _format version_ | Serialization format version (`0x01`)       |
+| 8            | uint64 | Flags            | Flags for the block (see below)             |
+| 72           | EncKey | EncryptedDEK     | Block's encryption key (encrypted with KEK) |
+| 4            | uint32 | DataSize         | Size of the following data (N)              |
+| 10           |        | _padding_        | Header padding to 96 bytes                  |
+| N            | uint8  | **Data**         | Encrypted data of the block                 |
 
 ## Committing Changes
 
@@ -154,17 +169,15 @@ the file or directory.
 
 - Paths:
 
-    Path segments are encoded using a minimal escape scheme inspired by RFC 3986:
+  Path segments are encoded using a minimal escape scheme inspired by RFC 3986:
 
-    / is encoded as %2f
+  / is encoded as %2f
 
-    % is encoded as %25
+  % is encoded as %25
 
-    All other characters are stored as-is. Escaping is only applied to path segments, 
-    never across delimiters. This ensures paths remain UTF-8, readable, and safely splittable by /.
+  All other characters are stored as-is. Escaping is only applied to path segments,
+  never across delimiters. This ensures paths remain UTF-8, readable, and safely splittable by /.
 
-    When restoring a file containing escaped characters, `%25` is converted back to `%` but
-    `%2f` is not converted back to `/`. This is to ensure that the path remains valid and
-    does not contain any invalid characters. The `%` character is a valid character in a path.
-
-
+  When restoring a file containing escaped characters, `%25` is converted back to `%` but
+  `%2f` is not converted back to `/`. This is to ensure that the path remains valid and
+  does not contain any invalid characters. The `%` character is a valid character in a path.

@@ -1,6 +1,6 @@
 # Integration Tests
 
-Integration tests are tests that run against a real repository using the CLI.
+Integration tests run against a real repository using the CLI.
 
 ## Running the tests
 

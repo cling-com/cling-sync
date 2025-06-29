@@ -4,6 +4,7 @@
 
 ### Include / Exclude
 
+- [ ] Make lib.Pattern match like `.gitignore` does.
 - [ ] Add option to honor .gitignore wherever it occurs.
 - [ ] Store includes and excludes in the workspace config directory (`.cling`).
 - [ ] Exclude overrides with includes should only match if the include match comes after the exclude match.
@@ -12,5 +13,6 @@
 
 ### Ignoring Errors
 
-- [ ] When committing, we should not ignore errors because that would lead to the paths being
+- [x] When committing, we should not ignore errors because that would lead to the paths being
       removed from the repository. The user should exclude the paths explicitly.
+      (We don't ever ignore errors anymore.)
