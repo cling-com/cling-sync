@@ -59,6 +59,11 @@ type MasterKeyInfo struct {
 	EncryptedBlockIdHmacKey EncryptedKey
 }
 
+type RepositoryKeys struct {
+	KEK            RawKey
+	BlockIdHmacKey RawKey
+}
+
 type Repository struct {
 	storage        Storage
 	kekCipher      cipher.AEAD
@@ -127,6 +132,23 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 }
 
 func OpenRepository(storage Storage, passphrase []byte) (*Repository, error) {
+	keys, err := DecryptRepositoryKeys(storage, passphrase)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to decrypt repository keys")
+	}
+	return OpenRepositoryWithKeys(storage, keys)
+}
+
+func OpenRepositoryWithKeys(storage Storage, keys *RepositoryKeys) (*Repository, error) {
+	kekCipher, err := NewCipher(keys.KEK)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from KEK")
+	}
+	return &Repository{storage, kekCipher, keys.BlockIdHmacKey}, nil
+}
+
+// Read the encrypted keys from the storage config (`repository.toml`) and decrypt them.
+func DecryptRepositoryKeys(storage Storage, passphrase []byte) (*RepositoryKeys, error) {
 	toml, err := storage.Open()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to open storage")
@@ -155,10 +177,6 @@ func OpenRepository(storage Storage, passphrase []byte) (*Repository, error) {
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt KEK with user-key")
 	}
-	kekCipher, err := NewCipher(RawKey(kek))
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from KEK")
-	}
 	blockIdHmacKey := make([]byte, RawKeySize)
 	blockIdHmacKey, err = Decrypt(
 		masterKeyInfo.EncryptedBlockIdHmacKey[:],
@@ -169,7 +187,10 @@ func OpenRepository(storage Storage, passphrase []byte) (*Repository, error) {
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt block id HMAC key with user-key")
 	}
-	return &Repository{storage, kekCipher, RawKey(blockIdHmacKey)}, nil
+	return &RepositoryKeys{
+		KEK:            RawKey(kek),
+		BlockIdHmacKey: RawKey(blockIdHmacKey),
+	}, nil
 }
 
 // Return `true` if the block already existed.

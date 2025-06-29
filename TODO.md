@@ -10,6 +10,7 @@
 - [ ] Exclude overrides with includes should only match if the include match comes after the exclude match.
       For example, if exclude is `**/node_modules` and include is `**/test`, then `test/node_modules`
       should be excluded but `node_modules/test` should be included. Currently, both are included.
+- [ ] Make `cling-sync security save-keys` save the keys in the keyring of the user's OS.
 
 ### Ignoring Errors
 

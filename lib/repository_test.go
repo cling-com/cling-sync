@@ -53,6 +53,23 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert.Equal(repo1.kekCipher, repo2.kekCipher)
 	})
 
+	t.Run("OpenWithKeys", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		storage, err := NewFileStorage(t.TempDir(), StoragePurposeRepository)
+		assert.NoError(err)
+		repo1, err := InitNewRepository(storage, userPassphrase)
+		assert.NoError(err)
+		head, err := repo1.Head()
+		assert.NoError(err)
+		assert.Equal(true, head.IsRoot())
+		keys, err := DecryptRepositoryKeys(storage, userPassphrase)
+		assert.NoError(err)
+		repo2, err := OpenRepositoryWithKeys(storage, keys)
+		assert.NoError(err)
+		assert.Equal(repo1.kekCipher, repo2.kekCipher)
+	})
+
 	for _, tamper := range []string{"UserKeySalt", "EncryptedKEK", "EncryptedBlockIdHmacKey"} {
 		t.Run(fmt.Sprintf("Tampering with %s is detected", tamper), func(t *testing.T) {
 			t.Parallel()

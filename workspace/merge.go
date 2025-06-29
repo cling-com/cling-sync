@@ -168,7 +168,7 @@ func Merge(ws *Workspace, repository *lib.Repository, opts *MergeOptions) (lib.R
 		}
 		head = newHead
 	}
-	if err := lib.WriteRef(ws.storage, "head", head); err != nil {
+	if err := lib.WriteRef(ws.Storage, "head", head); err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to write workspace head reference - please re-run merge")
 	}
 	return head, nil

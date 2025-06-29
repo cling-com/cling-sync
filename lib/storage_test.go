@@ -124,8 +124,15 @@ func TestFileStorageMultiPurpose(t *testing.T) { //nolint:tparallel
 	})
 
 	t.Run("Control files", func(t *testing.T) { //nolint:paralleltest
+		hasControlFile, err := repo.HasControlFile(ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal(false, hasControlFile)
+
 		err = repo.WriteControlFile(ControlFileSectionRefs, "head", []byte("1234"))
 		assert.NoError(err)
+		hasControlFile, err = repo.HasControlFile(ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal(true, hasControlFile)
 		err = workspace.WriteControlFile(ControlFileSectionRefs, "head", []byte("5678"))
 		assert.NoError(err)
 
@@ -135,6 +142,12 @@ func TestFileStorageMultiPurpose(t *testing.T) { //nolint:tparallel
 		workspaceCtrlContent, err := workspace.ReadControlFile(ControlFileSectionRefs, "head")
 		assert.NoError(err)
 		assert.Equal([]byte("5678"), workspaceCtrlContent)
+
+		err = repo.DeleteControlFile(ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		hasControlFile, err = repo.HasControlFile(ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal(false, hasControlFile)
 	})
 
 	t.Run("Read and write block", func(t *testing.T) { //nolint:paralleltest

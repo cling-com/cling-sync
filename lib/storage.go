@@ -13,7 +13,8 @@ import (
 type ControlFileSection string
 
 const (
-	ControlFileSectionRefs ControlFileSection = "refs"
+	ControlFileSectionRefs     ControlFileSection = "refs"
+	ControlFileSectionSecurity ControlFileSection = "security"
 )
 
 type StoragePurpose string
@@ -40,6 +41,8 @@ type Storage interface {
 	WriteBlock(block Block) (bool, error)
 	ReadControlFile(section ControlFileSection, name string) ([]byte, error)
 	WriteControlFile(section ControlFileSection, name string, data []byte) error
+	HasControlFile(section ControlFileSection, name string) (bool, error)
+	DeleteControlFile(section ControlFileSection, name string) error
 }
 
 type FileStorage struct {
@@ -285,6 +288,9 @@ func (fs *FileStorage) WriteControlFile(section ControlFileSection, name string,
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return WrapErrorf(err, "failed to create directory for control file %s", path)
+	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return WrapErrorf(err, "failed to write control file %s", path)
 	}
@@ -301,6 +307,26 @@ func (fs *FileStorage) ReadControlFile(section ControlFileSection, name string) 
 		return nil, WrapErrorf(err, "failed to read control file %s", path)
 	}
 	return data, nil
+}
+
+func (fs *FileStorage) HasControlFile(section ControlFileSection, name string) (bool, error) {
+	path, err := fs.controlFilePath(section, name)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(path)
+	return err == nil, nil
+}
+
+func (fs *FileStorage) DeleteControlFile(section ControlFileSection, name string) error {
+	path, err := fs.controlFilePath(section, name)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return WrapErrorf(err, "failed to delete control file %s", path)
+	}
+	return nil
 }
 
 func (fs *FileStorage) blockPath(blockId BlockId) string {

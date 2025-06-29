@@ -45,7 +45,9 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		return lib.Errorf("one positional argument is required: <dst>")
 	}
 	if !IsTerm(os.Stdin) && !passphraseFromStdin {
-		return lib.Errorf("a new repository can only be created in an interactive terminal session")
+		return lib.Errorf(
+			"a new repository can only be created in an interactive terminal session or --passphrase-from-stdin must be used",
+		)
 	}
 	var passphrase []byte
 	if passphraseFromStdin {
@@ -602,6 +604,76 @@ func LogCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	return nil
 }
 
+func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
+	workspace, err := ws.OpenWorkspace(".")
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open workspace")
+	}
+	defer workspace.Close() //nolint:errcheck
+	args := struct {        //nolint:exhaustruct
+		Help bool
+	}{}
+	flags := flag.NewFlagSet("security", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s security [command]\n\n", appName)
+		fmt.Fprint(os.Stderr, "Configure security settings.\n\n")
+		fmt.Fprint(os.Stderr, "Commands:\n")
+		fmt.Fprint(os.Stderr, "  save-keys\n")
+		fmt.Fprint(os.Stderr, "        Save the keys to the repository so that you don't need\n")
+		fmt.Fprint(os.Stderr, "        the passphrase to execute a command.\n")
+		fmt.Fprint(os.Stderr, "        Warning: Everyone with access to the `keys.txt` file can\n")
+		fmt.Fprint(os.Stderr, "        decrypt the whole repository.\n")
+		fmt.Fprint(os.Stderr, "        If you change the keys in the repository, all saved keys become invalid.\n")
+		fmt.Fprint(os.Stderr, "  delete-keys\n")
+		fmt.Fprintf(os.Stderr, "        Delete the keys previously saved using `%s security save-keys`.\n", appName)
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	if len(flags.Args()) == 0 {
+		return lib.Errorf("missing command")
+	}
+	switch flags.Arg(0) {
+	case "save-keys":
+		if len(flags.Args()) != 1 {
+			return lib.Errorf("too many positional arguments")
+		}
+		repositoryStorage, err := openRepositoryStorage(workspace)
+		if err != nil {
+			return err
+		}
+		passphrase, err := readPassphrase(passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+		keys, err := lib.DecryptRepositoryKeys(repositoryStorage, passphrase)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to decrypt repository keys")
+		}
+		if err := workspace.WriteRepositoryKeys(keys); err != nil {
+			return lib.WrapErrorf(err, "failed to write repository keys")
+		}
+	case "delete-keys":
+		if len(flags.Args()) != 1 {
+			return lib.Errorf("too many positional arguments")
+		}
+		if err := workspace.DeleteRepositoryKeys(); err != nil {
+			return lib.WrapErrorf(err, "failed to delete repository keys")
+		}
+		fmt.Println("Keys deleted")
+	default:
+		return lib.Errorf("unknown command: %s", flags.Arg(0))
+	}
+	return nil
+}
+
 func revisionId(repository *lib.Repository, revision string) (lib.RevisionId, error) {
 	var revisionId lib.RevisionId
 	if strings.ToLower(revision) == "head" {
@@ -620,8 +692,37 @@ func revisionId(repository *lib.Repository, revision string) (lib.RevisionId, er
 }
 
 func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Repository, error) {
+	storage, err := openRepositoryStorage(workspace)
+	if err != nil {
+		return nil, err
+	}
+	keys, ok, err := workspace.ReadRepositoryKeys()
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to read repository keys from local storage")
+	}
+	if ok {
+		repository, err := lib.OpenRepositoryWithKeys(storage, keys)
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to open repository with saved keys")
+		}
+		return repository, nil
+	}
+	passphrase, err := readPassphrase(passphraseFromStdin)
+	if err != nil {
+		return nil, err
+	}
+	repository, err := lib.OpenRepository(storage, passphrase)
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to open repository")
+	}
+	return repository, nil
+}
+
+func readPassphrase(passphraseFromStdin bool) ([]byte, error) {
 	if !IsTerm(os.Stdin) && !passphraseFromStdin {
-		return nil, lib.Errorf("this command can only be run in an interactive terminal session")
+		return nil, lib.Errorf(
+			"this command can only be run in an interactive terminal session or --passphrase-from-stdin must be used",
+		)
 	}
 	var passphrase []byte
 	if passphraseFromStdin {
@@ -641,15 +742,15 @@ func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Rep
 		}
 		fmt.Fprint(os.Stderr, "\r                          \r")
 	}
+	return passphrase, nil
+}
+
+func openRepositoryStorage(workspace *ws.Workspace) (*lib.FileStorage, error) {
 	storage, err := lib.NewFileStorage(string(workspace.RemoteRepository), lib.StoragePurposeRepository)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
 	}
-	repository, err := lib.OpenRepository(storage, passphrase)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to open repository")
-	}
-	return repository, nil
+	return storage, nil
 }
 
 func pathPatternDescription(indent string) string {
@@ -678,7 +779,7 @@ func pathPatternFlag(flags *flag.FlagSet, name string, usage string, value *[]li
 	)
 }
 
-func main() {
+func main() { //nolint:funlen
 	args := struct { //nolint:exhaustruct
 		Help                bool
 		PassphraseFromStdin bool
@@ -691,6 +792,7 @@ func main() {
 		fmt.Fprint(os.Stderr, "  ls           List files in the repository\n")
 		fmt.Fprint(os.Stderr, "  log          Show revision log\n")
 		fmt.Fprint(os.Stderr, "  merge        Merge changes from the repository and the workspace\n")
+		fmt.Fprint(os.Stderr, "  security	  See and configure security settings\n")
 		fmt.Fprint(os.Stderr, "  status       Show repository status\n")
 		fmt.Fprint(os.Stderr, "\nGlobal flags:\n")
 		flag.PrintDefaults()
@@ -727,6 +829,8 @@ func main() {
 		err = LogCmd(argv, args.PassphraseFromStdin)
 	case "ls":
 		err = LsCmd(argv, args.PassphraseFromStdin)
+	case "security":
+		err = SecurityCmd(argv, args.PassphraseFromStdin)
 	case "status":
 		err = StatusCmd(argv, args.PassphraseFromStdin)
 	case "":

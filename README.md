@@ -42,6 +42,15 @@ to this directory.
 
 Examine `/path/to/repository/.cling/repository.txt` to learn how to backup the encryption keys.
 
+**Save the encryption keys to the repository:**
+
+    cling-sync security save-keys
+
+This will save the _unencrypted_ encryption keys to the repository in `.cling/workspace/security/keys.toml`.
+Make sure that only you have access to this file.
+In the future, we will store the keys in the keyring of the user's OS. This is just a temporary
+solution to ease development and testing.
+
 **Merge the local workspace with the repository:**
 
     cling-sync merge

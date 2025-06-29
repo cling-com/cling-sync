@@ -12,6 +12,7 @@ yellow="\033[33m"
 grey="\033[90m"
 cyan="\033[36m"
 quiet=0
+passphrase="testpassphrase"
 
 # >>> Helper functions
 
@@ -25,16 +26,6 @@ error() {
     echo -e "$@""\033[0m" >&2
 }
 
-cling_sync() {
-    passphrase="testpassphrase"
-    command=$1
-    shift
-    if [ "$command" == "status" ] || [ "$command" == "merge" ]; then
-        command=$command" --no-progress"
-    fi
-    echo -n "$passphrase" | cling-sync --passphrase-from-stdin $command "$@"
-}
-
 setup() {
     cd ..
     ./build.sh build cli >/dev/null
@@ -45,7 +36,7 @@ setup() {
     cd work
     mkdir workspace repository
     cd workspace
-    cling_sync init ../repository 
+    echo -n "$passphrase" | cling-sync --passphrase-from-stdin init ../repository
 }
 
 cmd() {
@@ -78,16 +69,16 @@ workspace_ls() {
 }
 
 repository_head() {
-    cling_sync log --short | head -n 1 | awk '{print $1}'
+    cling-sync log --short | head -n 1 | awk '{print $1}'
 }
 
 repository_head_date() {
-    cling_sync log --short | head -n 1 | awk '{print $2}'
+    cling-sync log --short | head -n 1 | awk '{print $2}'
 }
 
 # Format the output so that it can be compared with `workspace_ls`.
 repository_ls() {
-    cling_sync ls --short-file-mode --timestamp-format unix-fraction "$@" | sort -k 4
+    cling-sync ls --short-file-mode --timestamp-format unix-fraction "$@" | sort -k 4
 }
 
 # >>> Tests
@@ -95,27 +86,30 @@ repository_ls() {
 log $cyan">>> Creating repository"
     setup
 
+log $cyan">>> Save the repository keys"
+    cmd "echo -n '$passphrase' | cling-sync --passphrase-from-stdin security save-keys"
+
 log $cyan">>> Merge empty repository and workspace"
-    cling_sync merge
+    cmd cling-sync merge --no-progress
 
     log $green">>> There should be no revision"
-    assert "cling_sync log --short" "echo 'No revisions'"
+    assert "cling-sync log --short" "echo 'No revisions'"
 
 log $cyan"\n>>> Add some files and merge"
     cmd "echo 'a' > a.txt"
     cmd "echo 'b' > b.txt"
     cmd "mkdir dir1"
     cmd "echo 'c' > dir1/c.txt"
-    cling_sync merge --message "first commit"
+    cling-sync merge --no-progress --message "first commit"
 
     log $green">>> A revision should have been created"
-    assert "cling_sync log --short | wc -l" "echo 1"
+    assert "cling-sync log --short | wc -l" "echo 1"
 
     log $green">>> Files of head should match the workspace"
     assert "workspace_ls" "repository_ls"
 
     log $green">>> There should be no local changes"
-    assert "cling_sync status" "echo 'No changes'"
+    assert "cling-sync status" "echo 'No changes'"
 
     # Remember the revision id and the ls output for later.
     rev1_id=$(repository_head)
@@ -127,10 +121,10 @@ log $cyan"\n>>> Remove a local file, change mtime of another, create a new file 
     cmd "echo bb > b.txt"
     cmd "touch -d '2025-06-28T13:33:50+02:00' b.txt"
     cmd "echo 'd' > dir1/d.txt"
-    cling_sync merge --message "second commit"
+    cling-sync merge --no-progress --message "second commit"
 
     log $green">>> A new revision should have been created"
-    assert "cling_sync log --short | wc -l" "echo 2"
+    assert "cling-sync log --short | wc -l" "echo 2"
 
     log $green">>> Files of head should match the workspace"
     assert "workspace_ls" "repository_ls"
@@ -160,17 +154,17 @@ $rev1_id $rev1_date first commit
     A dir1/c.txt
 EOF
 )
-    assert "cling_sync log --short --status" "echo -e \"$expected\""
+    assert "cling-sync log --short --status" "echo -e \"$expected\""
 
 log $cyan"\n>>> Copy a file from an older revision"
     log $green">>> \`b.txt\` should contain the current content"
     assert "cat b.txt" "echo bb"
 
-    rm b.txt # Remove the file first, because `cling_sync cp` will not overwrite it.
-    cling_sync cp --revision $rev1_id b.txt .
+    rm b.txt # Remove the file first, because `cling-sync cp` will not overwrite it.
+    cling-sync cp --no-progress --revision $rev1_id b.txt .
 
     log $green">>> \`b.txt\` should contain the old content"
     assert "cat b.txt" "echo b"
 
     log $green">>> \`b.txt\` should be marked as modified"
-    assert "cling_sync status --no-summary" "echo 'M b.txt'"
+    assert "cling-sync status --no-progress --no-summary" "echo 'M b.txt'"
