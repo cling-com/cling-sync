@@ -22,7 +22,7 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-projects="lib workspace cli"
+projects="lib workspace cli test"
 
 # Build all or a specific target.
 # Input:
@@ -80,10 +80,8 @@ case "$cmd" in
         ;;
     test)
         echo ">>> Running tests"
-        if [ $# -gt 0 ]; then
-            if [ "$1" == "integration" ]; then
-                bash test/test.sh
-            fi
+        if [ $# -gt 0 ] && [ "$1" = "integration-bash" ]; then
+            bash test/test.sh
             exit 0
         fi
         run_project_cmd "go test ./... -count 1" "$@"
@@ -92,9 +90,11 @@ case "$cmd" in
         bash $0 fmt "$@"
         bash $0 lint "$@"
         bash $0 test "$@"
-        # Run the integration tests if the target project is `cli` or none.
-        if [ $# -eq 0 ] || [ "$1" == "cli" ]; then
-            bash $0 test integration
+        # Run the integration bash tests if there is no target project specified.
+        # We run the bash tests even though they are not the main integration tests
+        # (the Go ones are) just to make sure they work.
+        if [ $# -eq 0 ]; then
+            bash $0 test integration-bash
         fi
         echo
         echo "Looks perfect, go ahead and commit this beauty."

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run `.test.sh` in a Docker container.
+# Run the integration tests in a Docker container.
 
 set -eu
 
@@ -10,4 +10,4 @@ docker run --rm --name cling-sync-test \
     -w /opt/cling-sync \
     --entrypoint /bin/bash \
     golang:1.24.2-bullseye \
-    -c "test/test.sh"
+    -c "./build.sh test test -v && ./build.sh test integration-bash"

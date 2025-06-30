@@ -110,6 +110,9 @@ func stringifyInternal(v any, indent int) string { //nolint:funlen
 	if t, ok := v.(time.Time); ok {
 		return t.Format(time.RFC3339Nano)
 	}
+	if t, ok := v.(string); ok {
+		return t
+	}
 	reflectV := reflect.ValueOf(v)
 	t := reflectV.Type()
 	kind := t.Kind()

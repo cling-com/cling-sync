@@ -3,6 +3,7 @@ package lib
 import (
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -15,11 +16,13 @@ func TestError(t *testing.T) {
 		e1 := Errorf("i am down here")
 		e2 := WrapErrorf(e1, "i am above: %q", "some string")
 		e3 := WrapErrorf(e2, "and I am on top")
+		errStr := e3.Error()
+		errStr = regexp.MustCompile(` at .*error_test.go`).ReplaceAllString(errStr, " at error_test.go")
 		assert.Equal(strings.TrimSpace(`
-Error at /Users/pero/src/pero/cling-sync/lib/error_test.go:17: and I am on top  
-  Cause at /Users/pero/src/pero/cling-sync/lib/error_test.go:16: i am above: "some string"    
-    Cause at /Users/pero/src/pero/cling-sync/lib/error_test.go:15: i am down here
-			`), e3.Error())
+Error at error_test.go:18: and I am on top  
+  Cause at error_test.go:17: i am above: "some string"    
+    Cause at error_test.go:16: i am down here
+			`), errStr)
 	})
 	t.Run("errors.Is", func(t *testing.T) {
 		t.Parallel()

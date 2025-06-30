@@ -4,5 +4,6 @@ use (
 	./cli
 	./gotools
 	./lib
+	./test
 	./workspace
 )
