@@ -23,14 +23,12 @@ func TestCp(t *testing.T) {
 		rt := NewRepositoryTest(t)
 		rt.AddLocal("a.txt", "a")
 		rt.AddLocal("b.txt", "b")
-		rt.AddLocal("c/1.txt", "c1")
-		rt.AddLocal("c/d/2.txt", "c2")
+		rt.AddLocal("c/1.txt", "c")
+		rt.AddLocal("c/d/2.txt", "cc")
 		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 
-		rt.UpdateLocal("a.txt", "A")
-		rt.AddLocal("c/3.txt", "c3")
-		rt.UpdateLocalMode("b.txt", 0o777)
+		rt.UpdateLocal("a.txt", "a")
 		revId2, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 
@@ -42,25 +40,69 @@ func TestCp(t *testing.T) {
 			{"a.txt", 0o600, 1, "a"},
 			{"b.txt", 0o600, 1, "b"},
 			{"c", 0o700 | os.ModeDir, 0, ""},
-			{"c/1.txt", 0o600, 2, "c1"},
+			{"c/1.txt", 0o600, 1, "c"},
 			{"c/d", 0o700 | os.ModeDir, 0, ""},
-			{"c/d/2.txt", 0o600, 2, "c2"},
+			{"c/d/2.txt", 0o600, 2, "cc"},
 		}, readDir(t, out))
+
+		// Trying to copy from rev2 should fail, because files already exist.
+		assert.NoError(os.RemoveAll(tmp))
+		assert.NoError(os.MkdirAll(tmp, 0o700))
+		err = Cp(rt.Repository, out, &CpOptions{revId2, NewTestCpMonitor(), nil}, tmp)
+		assert.Error(err, "failed to copy")
+		assert.Error(err, "file exists")
+	})
+
+	t.Run("Overwrite", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		tmp := t.TempDir()
+		targetDir := t.TempDir()
+		assert.NoError(os.MkdirAll(targetDir, 0o700))
+		rt := NewRepositoryTest(t)
+		rt.AddLocal("a.txt", "aaa")
+		rt.AddLocal("b.txt", "b")
+		rt.AddLocal("c/1.txt", "c")
+		rt.AddLocal("c/d/2.txt", "cc")
+		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		assert.NoError(err)
+
+		// We make the file smaller to ensure it is truncated before overwriting.
+		rt.UpdateLocal("a.txt", "a")
+		// Removing a file should not affect anything.
+		rt.RemoveLocal("c/1.txt")
+		rt.AddLocal("c/3.txt", "ccc")
+		rt.UpdateLocalMode("b.txt", 0o777)
+		revId2, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		assert.NoError(err)
+
+		// Copy all from rev1.
+		assert.NoError(os.MkdirAll(tmp, 0o700))
+		err = Cp(rt.Repository, targetDir, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
+		assert.NoError(err)
+		assert.Equal([]FileInfo{
+			{"a.txt", 0o600, 3, "aaa"},
+			{"b.txt", 0o600, 1, "b"},
+			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c/1.txt", 0o600, 1, "c"},
+			{"c/d", 0o700 | os.ModeDir, 0, ""},
+			{"c/d/2.txt", 0o600, 2, "cc"},
+		}, readDir(t, targetDir))
 
 		// Copy all from the rev2.
 		assert.NoError(os.RemoveAll(tmp))
 		assert.NoError(os.MkdirAll(tmp, 0o700))
-		err = Cp(rt.Repository, out, &CpOptions{revId2, NewTestCpMonitorOverwrite(), nil}, tmp)
+		err = Cp(rt.Repository, targetDir, &CpOptions{revId2, NewTestCpMonitorOverwrite(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]FileInfo{
-			{"a.txt", 0o600, 1, "A"},
+			{"a.txt", 0o600, 1, "a"},
 			{"b.txt", 0o777, 1, "b"},
 			{"c", 0o700 | os.ModeDir, 0, ""},
-			{"c/1.txt", 0o600, 2, "c1"},
-			{"c/3.txt", 0o600, 2, "c3"},
+			{"c/1.txt", 0o600, 1, "c"},
+			{"c/3.txt", 0o600, 3, "ccc"},
 			{"c/d", 0o700 | os.ModeDir, 0, ""},
-			{"c/d/2.txt", 0o600, 2, "c2"},
-		}, readDir(t, out))
+			{"c/d/2.txt", 0o600, 2, "cc"},
+		}, readDir(t, targetDir))
 	})
 
 	t.Run("Parent directory without rx permission is not created", func(t *testing.T) {

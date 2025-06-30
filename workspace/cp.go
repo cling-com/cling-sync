@@ -71,7 +71,7 @@ func Cp(repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir s
 		target := filepath.Join(targetPath, entry.Path.FSString())
 		mon.OnStart(entry, target)
 		if err := restore(entry, repository, target, mon, blockBuf); err != nil {
-			return lib.WrapErrorf(err, "failed to restore %s", target)
+			return lib.WrapErrorf(err, "failed to copy %s", target)
 		}
 		if err := restoreFileMode(target, entry.Metadata); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
@@ -131,7 +131,7 @@ func restore( //nolint:funlen
 		if errors.Is(err, os.ErrExist) {
 			switch mon.OnExists(entry, target) {
 			case CpOnExistsOverwrite:
-				f, err = os.OpenFile(target, os.O_CREATE|os.O_WRONLY, md.ModeAndPerm.AsFileMode())
+				f, err = os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, md.ModeAndPerm.AsFileMode())
 			case CpOnExistsIgnore:
 				mon.OnEnd(entry, target)
 				return nil
