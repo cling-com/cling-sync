@@ -172,6 +172,10 @@ In this first pass, we scan the whole source folder, calculate content hashes fo
 and write each entry in chunked metadata files. Each metadata file is sorted by the full path or
 the file or directory.
 
+## Development
+
+This repository is self-contained and does not depend on any external tools or libraries.
+
 ## Documentation To-do's
 
 - How deflate is used: https://www.rfc-editor.org/rfc/rfc1951.txt

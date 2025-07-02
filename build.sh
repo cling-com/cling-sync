@@ -2,6 +2,7 @@
 # CLI to build, test, and develop the project.
 
 set -eu
+root=$(cd $(dirname $0) && pwd)
 
 if [ $# -eq 0 ]; then
     echo "Usage: $0 build|fmt|lint|test"
@@ -17,8 +18,14 @@ if [ $# -eq 0 ]; then
     echo "  lint [project]"
     echo "      Lint code. If no project is specified, lint all projects."
     echo
+    echo "  precommit"
+    echo "      Run all checks before committing. This is the same as running \`fmt\`, \`lint\`, and \`test\`."
+    echo
     echo "  test [project|integration]"
     echo "      Run tests. If no project is specified, run all tests including integration tests."
+    echo 
+    echo "  tools"
+    echo "      Build tools needed for development."
     exit 1
 fi
 
@@ -64,19 +71,39 @@ run_project_cmd() {
     done
 }
 
+build_tools() {
+    if [ -f tools/golangci-lint ]; then
+        return
+    fi
+    echo ">>> Building golangci-lint"
+    local tmp_dir=$(mktemp -d)
+    cp tools/golangci-lint-*.tar.gz "$tmp_dir"
+    cd "$tmp_dir"
+    tar xzf golangci-lint-*.tar.gz
+    cd golangci-lint-*
+    go build -o "$root/tools/golangci-lint" ./cmd/golangci-lint
+    cd "$root"
+    rm -rf "$tmp_dir"
+}
+
 cmd=$1
 shift
 case "$cmd" in
     build)
         run_build "$@"
         ;;
+    tools)
+        build_tools
+        ;;
     fmt)
+        build_tools
         echo ">>> Formatting code"
-        run_project_cmd "go tool golangci-lint fmt" "$@"
+        run_project_cmd "$root/tools/golangci-lint fmt" "$@"
         ;;
     lint)
+        build_tools
         echo ">>> Linting code"
-        run_project_cmd "go tool golangci-lint run" "$@"
+        run_project_cmd "$root/tools/golangci-lint run" "$@"
         ;;
     test)
         echo ">>> Running tests"
@@ -84,7 +111,7 @@ case "$cmd" in
             bash test/test.sh
             exit 0
         fi
-        run_project_cmd "go test ./... -count 1" "$@"
+        run_project_cmd "go test -mod vendor ./... -count 1" "$@"
         ;;
     precommit)
         bash $0 fmt "$@"

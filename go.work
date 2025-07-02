@@ -2,7 +2,6 @@ go 1.24.2
 
 use (
 	./cli
-	./gotools
 	./lib
 	./test
 	./workspace
