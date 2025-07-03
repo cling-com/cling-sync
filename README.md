@@ -42,6 +42,13 @@ to this directory.
 
 Examine `/path/to/repository/.cling/repository.txt` to learn how to backup the encryption keys.
 
+**Attach to an existing repository:**
+
+    cling-sync attach /path/to/repository /path/to/local/directory
+
+This will create a new workspace at `/path/to/local/directory` that is connected to the repository
+at `/path/to/repository`.
+
 **Save the encryption keys to the repository:**
 
     cling-sync security save-keys

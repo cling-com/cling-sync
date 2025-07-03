@@ -123,6 +123,20 @@ func TestHappyPath(t *testing.T) {
 			sut.ClingSync("status", "--no-progress", "--no-summary"),
 			"`b.txt` should be marked as modified",
 		)
+
+		// Merge the change, so the workspace is up to date.
+		sut.ClingSync("merge", "--no-progress", "--message", "revert b.txt")
+	}
+
+	t.Log("Attach the repository to a second workspace")
+	{
+		workspace1Ls := sut.Ls()
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "../repository", "../workspace2")
+		t.Chdir("../workspace2")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+		sut.ClingSync("merge", "--no-progress")
+		workspace2Ls := sut.Ls()
+		assert.Equal(workspace1Ls, workspace2Ls)
 	}
 }
 
@@ -169,12 +183,12 @@ func NewSut(t *testing.T) *Sut {
 	workspaceDir := filepath.Join(tmpDir, "workspace")
 	err = os.MkdirAll(workspaceDir, 0o700)
 	assert.NoError(err, "failed to create workspace directory")
-	err = os.Chdir(workspaceDir) //nolint:usetesting
+	t.Chdir(workspaceDir)
 	assert.NoError(err, "failed to change into temporary directory")
 
 	sut := &Sut{t, assert}
-	sut.RunExtra(passphrase, "--passphrase-from-stdin", "init", "../repository")
-	sut.RunExtra(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "init", "../repository")
+	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
 
 	return sut
 }
@@ -184,11 +198,11 @@ func NewSut(t *testing.T) *Sut {
 // Return the stdout of the command.
 func (s *Sut) ClingSync(args ...string) string {
 	s.t.Helper()
-	return s.RunExtra("", args...)
+	return s.ClingSyncStdin("", args...)
 }
 
 // Same as `Run`, but pass the given string to stdin.
-func (s *Sut) RunExtra(stdin string, args ...string) string {
+func (s *Sut) ClingSyncStdin(stdin string, args ...string) string {
 	s.t.Helper()
 	s.t.Log(gray(fmt.Sprintf("    > cling-sync %s", strings.Join(args, " "))))
 	cmd := exec.Command("../cling-sync", args...)

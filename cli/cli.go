@@ -20,6 +20,68 @@ import (
 
 const appName = "cling-sync"
 
+func AttachCmd(argv []string, passphraseFromStdin bool) error {
+	args := struct { //nolint:exhaustruct
+		Help bool
+	}{}
+	flags := flag.NewFlagSet("attach", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s attach <repository> <directory>\n\n", appName)
+		fmt.Fprint(os.Stderr, "Attach a local directory to a repository.\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	if len(flags.Args()) != 2 {
+		return lib.Errorf("two positional arguments are required: <repository-path> <directory>")
+	}
+	localPath, err := filepath.Abs(flags.Arg(1))
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(1))
+	}
+	// Make sure the local directory either does not exist or is empty.
+	_, err = os.Stat(localPath)
+	if errors.Is(err, os.ErrNotExist) { //nolint:gocritic
+	} else if err != nil {
+		return lib.Errorf("cannot stat local directory %s", localPath)
+	} else {
+		files, err := os.ReadDir(localPath)
+		if err != nil {
+			return lib.Errorf("failed to read local directory %s", localPath)
+		}
+		if len(files) > 0 {
+			return lib.Errorf("local directory %s is not empty", localPath)
+		}
+	}
+	repositoryPath, err := filepath.Abs(flags.Arg(0))
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
+	}
+	storage, err := lib.NewFileStorage(repositoryPath, lib.StoragePurposeRepository)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to connect to repository storage")
+	}
+	_, err = openRepositoryWithPassphrase(storage, passphraseFromStdin)
+	if err != nil {
+		return err
+	}
+	// We know the repository exists, so let's create the workspace.
+	workspace, err := ws.NewWorkspace(localPath, ws.RemoteRepository(repositoryPath))
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to create workspace")
+	}
+	workspace.Close() //nolint:errcheck,gosec
+	fmt.Printf("Attached %s to %s\n", localPath, repositoryPath)
+	return nil
+}
+
 func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
 		Help                bool
@@ -707,6 +769,10 @@ func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Rep
 		}
 		return repository, nil
 	}
+	return openRepositoryWithPassphrase(storage, passphraseFromStdin)
+}
+
+func openRepositoryWithPassphrase(storage *lib.FileStorage, passphraseFromStdin bool) (*lib.Repository, error) {
 	passphrase, err := readPassphrase(passphraseFromStdin)
 	if err != nil {
 		return nil, err
@@ -787,6 +853,7 @@ func main() { //nolint:funlen
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s <command> [command arguments]\n\n", appName)
 		fmt.Fprint(os.Stderr, "Commands:\n")
+		fmt.Fprint(os.Stderr, "  attach       Attach a local directory to a repository\n")
 		fmt.Fprint(os.Stderr, "  cp           Copy files from the repository to a local directory\n")
 		fmt.Fprint(os.Stderr, "  init         Initialize a new repository\n")
 		fmt.Fprint(os.Stderr, "  ls           List files in the repository\n")
@@ -819,6 +886,8 @@ func main() { //nolint:funlen
 	cmd := flag.Arg(0)
 	var err error
 	switch cmd {
+	case "attach":
+		err = AttachCmd(argv, args.PassphraseFromStdin)
 	case "init":
 		err = InitCmd(argv, args.PassphraseFromStdin)
 	case "cp":
