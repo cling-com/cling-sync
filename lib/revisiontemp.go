@@ -275,7 +275,7 @@ func (rtw *RevisionTempWriter) rotateChunk() error {
 }
 
 type RevisionTempCache struct {
-	RevisionTemp     *RevisionTemp
+	Source           *RevisionTemp
 	maxChunksInCache int
 	reader           *RevisionTempReader
 	cache            []map[string]*RevisionEntry
@@ -301,7 +301,7 @@ func NewRevisionTempCache(temp *RevisionTemp, maxChunksInCache int) (*RevisionTe
 		firstEntries[i] = first
 	}
 	return &RevisionTempCache{
-		RevisionTemp:     temp,
+		Source:           temp,
 		maxChunksInCache: maxChunksInCache,
 		reader:           reader,
 		cache:            make([]map[string]*RevisionEntry, temp.Chunks()),
@@ -318,7 +318,7 @@ func (rtc *RevisionTempCache) Get(path Path, isDir bool) (*RevisionEntry, bool, 
 		entry.Metadata.ModeAndPerm = ModeDir
 	}
 	// Find the chunk that contains the entry.
-	chunkIndex := rtc.RevisionTemp.Chunks() - 1
+	chunkIndex := rtc.Source.Chunks() - 1
 	for i, firstEntry := range rtc.firstEntries {
 		c := RevisionEntryPathCompare(entry, firstEntry)
 		if c < 0 {

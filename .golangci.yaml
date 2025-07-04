@@ -27,6 +27,7 @@ linters:
     - makezero
     - maintidx
     - nestif
+    - nonamedreturns
     - mnd
     - musttag
     - nlreturn

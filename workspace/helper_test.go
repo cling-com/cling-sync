@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"io"
@@ -158,30 +159,28 @@ func (rt *RepositoryTest) VerifyRevisionSnapshot(
 ) {
 	rt.t.Helper()
 	entries := rt.RevisionSnapshot(revisionId, pathFilter)
-	for i, entry := range entries {
-		rt.assert.Equal(true, i < len(files), "not enough files, expected entry: %v", entry)
-		file := files[i]
-		rt.assert.Equal(entry.Path.FSString(), file.Path, "path of %s", entry.Path.FSString())
-		rt.assert.Equal(entry.Metadata.Size, int64(file.Size), "size of %s", entry.Path.FSString())
-		rt.assert.Equal(
-			entry.Metadata.ModeAndPerm,
-			lib.NewModeAndPerm(file.Mode),
-			"mode of %s",
-			entry.Path.FSString(),
-		)
-		if file.Mode.IsRegular() {
+	actual := []FileInfo{}
+	for _, entry := range entries {
+		content := ""
+		if entry.Type != lib.RevisionEntryDelete && entry.Metadata.ModeAndPerm.IsRegular() {
 			// Rebuild the content from the repository.
-			var content []byte
+			buf := bytes.NewBuffer([]byte{})
 			blockBuf := lib.BlockBuf{}
 			for _, blockId := range entry.Metadata.BlockIds {
 				data, _, err := rt.Repository.ReadBlock(blockId, blockBuf)
 				rt.assert.NoError(err)
-				content = append(content, data...)
+				buf.Write(data)
 			}
-			rt.assert.Equal(file.Content, string(content), "content of %s", entry.Path.FSString())
+			content = buf.String()
 		}
+		actual = append(actual, FileInfo{
+			Path:    entry.Path.FSString(),
+			Mode:    entry.Metadata.ModeAndPerm.AsFileMode(),
+			Size:    int(entry.Metadata.Size),
+			Content: content,
+		})
 	}
-	rt.assert.Equal(len(files), len(entries), "not enough revision entries, expected file: %v", files[len(entries)-1])
+	rt.assert.Equal(files, actual)
 }
 
 func (rt *RepositoryTest) RevisionSnapshot(revisionId lib.RevisionId, pathFilter lib.PathFilter) []*lib.RevisionEntry {

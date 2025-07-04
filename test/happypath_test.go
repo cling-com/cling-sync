@@ -110,7 +110,7 @@ func TestHappyPath(t *testing.T) {
 		assert.Equal("bb", cat("b.txt"), "`b.txt` should contain the current content")
 
 		// First, try without `--overwrite` - it should fail.
-		stderr := sut.RunError("cp", "--no-progress", "--revision", rev1Id, "b.txt", ".")
+		stderr := sut.ClingSyncError("cp", "--no-progress", "--revision", rev1Id, "b.txt", ".")
 		assert.Contains(stderr, "failed to copy b.txt")
 		assert.Contains(stderr, "file exists")
 		assert.Equal("bb", cat("b.txt"), "`b.txt` should contain still the current content")
@@ -137,6 +137,44 @@ func TestHappyPath(t *testing.T) {
 		sut.ClingSync("merge", "--no-progress")
 		workspace2Ls := sut.Ls()
 		assert.Equal(workspace1Ls, workspace2Ls)
+	}
+
+	t.Log("Create and resolve conflicts with --accept-local (merge)")
+	{
+		t.Chdir("../workspace2")
+		sut.SetFile("b.txt", "b from workspace2")
+		sut.Mkdir("dir2")
+		sut.AddFile("dir2/e.txt", "e")
+		sut.ClingSync("merge", "--no-progress", "--message", "conflict")
+
+		// Back to workspace1 and add conflicting changes.
+		t.Chdir("../workspace")
+		sut.SetFile("b.txt", "b from workspace")
+		sut.Mkdir("dir2")
+		sut.AddFile("dir2/e.txt", "e from workspace")
+
+		// Merge should fail.
+		stderr := sut.ClingSyncError("merge", "--no-progress")
+		assert.Contains(stderr, dedent(`
+			
+			  b.txt (remote: update, local: update)
+			  dir2/e.txt (remote: add, local: add)
+			
+			No files were changed, you need to resolve the conflicts manually.
+			`))
+
+		// Accept the local changes.
+		sut.ClingSync("merge", "--no-progress", "--accept-local")
+		status := sut.ClingSync("status", "--no-progress")
+		assert.Equal("No changes", status)
+
+		// The workspace changes should have been committed.
+		assert.Equal("b from workspace", cat("b.txt"))
+		assert.Equal("e from workspace", cat("dir2/e.txt"))
+		assert.Equal(
+			sort(sut.Ls(), 4),
+			sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
+			"Files of head should match the workspace")
 	}
 }
 
@@ -219,7 +257,7 @@ func (s *Sut) ClingSyncStdin(stdin string, args ...string) string {
 
 // Same as `Run`, but is expected to fail.
 // Return stderr.
-func (s *Sut) RunError(args ...string) string {
+func (s *Sut) ClingSyncError(args ...string) string {
 	s.t.Helper()
 	s.t.Log(gray(fmt.Sprintf("    > cling-sync %s", strings.Join(args, " "))))
 	cmd := exec.Command("../cling-sync", args...)

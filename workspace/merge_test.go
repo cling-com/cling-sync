@@ -300,6 +300,72 @@ func TestMerge(t *testing.T) {
 	// })
 }
 
+func TestForceCommit(t *testing.T) {
+	t.Parallel()
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		rt := NewRepositoryTest(t)
+		wt := NewWorkspaceTest(t, rt.RepositoryStorage.Dir)
+
+		// Add first commit.
+		rt.AddLocal("a.txt", "a")
+		rt.AddLocal("b.txt", "b")
+		rt.AddLocal("c/d.txt", "d")
+		remoteRev1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		assert.NoError(err)
+		rt.VerifyRevisionSnapshot(remoteRev1, nil, []FileInfo{
+			{"a.txt", 0o600, 1, "a"},
+			{"b.txt", 0o600, 1, "b"},
+			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c/d.txt", 0o600, 1, "d"},
+		})
+
+		// Merge first commit into workspace.
+		localRev, err := Merge(wt.Workspace, rt.Repository, fakeMergeOptions())
+		assert.NoError(err)
+		assert.Equal(remoteRev1, localRev)
+		assert.Equal(localRev, wt.LocalHead())
+
+		// Add a second commit that adds, updates, and removes files/directories.
+		rt.UpdateLocal("a.txt", "aa")
+		rt.UpdateLocal("b.txt", "bb")
+		rt.RemoveLocal("c/d.txt")
+		rt.AddLocal("c/f.txt", "f")
+		remoteRev2, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		assert.NoError(err)
+		rt.VerifyRevisionSnapshot(remoteRev2, nil, []FileInfo{
+			{"a.txt", 0o600, 2, "aa"},
+			{"b.txt", 0o600, 2, "bb"},
+			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c/f.txt", 0o600, 1, "f"},
+		})
+
+		// Add conflicting `a.txt` in the workspace.
+		wt.UpdateLocal("a.txt", "aaa")
+
+		// Test that a merge would result in a conflict.
+		_, err = Merge(wt.Workspace, rt.Repository, fakeMergeOptions())
+		assert.Error(err, "MergeConflictsError")
+
+		// Force commit local changes.
+		opts := ForceCommitOptions{MergeOptions: *fakeMergeOptions()}
+		commitRev, err := ForceCommit(wt.Workspace, rt.Repository, &opts)
+		assert.NoError(err)
+		// Both the remote and local state should be the same.
+		assert.Equal(commitRev, rt.RemoteHead())
+		assert.Equal(commitRev, wt.LocalHead())
+		expectedState := []FileInfo{
+			{"a.txt", 0o600, 3, "aaa"},
+			{"b.txt", 0o600, 2, "bb"},
+			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c/f.txt", 0o600, 1, "f"},
+		}
+		rt.VerifyRevisionSnapshot(commitRev, nil, expectedState)
+		assert.Equal(expectedState, readDir(t, wt.WorkspacePath))
+	})
+}
+
 type changeRemoteCommitMonitor struct {
 	testCommitMonitor
 	rt        *RepositoryTest

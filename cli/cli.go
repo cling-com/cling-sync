@@ -286,11 +286,12 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help       bool
-		Message    string
-		Author     string
-		Verbose    bool
-		NoProgress bool
+		Help        bool
+		Message     string
+		Author      string
+		Verbose     bool
+		AcceptLocal bool
+		NoProgress  bool
 	}{}
 	defaultAuthor := "<anonymous>"
 	whoami, err := user.Current()
@@ -303,6 +304,7 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	flags.BoolVar(&args.AcceptLocal, "accept-local", false, "Ignore all conflicts and commit all local changes")
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
 	flags.Usage = func() {
@@ -337,11 +339,35 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		CpMonitor:      cpMonitor,
 		CommitMonitor:  commitMonitor,
 	}
-	revisionId, err := ws.Merge(workspace, repository, opts)
+	var revisionId lib.RevisionId
+	if args.AcceptLocal {
+		revisionId, err = ws.ForceCommit(workspace, repository, &ws.ForceCommitOptions{MergeOptions: *opts})
+	} else {
+		revisionId, err = ws.Merge(workspace, repository, opts)
+	}
 	stagingMonitor.Close()
 	if errors.Is(err, ws.ErrUpToDate) {
 		fmt.Println("No changes")
 		return nil
+	}
+	conflicts := ws.MergeConflictsError{}
+	if errors.As(err, &conflicts) {
+		var sb strings.Builder
+		sb.WriteString("merge aborted due to conflicts:\n\n")
+		for _, conflict := range conflicts {
+			sb.WriteString(fmt.Sprintf("  %s (remote: %s, local: %s)\n",
+				conflict.WorkspaceEntry.Path,
+				conflict.RepositoryEntry.Type,
+				conflict.WorkspaceEntry.Type,
+			))
+		}
+		sb.WriteString(fmt.Sprintf(`
+No files were changed, you need to resolve the conflicts manually.
+
+To accept all local changes, run `+"`"+`%s merge --accept-local`+"`"+`
+To select remote changes, run `+"`"+`%s cp --overwrite <remote-path> .`+"`"+`
+`, appName, appName))
+		return lib.Errorf("%s", sb.String())
 	}
 	if err != nil {
 		return err //nolint:wrapcheck
