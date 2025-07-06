@@ -87,9 +87,8 @@ This will start a HTTP server on port `4242` that serves the repository at `/pat
 
 This will attach the repository at `127.0.0.1:4242` to the workspace at `/path/to/workspace`.
 
-## Cryptography Overview
+## Cryptography
 
-Let's look at a birds view of how cryptography is used.
 The repository cryptography relies on these values you can find in `.cling/repository.txt`:
 
 - An encrypted 32-byte **Key Encryption Key (KEK)** that is the root key used to derive all other
@@ -100,7 +99,7 @@ The repository cryptography relies on these values you can find in `.cling/repos
 - A 32 byte **User Key Salt** that is used in the Key Derivation Function (KDF) to derive
   an encryption key to encrypt/decrypt the KEK.
 
-Both of these values are not strictly secret - the passphrase is still needed to decrypt the KEK.
+All of these values are not strictly secret - without the passphrase, data cannot be decrypted.
 
 ### Algorithms Used
 
@@ -120,20 +119,34 @@ The flow to arrive at the KEK:
 
 - That key is then used to decrypt the encrypted KEK.
 
+- The KEK is then used to decrypt the encrypted _Block ID HMAC Key_.
+
 ### Blocks
 
 #### Block IDs
 
-The repository wide _Block ID HMAC Key_ key is then used to sign the
-block id like this: `HMAC(SHA256(blockContent), HMACKey)`. This makes block ids based on the
-contents of the block (i.e. blocks are content addressable), but signing the content SHA256 hash
-makes it impossible to guess the content of a block.
+A block ID is calculated like this: `HMAC(SHA256(blockContent), BlockIDHMACKey)` where `BlockIDHMACKey`
+is the _Block ID HMAC Key_ stored in `.cling/repository.txt`.
+
+This makes blocks content addressable, but you cannot make any assumptions about the content of a
+block based on its block id.
 
 #### Data Encryption
 
-The content of files are stored in blocks of up to _8MB_ in size. Each block is encrypted with
-a unique, random 32 byte _Data Encryption Key (DEK)_. That _DEK_ is encrypted with th _KEK_ and
-stored alongside the random nonce used in the block header (see below).
+File contents and all metadata are stored in blocks of up to _8MB_ in size. Each block is encrypted
+with a unique, random 32 byte _Data Encryption Key (DEK)_. That _DEK_ is encrypted with the _KEK_
+and stored alongside the random nonce used in the block header (see below).
+
+#### Data Deduplication (Content-Defined Chunking)
+
+If only a part of a file is modified, only that part (more or less) is stored in the repository.
+Block boundaries are not fixed, but are calculated using the [GearCDC](https://joshleeb.com/posts/gear-hashing.html)
+algorithm.
+Basically, the algorithm keeps a rolling hash of the content to detect a "good boundary" so that a
+block is at best around 2-4MB in size. Because this is based on the actual content, even changes in
+the middle of a file are detected and at some point, the algorithm will detect the boundaries of
+blocks that were not changed.
+This also means that for files smaller than the average block size, deduplication is not effective.
 
 ## File Formats
 
@@ -143,29 +156,26 @@ All integer types are written as little-endian, and all strings are UTF-8 encode
 
 `FileMetadata` is serialized to:
 
-| Size (bytes) | Type       | Field            | Description                                    |
-| ------------ | ---------- | ---------------- | ---------------------------------------------- |
-| 2            | uint16     | _format version_ | Serialization format version (`0x01`)          |
-| _(12)_       | _timespec_ | **SyncTime**     | Time of sync                                   |
-| 8            | int64      | - SyncTimeSec    | Time of sync (seconds since epoch)             |
-| 4            | int32      | - SyncTimeNsec   | Time of sync (nanoseconds)                     |
-| 8            | uint64     | ModeAndPerm      | File mode and permission flags (see below)     |
-| _(12)_       | _timespec_ | **MTime**        | File modification time                         |
-| 8            | int64      | - MTimeSec       | File modification time (seconds since epoch)   |
-| 4            | int32      | - MTimeNsec      | File modification time (nanoseconds)           |
-| 8            | int64      | Size             | File size                                      |
-| 32           | SHA256     | FileHash         | Hash of the file contents                      |
-|              | _array_    | **BlockIds**     | Block IDs of the file contents                 |
-| 2            | uint16     | - Length         | Number of block IDs (N)                        |
-| 32 \* N      | BlockId    | - BlockIds       | Block IDs (N)                                  |
-|              | _string_   | **Target**       | Either the symlink or move target path         |
-| 2            | uint16     | - Length         | Length of target file name (M)                 |
-| M            | uint8      | - Bytes          | utf-8 encoded string                           |
-| 4            | uint32     | UID              | Optional: Owner of the file (2^31 if missing)  |
-| 4            | uint32     | GID              | Optional: Group of the file (2^31 if missing)  |
-| _(12)_       | _timespec_ | **Birthtime**    | Optional: File creation time                   |
-| 8            | int64      | - BirthtimeSec   | File creation time (seconds since epoch) or -1 |
-| 4            | int32      | - BirthtimeNsec  | File creation time (nanoseconds) or -1         |
+| Size (bytes) | Type       | Field             | Description                                    |
+| ------------ | ---------- | ----------------- | ---------------------------------------------- |
+| 2            | uint16     | _format version_  | Serialization format version (`0x01`)          |
+| 4            | uint64     | ModeAndPerm       | File mode and permission flags (see below)     |
+| _(12)_       | _timespec_ | **MTime**         | File modification time                         |
+| 8            | int64      | - MTimeSec        | File modification time (seconds since epoch)   |
+| 4            | int32      | - MTimeNsec       | File modification time (nanoseconds)           |
+| 8            | int64      | Size              | File size                                      |
+| 32           | SHA256     | FileHash          | Hash of the file contents                      |
+|              | _array_    | **BlockIds**      | Block IDs of the file contents                 |
+| 2            | uint16     | - Length          | Number of block IDs (N)                        |
+| 32 \* N      | BlockId    | - BlockIds        | Block IDs (N)                                  |
+|              | _string_   | **SymlinkTarget** | The symlink target path or empty               |
+| 2            | uint16     | - Length          | Length of target file name (M)                 |
+| M            | uint8      | - Bytes           | utf-8 encoded string                           |
+| 4            | uint32     | UID               | Optional: Owner of the file (2^31 if missing)  |
+| 4            | uint32     | GID               | Optional: Group of the file (2^31 if missing)  |
+| _(12)_       | _timespec_ | **Birthtime**     | Optional: File creation time                   |
+| 8            | int64      | - BirthtimeSec    | File creation time (seconds since epoch) or -1 |
+| 4            | int32      | - BirthtimeNsec   | File creation time (nanoseconds) or -1         |
 
 ### Block
 
@@ -180,14 +190,6 @@ All integer types are written as little-endian, and all strings are UTF-8 encode
 | 4            | uint32 | DataSize         | Size of the following data (N)              |
 | 10           |        | _padding_        | Header padding to 96 bytes                  |
 | N            | uint8  | **Data**         | Encrypted data of the block                 |
-
-## Committing Changes
-
-### Phase 1: Collect Metadata
-
-In this first pass, we scan the whole source folder, calculate content hashes for _all_ files
-and write each entry in chunked metadata files. Each metadata file is sorted by the full path or
-the file or directory.
 
 ## Development
 
