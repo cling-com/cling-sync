@@ -117,9 +117,9 @@ func TestRepositoryMarshalUnmarshalBlockHeader(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		sut := BlockHeader{
-			BlockId:           fakeBlockId("1"),
+			BlockId:           td.BlockId("1"),
 			Flags:             12345,
-			EncryptedDEK:      fakeEncryptedKey("1"),
+			EncryptedDEK:      td.EncryptedKey("1"),
 			EncryptedDataSize: 67890,
 		}
 		buf := bytes.NewBuffer([]byte{})
@@ -321,7 +321,7 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		repo, _ := testRepository(t)
 
 		// Create a revision that is not based on the current head.
-		revisionId := fakeRevisionId("1")
+		revisionId := td.RevisionId("1")
 		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3}, BlockBuf{})
 		assert.NoError(err)
 

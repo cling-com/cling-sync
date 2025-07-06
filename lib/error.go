@@ -8,7 +8,7 @@ import (
 )
 
 type WrappedError struct {
-	msg      string
+	Msg      string
 	err      error
 	location string
 }
@@ -32,7 +32,7 @@ func (w *WrappedError) internalError(prefix string, indent string) string {
 	sb.WriteString(" at ")
 	sb.WriteString(w.location)
 	sb.WriteString(": ")
-	sb.WriteString(w.msg)
+	sb.WriteString(w.Msg)
 	if wrapped, ok := w.err.(*WrappedError); ok { //nolint:errorlint
 		indent += "  "
 		sb.WriteString(wrapped.internalError("\n"+indent+"Cause", indent))
@@ -43,14 +43,14 @@ func (w *WrappedError) internalError(prefix string, indent string) string {
 	return sb.String()
 }
 
-func WrapErrorf(err error, msg string, msgArgs ...any) error {
+func WrapErrorf(err error, msg string, msgArgs ...any) *WrappedError {
 	return internalWrapErrorf(err, msg, msgArgs...)
 }
 
-func internalWrapErrorf(err error, msg string, msgArgs ...any) error {
+func internalWrapErrorf(err error, msg string, msgArgs ...any) *WrappedError {
 	location := location(3)
 	return &WrappedError{
-		msg:      fmt.Sprintf(msg, msgArgs...),
+		Msg:      fmt.Sprintf(msg, msgArgs...),
 		err:      err,
 		location: location,
 	}
@@ -67,6 +67,6 @@ func location(skip int) string {
 	return ""
 }
 
-func Errorf(msg string, msgArgs ...any) error {
+func Errorf(msg string, msgArgs ...any) *WrappedError {
 	return internalWrapErrorf(nil, msg, msgArgs...)
 }

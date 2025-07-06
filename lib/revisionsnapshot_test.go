@@ -19,61 +19,61 @@ func TestRevisionSnapshot(t *testing.T) {
 		revId1, err := testCommit(
 			t,
 			repo,
-			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/3.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/3.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/4.txt", RevisionEntryAdd),
 		)
 		assert.NoError(err)
 
 		revId2, err := testCommit(
 			t,
 			repo,
-			fakeRevisionEntry("b/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("b/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("b/2.txt", RevisionEntryAdd),
 			// Delete an entry.
-			fakeRevisionEntry("a/2.txt", RevisionEntryDelete),
+			td.RevisionEntry("a/2.txt", RevisionEntryDelete),
 			// Update an entry.
-			fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
+			td.RevisionEntry("a/3.txt", RevisionEntryUpdate),
 			// Delete another entry to update it in the next revision.
-			fakeRevisionEntry("a/4.txt", RevisionEntryDelete),
+			td.RevisionEntry("a/4.txt", RevisionEntryDelete),
 		)
 		assert.NoError(err)
 
 		revId3, err := testCommit(
 			t,
 			repo,
-			fakeRevisionEntry("b/1.txt", RevisionEntryDelete),
-			fakeRevisionEntry("c/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/1.txt", RevisionEntryUpdate),
+			td.RevisionEntry("b/1.txt", RevisionEntryDelete),
+			td.RevisionEntry("c/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryUpdate),
 			// Re-add a deleted file.
-			fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/4.txt", RevisionEntryAdd),
 		)
 		assert.NoError(err)
 
 		entries := readRevisionSnapshot(t, repo, revId3, nil)
 		assert.Equal([]*RevisionEntry{
-			fakeRevisionEntry("a/1.txt", RevisionEntryUpdate),
-			fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
-			fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
-			fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
-			fakeRevisionEntry("c/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryUpdate),
+			td.RevisionEntry("a/3.txt", RevisionEntryUpdate),
+			td.RevisionEntry("a/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("b/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("c/1.txt", RevisionEntryAdd),
 		}, entries)
 
 		entries = readRevisionSnapshot(t, repo, revId2, nil)
 		assert.Equal([]*RevisionEntry{
-			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/3.txt", RevisionEntryUpdate),
-			fakeRevisionEntry("b/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("b/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/3.txt", RevisionEntryUpdate),
+			td.RevisionEntry("b/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("b/2.txt", RevisionEntryAdd),
 		}, entries)
 
 		entries = readRevisionSnapshot(t, repo, revId1, nil)
 		assert.Equal([]*RevisionEntry{
-			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/3.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/3.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/4.txt", RevisionEntryAdd),
 		}, entries)
 
 		// Root revision should be empty.
@@ -90,36 +90,36 @@ func TestRevisionSnapshot(t *testing.T) {
 		_, err := testCommit(
 			t,
 			repo,
-			fakeRevisionEntryMode("a", RevisionEntryAdd, ModeDir),
-			fakeRevisionEntry("z.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/b/3.txt", RevisionEntryAdd),
+			td.RevisionEntryExt("a", RevisionEntryAdd, ModeDir, ""),
+			td.RevisionEntry("z.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
 		)
 		assert.NoError(err)
 		_, err = testCommit(
 			t,
 			repo,
-			fakeRevisionEntryMode("a", RevisionEntryAdd, ModeDir),
-			fakeRevisionEntryMode("a/b", RevisionEntryAdd, ModeDir),
+			td.RevisionEntryExt("a", RevisionEntryAdd, ModeDir, ""),
+			td.RevisionEntryExt("a/b", RevisionEntryAdd, ModeDir, ""),
 		)
 		assert.NoError(err)
 		revId3, err := testCommit(
 			t,
 			repo,
-			fakeRevisionEntry("a.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
 		)
 		assert.NoError(err)
 
 		entries := readRevisionSnapshot(t, repo, revId3, nil)
 		assert.Equal([]*RevisionEntry{
-			fakeRevisionEntry("a.txt", RevisionEntryAdd),
-			fakeRevisionEntry("z.txt", RevisionEntryAdd),
-			fakeRevisionEntryMode("a", RevisionEntryAdd, ModeDir),
-			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
-			fakeRevisionEntryMode("a/b", RevisionEntryAdd, ModeDir),
-			fakeRevisionEntry("a/b/3.txt", RevisionEntryAdd),
+			td.RevisionEntry("a.txt", RevisionEntryAdd),
+			td.RevisionEntry("z.txt", RevisionEntryAdd),
+			td.RevisionEntryExt("a", RevisionEntryAdd, ModeDir, ""),
+			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntryExt("a/b", RevisionEntryAdd, ModeDir, ""),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
 		}, entries)
 	})
 
@@ -131,10 +131,10 @@ func TestRevisionSnapshot(t *testing.T) {
 		revId1, err := testCommit(
 			t,
 			repo,
-			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/b/3.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/b/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/b/4.txt", RevisionEntryAdd),
 		)
 		assert.NoError(err)
 		assert.NoError(err)
@@ -142,8 +142,8 @@ func TestRevisionSnapshot(t *testing.T) {
 		assert.NoError(err)
 		snapshot := readRevisionSnapshot(t, repo, revId1, filter)
 		assert.Equal([]*RevisionEntry{
-			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
 		}, snapshot)
 	})
 
@@ -155,32 +155,32 @@ func TestRevisionSnapshot(t *testing.T) {
 		_, err := testCommit(
 			t,
 			repo,
-			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/b/3.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/b/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/b/4.txt", RevisionEntryAdd),
 		)
 		assert.NoError(err)
 		_, err = testCommit(
 			t,
 			repo,
-			fakeRevisionEntry("a/b/3.txt", RevisionEntryUpdate),
-			fakeRevisionEntry("a/b/4.txt", RevisionEntryUpdate),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryUpdate),
+			td.RevisionEntry("a/b/4.txt", RevisionEntryUpdate),
 		)
 		assert.NoError(err)
 		revId2, err := testCommit(
 			t,
 			repo,
-			fakeRevisionEntry("a/b", RevisionEntryDelete),
-			fakeRevisionEntry("a/b/3.txt", RevisionEntryDelete),
-			fakeRevisionEntry("a/b/4.txt", RevisionEntryDelete),
+			td.RevisionEntry("a/b", RevisionEntryDelete),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryDelete),
+			td.RevisionEntry("a/b/4.txt", RevisionEntryDelete),
 		)
 		assert.NoError(err)
 
 		entries := readRevisionSnapshot(t, repo, revId2, nil)
 		assert.Equal([]*RevisionEntry{
-			fakeRevisionEntry("a/1.txt", RevisionEntryAdd),
-			fakeRevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
 		}, entries)
 	})
 }

@@ -7,12 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
+
+var td = lib.TestData{} //nolint:gochecknoglobals
 
 type WorkspaceTest struct {
 	Workspace     *Workspace
@@ -320,54 +321,4 @@ func testRepository(t *testing.T, dir string) (*lib.Repository, *lib.FileStorage
 	repo, err := lib.InitNewRepository(storage, userPassphrase)
 	assert.NoError(err)
 	return repo, storage
-}
-
-func fakeRevisionEntry(path string, entryType lib.RevisionEntryType) *lib.RevisionEntry {
-	return fakeRevisionEntryExt(path, entryType, 0o600, "test")
-}
-
-func fakeRevisionEntryExt(
-	path string,
-	entryType lib.RevisionEntryType,
-	mode lib.ModeAndPerm,
-	content string,
-) *lib.RevisionEntry {
-	sha := sha256.New()
-	sha.Write([]byte(content))
-	md := fakeFileMetadata(mode)
-	md.FileHash = lib.Sha256(sha.Sum(nil))
-	md.Size = int64(len(content))
-	return &lib.RevisionEntry{
-		Path:     lib.NewPath(strings.Split(path, "/")...),
-		Type:     entryType,
-		Metadata: md,
-	}
-}
-
-func fakeFileMetadata(mode lib.ModeAndPerm) *lib.FileMetadata {
-	return &lib.FileMetadata{
-		ModeAndPerm:   mode,
-		MTimeSec:      4567890,
-		MTimeNSec:     567890,
-		Size:          67890,
-		FileHash:      fakeSHA256("1"),
-		BlockIds:      []lib.BlockId{fakeBlockId("1"), fakeBlockId("2")},
-		SymlinkTarget: "some/target",
-		UID:           7890,
-		GID:           890,
-		BirthtimeSec:  90,
-		BirthtimeNSec: 12345,
-	}
-}
-
-func fakeSHA256(suffix string) lib.Sha256 {
-	return lib.Sha256([]byte(strings.Repeat("s", 32-len(suffix)) + suffix))
-}
-
-func fakeBlockId(suffix string) lib.BlockId {
-	return lib.BlockId([]byte(strings.Repeat("b", 32-len(suffix)) + suffix))
-}
-
-func fakeCommitInfo() *lib.CommitInfo {
-	return &lib.CommitInfo{Author: "test author", Message: "test message"}
 }

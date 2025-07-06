@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"math/rand/v2"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -16,7 +15,7 @@ func TestRevisionEntry(t *testing.T) {
 		test := func(entryType RevisionEntryType) {
 			t.Helper()
 			var buf bytes.Buffer
-			sut := fakeRevisionEntry("a.txt", entryType)
+			sut := td.RevisionEntry("a.txt", entryType)
 			err := MarshalRevisionEntry(sut, &buf)
 			assert.NoError(err)
 			read, err := UnmarshalRevisionEntry(&buf)
@@ -32,12 +31,12 @@ func TestRevisionEntry(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		var buf bytes.Buffer
-		sut := fakeRevisionEntry("a.txt", RevisionEntryAdd)
+		sut := td.RevisionEntry("a.txt", RevisionEntryAdd)
 		err := MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
 		assert.Equal(sut.MarshalledSize(), buf.Len())
 
-		sut = fakeRevisionEntry("a.txt", RevisionEntryDelete)
+		sut = td.RevisionEntry("a.txt", RevisionEntryDelete)
 		buf.Reset()
 		err = MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
@@ -49,13 +48,13 @@ func TestRevisionEntry(t *testing.T) {
 		assert := NewAssert(t)
 		dirEntry := func(path string) *RevisionEntry {
 			t.Helper()
-			entry := fakeRevisionEntry(path, RevisionEntryAdd)
-			entry.Metadata = fakeFileMetadata(ModeDir)
+			entry := td.RevisionEntry(path, RevisionEntryAdd)
+			entry.Metadata = td.FileMetadata(ModeDir)
 			return entry
 		}
 		fileEntry := func(path string) *RevisionEntry {
 			t.Helper()
-			return fakeRevisionEntry(path, RevisionEntryAdd)
+			return td.RevisionEntry(path, RevisionEntryAdd)
 		}
 		entries := []*RevisionEntry{
 			fileEntry("/a.zip"),
@@ -89,13 +88,13 @@ func TestRevisionEntry(t *testing.T) {
 	t.Run("RevisionEntryPathCompare with different types", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		sut := fakeRevisionEntryMode("a", RevisionEntryDelete, ModeDir)
-		assert.Equal(0, RevisionEntryPathCompare(sut, fakeRevisionEntryMode("a", RevisionEntryDelete, ModeDir)))
-		assert.Equal(0, RevisionEntryPathCompare(sut, fakeRevisionEntryMode("a", RevisionEntryAdd, ModeDir)))
-		assert.Equal(0, RevisionEntryPathCompare(sut, fakeRevisionEntryMode("a", RevisionEntryUpdate, ModeDir)))
+		sut := td.RevisionEntryExt("a", RevisionEntryDelete, ModeDir, "")
+		assert.Equal(0, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryDelete, ModeDir, "")))
+		assert.Equal(0, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryAdd, ModeDir, "")))
+		assert.Equal(0, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryUpdate, ModeDir, "")))
 
 		// Files are greater than directories.
-		assert.Equal(1, RevisionEntryPathCompare(sut, fakeRevisionEntryMode("a", RevisionEntryUpdate, 0)))
+		assert.Equal(1, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryUpdate, 0, "")))
 	})
 }
 
@@ -105,38 +104,11 @@ func TestRevision(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		var buf bytes.Buffer
-		sut := fakeRevision(RevisionId{})
+		sut := td.Revision(RevisionId{})
 		err := MarshalRevision(sut, &buf)
 		assert.NoError(err)
 		read, err := UnmarshalRevision(&buf)
 		assert.NoError(err)
 		assert.Equal(sut, read)
 	})
-}
-
-func fakeRevisionId(s string) RevisionId {
-	return RevisionId(fakeSHA256(s))
-}
-
-func fakeRevision(parent RevisionId) *Revision {
-	return &Revision{
-		TimestampSec:  123456789,
-		TimestampNSec: 12345,
-		Message:       "test message",
-		Author:        "test author",
-		Parent:        parent,
-		Blocks:        []BlockId{fakeBlockId("1")},
-	}
-}
-
-func fakeRevisionEntry(path string, entryType RevisionEntryType) *RevisionEntry {
-	return fakeRevisionEntryMode(path, entryType, 0)
-}
-
-func fakeRevisionEntryMode(path string, entryType RevisionEntryType, mode ModeAndPerm) *RevisionEntry {
-	return &RevisionEntry{
-		Path:     NewPath(strings.Split(path, "/")...),
-		Type:     entryType,
-		Metadata: fakeFileMetadata(mode),
-	}
 }

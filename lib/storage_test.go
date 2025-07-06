@@ -154,9 +154,9 @@ func TestFileStorageMultiPurpose(t *testing.T) { //nolint:tparallel
 		// Write a block with the same block id for each purpose.
 		repoBlock := Block{
 			Header: BlockHeader{
-				BlockId:           fakeBlockId("1"),
+				BlockId:           td.BlockId("1"),
 				Flags:             0,
-				EncryptedDEK:      fakeEncryptedKey("1"),
+				EncryptedDEK:      td.EncryptedKey("1"),
 				EncryptedDataSize: 0, // is set below
 			},
 			EncryptedData: []byte("repository data"),
@@ -199,8 +199,8 @@ func TestFileStorageBlocks(t *testing.T) {
 
 		block := Block{
 			Header: BlockHeader{
-				EncryptedDEK:      fakeEncryptedKey("1"),
-				BlockId:           fakeBlockId("1"),
+				EncryptedDEK:      td.EncryptedKey("1"),
+				BlockId:           td.BlockId("1"),
 				Flags:             0xffffffffffffffff,
 				EncryptedDataSize: 0, // is set below
 			},
@@ -273,8 +273,8 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.NoError(err)
 		block := Block{
 			Header: BlockHeader{
-				EncryptedDEK:      fakeEncryptedKey("1"),
-				BlockId:           fakeBlockId("1"),
+				EncryptedDEK:      td.EncryptedKey("1"),
+				BlockId:           td.BlockId("1"),
 				Flags:             0,
 				EncryptedDataSize: 0, // is set below
 			},
@@ -294,8 +294,8 @@ func TestBlockHeaderMarshalUnmarshal(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		header := BlockHeader{
-			EncryptedDEK:      fakeEncryptedKey("1"),
-			BlockId:           fakeBlockId("1"),
+			EncryptedDEK:      td.EncryptedKey("1"),
+			BlockId:           td.BlockId("1"),
 			Flags:             0,
 			EncryptedDataSize: 1234,
 		}

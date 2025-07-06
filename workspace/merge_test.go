@@ -379,8 +379,8 @@ func (m *changeRemoteCommitMonitor) OnStart(entry *lib.RevisionEntry) {
 	m.committed = true
 	commit, err := lib.NewCommit(m.rt.Repository, m.rt.t.TempDir())
 	m.rt.assert.NoError(err)
-	err = commit.Add(fakeRevisionEntry("update.txt", lib.RevisionEntryAdd))
+	err = commit.Add(td.RevisionEntry("update.txt", lib.RevisionEntryAdd))
 	m.rt.assert.NoError(err)
-	_, err = commit.Commit(fakeCommitInfo())
+	_, err = commit.Commit(td.CommitInfo())
 	m.rt.assert.NoError(err)
 }

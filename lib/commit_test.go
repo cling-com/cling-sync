@@ -15,9 +15,9 @@ func TestCommit(t *testing.T) {
 
 		commit, err := NewCommit(repo, t.TempDir())
 		assert.NoError(err)
-		e1 := fakeRevisionEntry("a/1.txt", RevisionEntryAdd)
-		e2 := fakeRevisionEntry("a/2.txt", RevisionEntryUpdate)
-		e3 := fakeRevisionEntry("a/3.txt", RevisionEntryDelete)
+		e1 := td.RevisionEntry("a/1.txt", RevisionEntryAdd)
+		e2 := td.RevisionEntry("a/2.txt", RevisionEntryUpdate)
+		e3 := td.RevisionEntry("a/3.txt", RevisionEntryDelete)
 		// Add the entries unordered to test that they are sorted before commit.
 		assert.NoError(commit.Add(e2))
 		assert.NoError(commit.Add(e1))
@@ -35,7 +35,7 @@ func TestCommit(t *testing.T) {
 		// Add a second revision.
 		commit2, err := NewCommit(repo, t.TempDir())
 		assert.NoError(err)
-		e4 := fakeRevisionEntry("a/1.txt", RevisionEntryDelete)
+		e4 := td.RevisionEntry("a/1.txt", RevisionEntryDelete)
 		assert.NoError(commit2.Add(e4))
 		revisionId2, err := commit2.Commit(&CommitInfo{Author: "test author2", Message: "test message2"})
 		assert.NoError(err)
@@ -83,7 +83,7 @@ func TestCommit(t *testing.T) {
 		assert.NoError(err)
 
 		// Try to commit with the head changed.
-		err = commit.Add(fakeRevisionEntry("a/1.txt", RevisionEntryAdd))
+		err = commit.Add(td.RevisionEntry("a/1.txt", RevisionEntryAdd))
 		assert.NoError(err)
 		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
 		assert.ErrorIs(err, ErrHeadChanged)

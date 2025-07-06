@@ -320,30 +320,3 @@ func (a Assert) compare(x, y any, compare func(x, y reflect.Value) bool, msg ...
 		a.tb.Fatalf("%sexpected %v (%T) > %v (%T)", details(msg), x, x, y, y)
 	}
 }
-
-func details(msg []any) string {
-	if len(msg) == 0 {
-		return ""
-	}
-	if len(msg) == 1 {
-		return fmt.Sprintf("%v: ", msg[0])
-	}
-	return fmt.Sprintf(msg[0].(string), msg[1:]...) + ": " //nolint:forcetypeassert
-}
-
-//nolint:unused
-func fakeRawKey(suffix string) RawKey {
-	return RawKey([]byte(strings.Repeat("k", RawKeySize-len(suffix)) + suffix))
-}
-
-func fakeSHA256(suffix string) Sha256 {
-	return Sha256([]byte(strings.Repeat("s", 32-len(suffix)) + suffix))
-}
-
-func fakeEncryptedKey(suffix string) EncryptedKey { //nolint:unparam
-	return EncryptedKey([]byte(strings.Repeat("e", EncryptedKeySize-len(suffix)) + suffix))
-}
-
-func fakeBlockId(suffix string) BlockId {
-	return BlockId([]byte(strings.Repeat("b", 32-len(suffix)) + suffix))
-}
