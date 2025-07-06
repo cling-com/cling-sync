@@ -54,12 +54,6 @@ func NewWorkspace(path string, remoteRepository RemoteRepository) (*Workspace, e
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get absolute path for %s", path)
 	}
-	// For now, remote repository is always a file path on the local machine.
-	remoteRepositoryAbs, err := filepath.Abs(string(remoteRepository))
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to get absolute path for %s", remoteRepository)
-	}
-	remoteRepository = RemoteRepository(remoteRepositoryAbs)
 	toml := lib.Toml{
 		"remote": {
 			"repository": string(remoteRepository),

@@ -2,17 +2,20 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
 
+	clingHTTP "github.com/flunderpero/cling-sync/http"
 	"github.com/flunderpero/cling-sync/lib"
 	ws "github.com/flunderpero/cling-sync/workspace"
 	"golang.org/x/term"
@@ -20,15 +23,22 @@ import (
 
 const appName = "cling-sync"
 
-func AttachCmd(argv []string, passphraseFromStdin bool) error {
+func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
 		Help bool
 	}{}
 	flags := flag.NewFlagSet("attach", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s attach <repository> <directory>\n\n", appName)
+		fmt.Fprintf(os.Stderr, "Usage: %s attach <repository-uri> <directory>\n\n", appName)
 		fmt.Fprint(os.Stderr, "Attach a local directory to a repository.\n")
+		fmt.Fprint(os.Stderr, "\nArguments:\n")
+		fmt.Fprint(os.Stderr, "  repository-uri\n")
+		fmt.Fprint(os.Stderr, "        Either a path to a local repository or an URL to\n")
+		fmt.Fprintf(os.Stderr, "        a remote repository (see `%s serve`).\n", appName)
+		fmt.Fprint(os.Stderr, "  directory\n")
+		fmt.Fprint(os.Stderr, "        Path to the local workspace directory the repository\n")
+		fmt.Fprint(os.Stderr, "        should be attached to.\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -60,25 +70,31 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error {
 			return lib.Errorf("local directory %s is not empty", localPath)
 		}
 	}
-	repositoryPath, err := filepath.Abs(flags.Arg(0))
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
-	}
-	storage, err := lib.NewFileStorage(repositoryPath, lib.StoragePurposeRepository)
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to connect to repository storage")
+	repositoryURI := flags.Arg(0)
+	var storage lib.Storage
+	if clingHTTP.IsHTTPStorageUIR(repositoryURI) {
+		storage = clingHTTP.NewHTTPStorageClient(repositoryURI, http.DefaultClient, context.Background())
+	} else {
+		repositoryURI, err = filepath.Abs(repositoryURI)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to get absolute path for %s", repositoryURI)
+		}
+		storage, err = lib.NewFileStorage(repositoryURI, lib.StoragePurposeRepository)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to connect to repository storage")
+		}
 	}
 	_, err = openRepositoryWithPassphrase(storage, passphraseFromStdin)
 	if err != nil {
 		return err
 	}
 	// We know the repository exists, so let's create the workspace.
-	workspace, err := ws.NewWorkspace(localPath, ws.RemoteRepository(repositoryPath))
+	workspace, err := ws.NewWorkspace(localPath, ws.RemoteRepository(repositoryURI))
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create workspace")
 	}
 	workspace.Close() //nolint:errcheck,gosec
-	fmt.Printf("Attached %s to %s\n", localPath, repositoryPath)
+	fmt.Printf("Attached %s to %s\n", localPath, repositoryURI)
 	return nil
 }
 
@@ -89,11 +105,14 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	}{}
 	flags := flag.NewFlagSet("init", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
-	flags.BoolVar(&args.AllowWeakPassphrase, "allow-weak-passphrase", false, "Allow weak passphrase")
+	flags.BoolVar(&args.AllowWeakPassphrase, "allow-weak-passphrase", false, "Allow weak passphrase (not recommended)")
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s init <dst>\n\n", appName)
-		fmt.Fprint(os.Stderr, "Initialize a new repository at <dst>.\n")
-		fmt.Fprint(os.Stderr, "The destination directory <dst> must not exist or must be empty.\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s init <repository-path>\n\n", appName)
+		fmt.Fprint(os.Stderr, "Create and initialize a new local repository.\n")
+		fmt.Fprint(os.Stderr, "\nArguments:\n")
+		fmt.Fprint(os.Stderr, "  repository-path\n")
+		fmt.Fprint(os.Stderr, "        The repository will be created at this path.\n")
+		fmt.Fprint(os.Stderr, "        The directory must not exist or must be empty.\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -102,9 +121,10 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	}
 	if args.Help {
 		flags.Usage()
+		return nil
 	}
 	if len(flags.Args()) != 1 {
-		return lib.Errorf("one positional argument is required: <dst>")
+		return lib.Errorf("one positional argument is required: <repository-path>")
 	}
 	if !IsTerm(os.Stdin) && !passphraseFromStdin {
 		return lib.Errorf(
@@ -207,14 +227,16 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s cp <pattern> <target>\n\n", appName)
-		fmt.Fprint(os.Stderr, "Copy files from the repository to a local directory.\n\n")
-		fmt.Fprint(os.Stderr, "  <pattern>\n")
+		fmt.Fprint(os.Stderr, "Copy files from the repository to a local directory.\n")
+		fmt.Fprint(os.Stderr, "\nArguments:\n")
+		fmt.Fprint(os.Stderr, "  pattern\n")
 		fmt.Fprint(
 			os.Stderr,
 			"        Repository paths matching the given pattern are copied.\n"+pathPatternDescription("        "),
 		)
-		fmt.Fprint(os.Stderr, "\n  <target>\n")
-		fmt.Fprint(os.Stderr, "        The target directory where the files are copied to.")
+		fmt.Fprint(os.Stderr, "\n  target\n")
+		fmt.Fprint(os.Stderr, "        The target directory where files are copied to.\n")
+		fmt.Fprint(os.Stderr, "        Example: `cp path/to/file /tmp` creates `/tmp/path/to/file`\n")
 		fmt.Fprint(os.Stderr, "\n\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -323,7 +345,7 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		return nil
 	}
 	if len(flags.Args()) != 0 {
-		return lib.Errorf("no positional arguments are required")
+		return lib.Errorf("no positional arguments allowed")
 	}
 	repository, err := openRepository(workspace, passphraseFromStdin)
 	if err != nil {
@@ -427,8 +449,9 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s status [pattern]\n\n", appName)
-		fmt.Fprint(os.Stderr, "Show the difference between the working directory and the repository.\n\n")
-		fmt.Fprint(os.Stderr, "  [pattern] (optional)\n")
+		fmt.Fprint(os.Stderr, "Show the difference between the working directory and the repository.\n")
+		fmt.Fprint(os.Stderr, "\nArguments:\n")
+		fmt.Fprint(os.Stderr, "  pattern (optional)\n")
 		fmt.Fprint(
 			os.Stderr,
 			"        Show status only for paths matching the given pattern.\n"+pathPatternDescription("        "),
@@ -512,12 +535,12 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
-	flags.BoolVar(&args.Short, "short", false, "Show short listing (same as `--timestamp-format=relative`)")
+	flags.BoolVar(&args.Short, "short", false, "Show short listing (same as --timestamp-format=relative)")
 	flags.BoolVar(
 		&args.Human,
 		"human",
 		false,
-		"Show human readable file sizes (same as `--timestamp-format=rfc3339 --full-file-mode`)",
+		"Show human readable file sizes (same as --timestamp-format=rfc3339 --full-file-mode)",
 	)
 	flags.Func(
 		"timestamp-format",
@@ -541,7 +564,8 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s ls [pattern]\n\n", appName)
-		fmt.Fprint(os.Stderr, "List files in the repository.\n\n")
+		fmt.Fprint(os.Stderr, "List files in the repository.\n")
+		fmt.Fprint(os.Stderr, "\nArguments:\n")
 		fmt.Fprint(os.Stderr, "  pattern\n")
 		fmt.Fprint(os.Stderr, "        The pattern syntax is the same as for the `commit --ignore` option.\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
@@ -632,8 +656,9 @@ func LogCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.Status, "status", false, "Show status of paths affected in a revision")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s log [pattern]\n\n", appName)
-		fmt.Fprint(os.Stderr, "Show revision log.\n\n")
-		fmt.Fprint(os.Stderr, "  [pattern] (optional)\n")
+		fmt.Fprint(os.Stderr, "Show revision log.\n")
+		fmt.Fprint(os.Stderr, "\nArguments:\n")
+		fmt.Fprint(os.Stderr, "  pattern (optional)\n")
 		fmt.Fprint(os.Stderr, "        Show log only for paths matching the given pattern.\n")
 		fmt.Fprint(os.Stderr, pathPatternDescription("        "))
 		fmt.Fprint(os.Stderr, "\n\nFlags:\n")
@@ -762,6 +787,59 @@ func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 	return nil
 }
 
+func ServeCmd(argv []string) error {
+	args := struct { //nolint:exhaustruct
+		Address     string
+		LogRequests bool
+		Help        bool
+	}{}
+	flags := flag.NewFlagSet("serve", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.BoolVar(&args.LogRequests, "log-requests", false, "Log all requests")
+	flags.StringVar(&args.Address, "address", "0.0.0.0:4242", "Address to listen on")
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s serve <repository-path>\n\n", appName)
+		fmt.Fprint(os.Stderr, "Serve a repository over HTTP.\n")
+		fmt.Fprint(os.Stderr, "\nArguments:\n")
+		fmt.Fprint(os.Stderr, "  repository-path\n")
+		fmt.Fprint(os.Stderr, "        Path to the local repository to serve\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	if len(flags.Args()) != 1 {
+		return lib.Errorf("one positional argument is required: <path-to-repository>")
+	}
+	repositoryPath, err := filepath.Abs(flags.Arg(0))
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
+	}
+	storage, err := lib.NewFileStorage(repositoryPath, lib.StoragePurposeRepository)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open storage")
+	}
+	storageServer := clingHTTP.NewHTTPStorageServer(storage, args.Address)
+	mux := http.NewServeMux()
+	storageServer.RegisterRoutes(mux, args.LogRequests)
+	server := &http.Server{ //nolint:exhaustruct
+		Addr:         args.Address,
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second, // todo: Make this configurable
+		WriteTimeout: 10 * time.Second, // todo: Make this configurable
+	}
+	fmt.Printf("Serving %s at http://%s\n", repositoryPath, args.Address)
+	if err := server.ListenAndServe(); err != nil {
+		return lib.WrapErrorf(err, "failed to serve repository")
+	}
+	return nil
+}
+
 func revisionId(repository *lib.Repository, revision string) (lib.RevisionId, error) {
 	var revisionId lib.RevisionId
 	if strings.ToLower(revision) == "head" {
@@ -798,7 +876,7 @@ func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Rep
 	return openRepositoryWithPassphrase(storage, passphraseFromStdin)
 }
 
-func openRepositoryWithPassphrase(storage *lib.FileStorage, passphraseFromStdin bool) (*lib.Repository, error) {
+func openRepositoryWithPassphrase(storage lib.Storage, passphraseFromStdin bool) (*lib.Repository, error) {
 	passphrase, err := readPassphrase(passphraseFromStdin)
 	if err != nil {
 		return nil, err
@@ -837,7 +915,14 @@ func readPassphrase(passphraseFromStdin bool) ([]byte, error) {
 	return passphrase, nil
 }
 
-func openRepositoryStorage(workspace *ws.Workspace) (*lib.FileStorage, error) {
+func openRepositoryStorage(workspace *ws.Workspace) (lib.Storage, error) { //nolint:ireturn
+	if clingHTTP.IsHTTPStorageUIR(string(workspace.RemoteRepository)) {
+		return clingHTTP.NewHTTPStorageClient(
+			string(workspace.RemoteRepository),
+			http.DefaultClient,
+			context.Background(),
+		), nil
+	}
 	storage, err := lib.NewFileStorage(string(workspace.RemoteRepository), lib.StoragePurposeRepository)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
@@ -886,6 +971,7 @@ func main() { //nolint:funlen
 		fmt.Fprint(os.Stderr, "  log          Show revision log\n")
 		fmt.Fprint(os.Stderr, "  merge        Merge changes from the repository and the workspace\n")
 		fmt.Fprint(os.Stderr, "  security	  See and configure security settings\n")
+		fmt.Fprint(os.Stderr, "  serve        Serve a repository over HTTP\n")
 		fmt.Fprint(os.Stderr, "  status       Show repository status\n")
 		fmt.Fprint(os.Stderr, "\nGlobal flags:\n")
 		flag.PrintDefaults()
@@ -926,6 +1012,8 @@ func main() { //nolint:funlen
 		err = LsCmd(argv, args.PassphraseFromStdin)
 	case "security":
 		err = SecurityCmd(argv, args.PassphraseFromStdin)
+	case "serve":
+		err = ServeCmd(argv)
 	case "status":
 		err = StatusCmd(argv, args.PassphraseFromStdin)
 	case "":

@@ -3,6 +3,7 @@ module github.com/flunderpero/cling-sync/cli
 go 1.24.2
 
 require (
+	github.com/flunderpero/cling-sync/http v0.0.0
 	github.com/flunderpero/cling-sync/lib v0.0.0
 	github.com/flunderpero/cling-sync/workspace v0.0.0
 	golang.org/x/term v0.31.0
@@ -16,3 +17,5 @@ require (
 replace github.com/flunderpero/cling-sync/lib v0.0.0 => ../lib
 
 replace github.com/flunderpero/cling-sync/workspace v0.0.0 => ../workspace
+
+replace github.com/flunderpero/cling-sync/http v0.0.0 => ../http

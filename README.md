@@ -77,6 +77,16 @@ repository. If there are conflicts, the user is asked to resolve them.
 Show all revisions that contain a path that matches the pattern and show all paths that were added,
 updated, or deleted.
 
+**Serve the repository over HTTP:**
+
+    cling-sync serve --address 127.0.0.1:4242 /path/to/repository
+
+This will start a HTTP server on port `4242` that serves the repository at `/path/to/repository`.
+
+    cling-sync attach http://127.0.0.1:4242 /path/to/workspace
+
+This will attach the repository at `127.0.0.1:4242` to the workspace at `/path/to/workspace`.
+
 ## Cryptography Overview
 
 Let's look at a birds view of how cryptography is used.

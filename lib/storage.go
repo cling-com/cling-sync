@@ -27,21 +27,32 @@ const (
 var (
 	ErrStorageNotFound      = Errorf("storage not found")
 	ErrStorageAlreadyExists = Errorf("storage already exists")
+	ErrBlockNotFound        = Errorf("block not found")
+	ErrControlFileNotFound  = Errorf("control file not found")
 )
 
 type Storage interface {
 	Init(config Toml, headerComment string) error
 	Open() (Toml, error)
 	HasBlock(blockId BlockId) (bool, error)
+
+	// Return `ErrBlockNotFound` if the block does not exist.
 	ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error)
+
+	// Return `ErrBlockNotFound` if the block does not exist.
 	ReadBlockHeader(blockId BlockId) (BlockHeader, error)
+
 	// Write a block and return whether it was written.
 	//
 	// Returns `true` if the block was already present.
 	WriteBlock(block Block) (bool, error)
+
+	// Return `ErrControlFileNotFound` if the control file does not exist.
 	ReadControlFile(section ControlFileSection, name string) ([]byte, error)
 	WriteControlFile(section ControlFileSection, name string, data []byte) error
 	HasControlFile(section ControlFileSection, name string) (bool, error)
+
+	// Return `ErrControlFileNotFound` if the control file does not exist.
 	DeleteControlFile(section ControlFileSection, name string) error
 }
 
@@ -232,10 +243,14 @@ func (fs *FileStorage) WriteBlock(block Block) (bool, error) { //nolint:funlen
 	return false, nil
 }
 
+// Return `ErrBlockNotFound` if the block does not exist.
 func (fs *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error) {
 	path := fs.blockPath(blockId)
 	file, err := os.Open(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, BlockHeader{}, WrapErrorf(ErrBlockNotFound, "block %s does not exist", blockId)
+		}
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to open block file %s", path)
 	}
 	defer file.Close() //nolint:errcheck
@@ -265,10 +280,14 @@ func (fs *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHe
 	return buf[BlockHeaderSize:bytesRead], header, nil
 }
 
+// Return `ErrBlockNotFound` if the block does not exist.
 func (fs *FileStorage) ReadBlockHeader(blockId BlockId) (BlockHeader, error) {
 	path := fs.blockPath(blockId)
 	file, err := os.Open(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return BlockHeader{}, WrapErrorf(ErrBlockNotFound, "block %s does not exist", blockId)
+		}
 		return BlockHeader{}, WrapErrorf(err, "failed to open block file %s", path)
 	}
 	defer file.Close() //nolint:errcheck
@@ -304,6 +323,9 @@ func (fs *FileStorage) ReadControlFile(section ControlFileSection, name string) 
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, WrapErrorf(ErrControlFileNotFound, "control file %s/%s does not exist", section, name)
+		}
 		return nil, WrapErrorf(err, "failed to read control file %s", path)
 	}
 	return data, nil
@@ -324,6 +346,9 @@ func (fs *FileStorage) DeleteControlFile(section ControlFileSection, name string
 		return err
 	}
 	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return WrapErrorf(ErrControlFileNotFound, "control file %s/%s does not exist", section, name)
+		}
 		return WrapErrorf(err, "failed to delete control file %s", path)
 	}
 	return nil

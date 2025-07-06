@@ -29,7 +29,7 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-projects="lib workspace cli test"
+projects="lib workspace http cli test"
 
 # Build all or a specific target.
 # Input:

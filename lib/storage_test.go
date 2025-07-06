@@ -107,7 +107,7 @@ func TestFileStorageOpen(t *testing.T) {
 	})
 }
 
-func TestFileStorageMultiPurpose(t *testing.T) { //nolint:tparallel
+func TestFileStorageMultiPurpose(t *testing.T) {
 	t.Parallel()
 	assert := NewAssert(t)
 	dir := t.TempDir()
@@ -148,6 +148,26 @@ func TestFileStorageMultiPurpose(t *testing.T) { //nolint:tparallel
 		hasControlFile, err = repo.HasControlFile(ControlFileSectionRefs, "head")
 		assert.NoError(err)
 		assert.Equal(false, hasControlFile)
+	})
+
+	t.Run("ReadControlFile should return ErrControlFileNotFound", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		dir := t.TempDir()
+		sut, err := NewFileStorage(dir, StoragePurposeRepository)
+		assert.NoError(err)
+		_, err = sut.ReadControlFile(ControlFileSectionRefs, "head")
+		assert.ErrorIs(err, ErrControlFileNotFound)
+	})
+
+	t.Run("DeleteControlFile should return ErrControlFileNotFound", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		dir := t.TempDir()
+		sut, err := NewFileStorage(dir, StoragePurposeRepository)
+		assert.NoError(err)
+		err = sut.DeleteControlFile(ControlFileSectionRefs, "head")
+		assert.ErrorIs(err, ErrControlFileNotFound)
 	})
 
 	t.Run("Read and write block", func(t *testing.T) { //nolint:paralleltest
@@ -263,6 +283,23 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(true, existed)
 	})
+
+	t.Run("ReadBlock and ReadBlockHeader not found", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		dir := t.TempDir()
+		sut, err := NewFileStorage(dir, StoragePurposeRepository)
+		assert.NoError(err)
+		err = sut.Init(nil, "")
+		assert.NoError(err)
+
+		_, _, err = sut.ReadBlock(td.BlockId("1"), BlockBuf{})
+		assert.ErrorIs(err, ErrBlockNotFound)
+
+		_, err = sut.ReadBlockHeader(td.BlockId("1"))
+		assert.ErrorIs(err, ErrBlockNotFound)
+	})
+
 	t.Run("WriteBlock: Block.Data length must not exceed limits", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

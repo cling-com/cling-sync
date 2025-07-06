@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -202,7 +201,7 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (bool, BlockHeader, e
 	readHeader, err := r.storage.ReadBlockHeader(blockId)
 	if err == nil {
 		return true, readHeader, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	} else if !errors.Is(err, ErrBlockNotFound) {
 		return false, BlockHeader{}, WrapErrorf(err, "failed to read header of block %s", blockId)
 	}
 	// Compress data if possible.

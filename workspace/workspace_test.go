@@ -86,27 +86,3 @@ func TestWorkspaceNewAndOpen(t *testing.T) {
 		assert.NoError(err)
 	})
 }
-
-// This test has to stand alone, because you cannot use `t.Chdir` with `t.Parallel`.
-func TestWorkspaceNewUsesAbsolutePaths(t *testing.T) { //nolint:paralleltest
-	assert := lib.NewAssert(t)
-	local := "local"
-	remote := "remote"
-	t.Chdir(t.TempDir())
-
-	// Create new workspace.
-	ws, err := NewWorkspace(local, RemoteRepository(remote))
-	assert.NoError(err)
-
-	// Open workspace.
-	open, err := OpenWorkspace(local)
-	assert.NoError(err)
-	assert.Equal(ws.WorkspacePath, open.WorkspacePath)
-
-	localAbs, err := filepath.Abs(local)
-	assert.NoError(err)
-	remoteAbs, err := filepath.Abs(remote)
-	assert.NoError(err)
-	assert.Equal(localAbs, ws.WorkspacePath)
-	assert.Equal(remoteAbs, string(ws.RemoteRepository))
-}

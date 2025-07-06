@@ -178,6 +178,74 @@ func TestHappyPath(t *testing.T) {
 	}
 }
 
+func TestRepositoryOverHTTP(t *testing.T) {
+	sut := NewSut(t)
+	assert := sut.assert
+
+	serveStdout := bytes.NewBuffer(nil)
+	t.Log("Serve repository over HTTP")
+	{
+		t.Log(gray("    > cling-sync serve --log-requests --address 127.0.0.1:4242 ../repository"))
+		cmd := exec.Command("../cling-sync", "serve", "--log-requests", "--address", "127.0.0.1:4242", "../repository")
+		stderr := bytes.NewBuffer(nil)
+		cmd.Stdout = serveStdout
+		cmd.Stderr = stderr
+		err := cmd.Start()
+		assert.NoError(
+			err,
+			"failed to serve repository over HTTP: stderr: %s, stdout: %s",
+			stderr.String(),
+			serveStdout.String(),
+		)
+		defer func() {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}()
+		t0 := time.Now()
+		for time.Since(t0) < 10*time.Second {
+			if strings.Contains(serveStdout.String(), "Serving") {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	t.Log("Attach repository over HTTP and merge (merge, ls)")
+	{
+		workspace1Ls := sut.Ls()
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "http://localhost:4242", "../workspace2")
+		t.Chdir("../workspace2")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+		sut.ClingSync("merge", "--no-progress")
+		workspace2Ls := sut.Ls()
+		assert.Equal(workspace1Ls, workspace2Ls)
+	}
+
+	t.Log("Commit local changes (merge)")
+	{
+		sut.AddFile("new.txt", "new")
+		sut.ClingSync("merge", "--no-progress", "--message", "commit local changes")
+		log := sut.ClingSync("log", "--short", "--status")
+		assert.Equal(dedent(fmt.Sprintf(`
+            %s %s commit local changes
+
+                A new.txt
+			`, sut.RepositoryHead(), sut.RepositoryHeadDate())),
+			log)
+	}
+
+	t.Log("Make sure we actually talked to the HTTP server")
+	{
+		logs := serveStdout.String()
+		assert.Contains(logs, "method=GET path=/storage/open")              // Open
+		assert.Contains(logs, "method=GET path=/storage/control/refs/head") // ReadControlFile
+		assert.Contains(logs, "method=PUT path=/storage/control/refs/head") // WriteControlFile
+		assert.Contains(logs, "method=HEAD path=/storage/block")            // HasBlock
+		assert.Contains(logs, "method=GET path=/storage/block")             // ReadBlock
+		assert.Contains(logs, "method=PUT path=/storage/block")             // WriteBlock
+	}
+}
+
 type Sut struct {
 	t      *testing.T
 	assert lib.Assert
