@@ -73,7 +73,10 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	repositoryURI := flags.Arg(0)
 	var storage lib.Storage
 	if clingHTTP.IsHTTPStorageUIR(repositoryURI) {
-		storage = clingHTTP.NewHTTPStorageClient(repositoryURI, http.DefaultClient, context.Background())
+		storage = clingHTTP.NewHTTPStorageClient(
+			repositoryURI,
+			clingHTTP.NewDefaultHTTPClient(http.DefaultClient, context.Background()),
+		)
 	} else {
 		repositoryURI, err = filepath.Abs(repositoryURI)
 		if err != nil {
@@ -789,13 +792,15 @@ func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 
 func ServeCmd(argv []string) error {
 	args := struct { //nolint:exhaustruct
-		Address     string
-		LogRequests bool
-		Help        bool
+		Address      string
+		LogRequests  bool
+		CORSAllowAll bool
+		Help         bool
 	}{}
 	flags := flag.NewFlagSet("serve", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.LogRequests, "log-requests", false, "Log all requests")
+	flags.BoolVar(&args.CORSAllowAll, "cors-allow-all", false, "Allow all origins to access the repository (dangerous)")
 	flags.StringVar(&args.Address, "address", "0.0.0.0:4242", "Address to listen on")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s serve <repository-path>\n\n", appName)
@@ -826,10 +831,17 @@ func ServeCmd(argv []string) error {
 	}
 	storageServer := clingHTTP.NewHTTPStorageServer(storage, args.Address)
 	mux := http.NewServeMux()
-	storageServer.RegisterRoutes(mux, args.LogRequests)
+	var handler http.Handler = mux
+	storageServer.RegisterRoutes(mux)
+	if args.LogRequests {
+		handler = clingHTTP.RequestLogMiddleware(handler)
+	}
+	if args.CORSAllowAll {
+		handler = clingHTTP.CORSMiddleware(handler)
+	}
 	server := &http.Server{ //nolint:exhaustruct
 		Addr:         args.Address,
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second, // todo: Make this configurable
 		WriteTimeout: 10 * time.Second, // todo: Make this configurable
 	}
@@ -919,8 +931,7 @@ func openRepositoryStorage(workspace *ws.Workspace) (lib.Storage, error) { //nol
 	if clingHTTP.IsHTTPStorageUIR(string(workspace.RemoteRepository)) {
 		return clingHTTP.NewHTTPStorageClient(
 			string(workspace.RemoteRepository),
-			http.DefaultClient,
-			context.Background(),
+			clingHTTP.NewDefaultHTTPClient(http.DefaultClient, context.Background()),
 		), nil
 	}
 	storage, err := lib.NewFileStorage(string(workspace.RemoteRepository), lib.StoragePurposeRepository)

@@ -185,8 +185,8 @@ func TestRepositoryOverHTTP(t *testing.T) {
 	serveStdout := bytes.NewBuffer(nil)
 	t.Log("Serve repository over HTTP")
 	{
-		t.Log(gray("    > cling-sync serve --log-requests --address 127.0.0.1:4242 ../repository"))
-		cmd := exec.Command("../cling-sync", "serve", "--log-requests", "--address", "127.0.0.1:4242", "../repository")
+		t.Log(gray("    > cling-sync serve --log-requests --address 127.0.0.1:9123 ../repository"))
+		cmd := exec.Command("../cling-sync", "serve", "--log-requests", "--address", "127.0.0.1:9123", "../repository")
 		stderr := bytes.NewBuffer(nil)
 		cmd.Stdout = serveStdout
 		cmd.Stderr = stderr
@@ -213,7 +213,7 @@ func TestRepositoryOverHTTP(t *testing.T) {
 	t.Log("Attach repository over HTTP and merge (merge, ls)")
 	{
 		workspace1Ls := sut.Ls()
-		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "http://localhost:4242", "../workspace2")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "http://localhost:9123", "../workspace2")
 		t.Chdir("../workspace2")
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
 		sut.ClingSync("merge", "--no-progress")

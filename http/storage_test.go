@@ -21,7 +21,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		t.Parallel()
 		_, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, srv.Client(), t.Context())
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 		var _ lib.Storage = client
 	})
 
@@ -30,7 +30,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		_, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, srv.Client(), t.Context())
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 		toml, err := client.Open()
 		assert.NoError(err)
 		assert.Equal(lib.Toml{"some": {"key": "value"}}, toml)
@@ -41,7 +41,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, srv.Client(), t.Context())
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 		blockId := td.BlockId("1")
 
 		ok, err := client.HasBlock(blockId)
@@ -59,7 +59,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, srv.Client(), t.Context())
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 		blockId := td.BlockId("1")
 
 		_, _, err := client.ReadBlock(blockId, lib.BlockBuf{})
@@ -77,7 +77,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, srv.Client(), t.Context())
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 
 		blockId := td.BlockId("1")
 		_, err := client.ReadBlockHeader(blockId)
@@ -94,7 +94,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, srv.Client(), t.Context())
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 
 		blockId := td.BlockId("1")
 		block := lib.Block{
@@ -127,7 +127,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, srv.Client(), t.Context())
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 
 		ok, err := client.HasControlFile(lib.ControlFileSectionRefs, "head")
 		assert.NoError(err)
@@ -145,7 +145,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, srv.Client(), t.Context())
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 
 		_, err := client.ReadControlFile(lib.ControlFileSectionRefs, "head")
 		assert.ErrorIs(err, lib.ErrControlFileNotFound)
@@ -162,7 +162,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, srv.Client(), t.Context())
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 
 		err := client.WriteControlFile(lib.ControlFileSectionRefs, "head", []byte("abcd"))
 		assert.NoError(err)
@@ -182,7 +182,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, srv.Client(), t.Context())
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 
 		err := client.DeleteControlFile(lib.ControlFileSectionRefs, "head")
 		assert.ErrorIs(err, lib.ErrControlFileNotFound)
@@ -436,7 +436,7 @@ func newSut(t *testing.T) (*lib.FileStorage, *httptest.Server) {
 	storage := testStorage(t)
 	sut := NewHTTPStorageServer(storage, ":9999")
 	mux := http.NewServeMux()
-	sut.RegisterRoutes(mux, false)
+	sut.RegisterRoutes(mux)
 	srv := httptest.NewServer(mux)
 	return storage, srv
 }

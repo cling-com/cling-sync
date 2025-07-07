@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,18 +15,54 @@ import (
 	"github.com/flunderpero/cling-sync/lib"
 )
 
-type HTTPStorageClient struct {
-	Address string
+// We use a simplified interface to improve support for WASM, i.e. we don't
+// bring in the full HTTP client which adds a lot of dependencies.
+type HTTPClient interface {
+	Request(method string, url string, body []byte) (*HTTPResponse, error)
+}
+
+type HTTPResponse struct {
+	StatusCode int
+	Body       []byte
+}
+
+type DefaultHTTPClient struct {
 	Client  *http.Client
 	Context context.Context //nolint:containedctx
+}
+
+func NewDefaultHTTPClient(client *http.Client, context context.Context) *DefaultHTTPClient {
+	return &DefaultHTTPClient{client, context}
+}
+
+func (c *DefaultHTTPClient) Request(method string, url string, body []byte) (*HTTPResponse, error) {
+	req, err := http.NewRequestWithContext(c.Context, method, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to create request")
+	}
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to execute request")
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to read response body")
+	}
+	return &HTTPResponse{resp.StatusCode, data}, nil
+}
+
+type HTTPStorageClient struct {
+	Address string
+	Client  HTTPClient
 }
 
 func IsHTTPStorageUIR(uri string) bool {
 	return strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://")
 }
 
-func NewHTTPStorageClient(address string, client *http.Client, context context.Context) *HTTPStorageClient {
-	return &HTTPStorageClient{address, client, context}
+func NewHTTPStorageClient(address string, client HTTPClient) *HTTPStorageClient {
+	return &HTTPStorageClient{address, client}
 }
 
 func (c *HTTPStorageClient) Init(config lib.Toml, headerComment string) error {
@@ -39,8 +74,7 @@ func (c *HTTPStorageClient) Open() (lib.Toml, error) {
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
 	}
-	defer resp.Body.Close() //nolint:errcheck
-	toml, err := lib.ReadToml(resp.Body)
+	toml, err := lib.ReadToml(bytes.NewReader(resp.Body))
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read storage TOML")
 	}
@@ -52,7 +86,6 @@ func (c *HTTPStorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to check if block exists")
 	}
-	defer resp.Body.Close() //nolint:errcheck
 	return resp.StatusCode == http.StatusOK, nil
 }
 
@@ -61,15 +94,14 @@ func (c *HTTPStorageClient) ReadBlock(blockId lib.BlockId, buf lib.BlockBuf) ([]
 	if err != nil {
 		return nil, lib.BlockHeader{}, lib.WrapErrorf(err, "failed to read block")
 	}
-	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, lib.BlockHeader{}, lib.ErrBlockNotFound
 	}
-	header, err := lib.UnmarshalBlockHeader(blockId, resp.Body)
+	header, err := lib.UnmarshalBlockHeader(blockId, bytes.NewReader(resp.Body))
 	if err != nil {
 		return nil, lib.BlockHeader{}, lib.WrapErrorf(err, "failed to unmarshal block header")
 	}
-	data, err := io.ReadAll(resp.Body)
+	data := resp.Body[lib.BlockHeaderSize:]
 	if err != nil {
 		return nil, lib.BlockHeader{}, lib.WrapErrorf(err, "failed to read block data")
 	}
@@ -88,11 +120,11 @@ func (c *HTTPStorageClient) ReadBlockHeader(blockId lib.BlockId) (lib.BlockHeade
 	if err != nil {
 		return lib.BlockHeader{}, lib.WrapErrorf(err, "failed to read block header")
 	}
-	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode == http.StatusNotFound {
 		return lib.BlockHeader{}, lib.ErrBlockNotFound
 	}
-	header, err := lib.UnmarshalBlockHeader(blockId, resp.Body)
+	body := bytes.NewReader(resp.Body)
+	header, err := lib.UnmarshalBlockHeader(blockId, body)
 	if err != nil {
 		return lib.BlockHeader{}, lib.WrapErrorf(err, "failed to unmarshal block header")
 	}
@@ -105,11 +137,14 @@ func (c *HTTPStorageClient) WriteBlock(block lib.Block) (bool, error) {
 		return false, lib.WrapErrorf(err, "failed to marshal block header")
 	}
 	r := io.MultiReader(headerBytes, bytes.NewReader(block.EncryptedData))
-	resp, err := c.request(http.MethodPut, "/storage/block/"+block.Header.BlockId.String(), r)
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return false, lib.WrapErrorf(err, "failed to read block data")
+	}
+	resp, err := c.request(http.MethodPut, "/storage/block/"+block.Header.BlockId.String(), body)
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to write block")
 	}
-	defer resp.Body.Close() //nolint:errcheck
 	return resp.StatusCode != http.StatusCreated, nil
 }
 
@@ -118,7 +153,6 @@ func (c *HTTPStorageClient) HasControlFile(section lib.ControlFileSection, name 
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to check if control file exists")
 	}
-	defer resp.Body.Close() //nolint:errcheck
 	return resp.StatusCode == http.StatusOK, nil
 }
 
@@ -127,24 +161,17 @@ func (c *HTTPStorageClient) ReadControlFile(section lib.ControlFileSection, name
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read control file")
 	}
-	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, lib.ErrControlFileNotFound
 	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to read control file data")
-	}
-	return data, nil
+	return resp.Body, nil
 }
 
 func (c *HTTPStorageClient) WriteControlFile(section lib.ControlFileSection, name string, data []byte) error {
-	r := bytes.NewReader(data)
-	resp, err := c.request(http.MethodPut, "/storage/control/"+string(section)+"/"+name, r)
+	resp, err := c.request(http.MethodPut, "/storage/control/"+string(section)+"/"+name, data)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to write control file")
 	}
-	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		return lib.Errorf("failed to write control file: got %d (%s)", resp.StatusCode, string(data))
 	}
@@ -159,7 +186,6 @@ func (c *HTTPStorageClient) DeleteControlFile(section lib.ControlFileSection, na
 	if resp.StatusCode == http.StatusNotFound {
 		return lib.ErrControlFileNotFound
 	}
-	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		return lib.Errorf("failed to delete control file: got %d", resp.StatusCode)
 	}
@@ -168,24 +194,15 @@ func (c *HTTPStorageClient) DeleteControlFile(section lib.ControlFileSection, na
 
 func (c *HTTPStorageClient) request(
 	method, path string,
-	body io.Reader,
+	body []byte,
 	ignoreStatusCodes ...int,
-) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(c.Context, method, c.Address+path, body)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to create request")
-	}
-	resp, err := c.Client.Do(req)
+) (*HTTPResponse, error) {
+	resp, err := c.Client.Request(method, c.Address+path, body)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to execute request")
 	}
 	if resp.StatusCode >= 400 && !slices.Contains(ignoreStatusCodes, resp.StatusCode) {
-		defer resp.Body.Close() //nolint:errcheck
-		msg, err := io.ReadAll(resp.Body)
-		if err != nil {
-			msg = fmt.Appendf(nil, "failed to read response body: %s", err)
-		}
-		return nil, lib.Errorf("failed to open storage: got %d (%s)", resp.StatusCode, string(msg))
+		return nil, lib.Errorf("failed to open storage: got %d (%s)", resp.StatusCode, string(resp.Body))
 	}
 	return resp, nil
 }
@@ -199,16 +216,16 @@ func NewHTTPStorageServer(storage *lib.FileStorage, address string) *HTTPStorage
 	return &HTTPStorageServer{storage, address}
 }
 
-func (s *HTTPStorageServer) RegisterRoutes(mux *http.ServeMux, logRequests bool) {
-	mux.HandleFunc("GET /storage/open", wrapHandler(s.Open, logRequests))
-	mux.HandleFunc("HEAD /storage/block/{id}", wrapHandler(s.HasBlock, logRequests))
-	mux.HandleFunc("GET /storage/block/{id}", wrapHandler(s.ReadBlock, logRequests))
-	mux.HandleFunc("GET /storage/block/{id}/header", wrapHandler(s.ReadBlockHeader, logRequests))
-	mux.HandleFunc("PUT /storage/block/{id}", wrapHandler(s.WriteBlock, logRequests))
-	mux.HandleFunc("HEAD /storage/control/{section}/{name}", wrapHandler(s.HasControlFile, logRequests))
-	mux.HandleFunc("GET /storage/control/{section}/{name}", wrapHandler(s.ReadControlFile, logRequests))
-	mux.HandleFunc("PUT /storage/control/{section}/{name}", wrapHandler(s.WriteControlFile, logRequests))
-	mux.HandleFunc("DELETE /storage/control/{section}/{name}", wrapHandler(s.DeleteControlFile, logRequests))
+func (s *HTTPStorageServer) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /storage/open", s.Open)
+	mux.HandleFunc("HEAD /storage/block/{id}", s.HasBlock)
+	mux.HandleFunc("GET /storage/block/{id}", s.ReadBlock)
+	mux.HandleFunc("GET /storage/block/{id}/header", s.ReadBlockHeader)
+	mux.HandleFunc("PUT /storage/block/{id}", s.WriteBlock)
+	mux.HandleFunc("HEAD /storage/control/{section}/{name}", s.HasControlFile)
+	mux.HandleFunc("GET /storage/control/{section}/{name}", s.ReadControlFile)
+	mux.HandleFunc("PUT /storage/control/{section}/{name}", s.WriteControlFile)
+	mux.HandleFunc("DELETE /storage/control/{section}/{name}", s.DeleteControlFile)
 }
 
 // Return the storage TOML as a string.
@@ -406,11 +423,4 @@ func (s *HTTPStorageServer) error(wrappedError *lib.WrappedError, w http.Respons
 		slog.Error("Failed to write error response", "error", err)
 		return
 	}
-}
-
-func wrapHandler(handler http.HandlerFunc, logRequests bool) http.HandlerFunc {
-	if logRequests {
-		return RequestLogHander(handler)
-	}
-	return handler
 }
