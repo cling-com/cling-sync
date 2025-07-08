@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -121,18 +120,16 @@ func (m *CommitMonitor) progress() {
 type StagingMonitor struct {
 	Verbose        bool
 	NoProgress     bool
-	WorkspaceDir   string
 	paths          int
 	excluded       int
 	totalFileSizes int64
 	startTime      time.Time
 }
 
-func NewStagingMonitor(workspaceDir string, verbose, noProgress bool) *StagingMonitor {
+func NewStagingMonitor(verbose, noProgress bool) *StagingMonitor {
 	return &StagingMonitor{ //nolint:exhaustruct
-		Verbose:      verbose,
-		NoProgress:   noProgress,
-		WorkspaceDir: workspaceDir,
+		Verbose:    verbose,
+		NoProgress: noProgress,
 	}
 }
 
@@ -145,7 +142,6 @@ func (m *StagingMonitor) OnStart(path string, dirEntry os.DirEntry) {
 	if !m.Verbose {
 		return
 	}
-	path, _ = filepath.Rel(m.WorkspaceDir, path)
 	fmt.Printf("%s\n", path)
 }
 
@@ -203,7 +199,6 @@ type CpMonitor struct {
 	Verbose      bool
 	IgnoreErrors bool
 	NoProgress   bool
-	WorkspaceDir string
 	cpOnExists   ws.CpOnExists
 	paths        int
 	excluded     int
@@ -213,12 +208,11 @@ type CpMonitor struct {
 	startTime    time.Time
 }
 
-func NewCpMonitor(workspaceDir string, cpOnExists ws.CpOnExists, verbose, ignoreErrors, noProgress bool) *CpMonitor {
+func NewCpMonitor(cpOnExists ws.CpOnExists, verbose, ignoreErrors, noProgress bool) *CpMonitor {
 	return &CpMonitor{ //nolint:exhaustruct
 		Verbose:      verbose,
 		IgnoreErrors: ignoreErrors,
 		NoProgress:   noProgress,
-		WorkspaceDir: workspaceDir,
 		cpOnExists:   cpOnExists,
 	}
 }

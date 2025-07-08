@@ -1,7 +1,7 @@
 package workspace
 
 import (
-	"os"
+	"io/fs"
 	"testing"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -15,7 +15,7 @@ func TestMerge(t *testing.T) {
 		rt := NewRepositoryTest(t)
 
 		// Create a second workspace tied to the same repository.
-		wt := NewWorkspaceTest(t, rt.RepositoryStorage.Dir)
+		wt := NewWorkspaceTest(t, rt.RepositoryDir)
 		assert.Equal(true, wt.LocalHead().IsRoot())
 
 		// Add first commit.
@@ -28,9 +28,9 @@ func TestMerge(t *testing.T) {
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(remoteRev1, nil, []FileInfo{
 			{"a.txt", 0o612, 1, "a"},
-			{"b", 0o734 | os.ModeDir, 0, ""},
+			{"b", 0o734 | fs.ModeDir, 0, ""},
 			{"b/c.txt", 0o600, 1, "c"},
-			{"b/e", 0o700 | os.ModeDir, 0, ""},
+			{"b/e", 0o700 | fs.ModeDir, 0, ""},
 			{"b/e/f.txt", 0o600, 1, "f"},
 		})
 
@@ -40,11 +40,11 @@ func TestMerge(t *testing.T) {
 		assert.Equal(remoteRev1, wt.LocalHead())
 		assert.Equal([]FileInfo{
 			{"a.txt", 0o612, 1, "a"},
-			{"b", 0o734 | os.ModeDir, 0, ""},
+			{"b", 0o734 | fs.ModeDir, 0, ""},
 			{"b/c.txt", 0o600, 1, "c"},
-			{"b/e", 0o700 | os.ModeDir, 0, ""},
+			{"b/e", 0o700 | fs.ModeDir, 0, ""},
 			{"b/e/f.txt", 0o600, 1, "f"},
-		}, readDir(t, wt.WorkspacePath))
+		}, readDir(t, wt.FS))
 
 		// Add second commit that adds, updates, and removes files/directories.
 		rt.AddLocal("b/d.txt", "d")
@@ -56,7 +56,7 @@ func TestMerge(t *testing.T) {
 		remoteRev2, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(remoteRev2, nil, []FileInfo{
-			{"b", 0o734 | os.ModeDir, 0, ""},
+			{"b", 0o734 | fs.ModeDir, 0, ""},
 			{"b/c.txt", 0o400, 2, "cc"},
 			{"b/d.txt", 0o600, 1, "d"},
 		})
@@ -67,17 +67,17 @@ func TestMerge(t *testing.T) {
 		assert.Equal(remoteRev2, wt.LocalHead())
 		assert.Equal(localRev, wt.LocalHead())
 		assert.Equal([]FileInfo{
-			{"b", 0o734 | os.ModeDir, 0, ""},
+			{"b", 0o734 | fs.ModeDir, 0, ""},
 			{"b/c.txt", 0o400, 2, "cc"},
 			{"b/d.txt", 0o600, 1, "d"},
-		}, readDir(t, wt.WorkspacePath))
+		}, readDir(t, wt.FS))
 	})
 
 	t.Run("Local non-conflicting changes (add, update, remove) are committed", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		rt := NewRepositoryTest(t)
-		wt := NewWorkspaceTest(t, rt.RepositoryStorage.Dir)
+		wt := NewWorkspaceTest(t, rt.RepositoryDir)
 
 		// Add first commit.
 		rt.AddLocal("a.txt", "a")
@@ -89,7 +89,7 @@ func TestMerge(t *testing.T) {
 		rt.VerifyRevisionSnapshot(remoteRev1, nil, []FileInfo{
 			{"a.txt", 0o600, 1, "a"},
 			{"b.txt", 0o600, 1, "b"},
-			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d.txt", 0o600, 1, "d"},
 			{"c/e.txt", 0o600, 1, "e"},
 		})
@@ -108,7 +108,7 @@ func TestMerge(t *testing.T) {
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(remoteRev2, nil, []FileInfo{
 			{"b.txt", 0o600, 2, "bb"},
-			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d.txt", 0o600, 1, "d"},
 			{"c/e.txt", 0o600, 1, "e"},
 			{"c/f.txt", 0o600, 1, "f"},
@@ -127,21 +127,21 @@ func TestMerge(t *testing.T) {
 		assert.Equal(wt.LocalHead(), rt.RemoteHead())
 		expected := []FileInfo{
 			{"b.txt", 0o600, 2, "bb"},
-			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d.txt", 0o600, 2, "dd"},
 			{"c/f.txt", 0o600, 1, "f"},
-			{"c/g", 0o700 | os.ModeDir, 0, ""},
+			{"c/g", 0o700 | fs.ModeDir, 0, ""},
 			{"c/g/h.txt", 0o600, 1, "h"},
 		}
 		rt.VerifyRevisionSnapshot(wt.LocalHead(), nil, expected)
-		assert.Equal(expected, readDir(t, wt.WorkspacePath))
+		assert.Equal(expected, readDir(t, wt.FS))
 	})
 
 	t.Run("Removed files are not committed again", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		rt := NewRepositoryTest(t)
-		wt := NewWorkspaceTest(t, rt.RepositoryStorage.Dir)
+		wt := NewWorkspaceTest(t, rt.RepositoryDir)
 
 		// Add first commit.
 		rt.AddLocal("a.txt", "a")
@@ -150,7 +150,7 @@ func TestMerge(t *testing.T) {
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(remoteRev1, nil, []FileInfo{
 			{"a.txt", 0o600, 1, "a"},
-			{"b", 0o700 | os.ModeDir, 0, ""},
+			{"b", 0o700 | fs.ModeDir, 0, ""},
 			{"b/c.txt", 0o600, 1, "c"},
 		})
 
@@ -171,9 +171,9 @@ func TestMerge(t *testing.T) {
 		// `b/` should still be in the workspace.
 		assert.Equal([]FileInfo{
 			{"a.txt", 0o600, 1, "a"},
-			{"b", 0o700 | os.ModeDir, 0, ""},
+			{"b", 0o700 | fs.ModeDir, 0, ""},
 			{"b/c.txt", 0o600, 1, "c"},
-		}, readDir(t, wt.WorkspacePath))
+		}, readDir(t, wt.FS))
 
 		// Merge second commit into workspace. This should remove `b/`.
 		localRev2, err := Merge(wt.Workspace, rt.Repository, fakeMergeOptions())
@@ -182,14 +182,14 @@ func TestMerge(t *testing.T) {
 		assert.Equal(localRev2, wt.LocalHead())
 		assert.Equal([]FileInfo{
 			{"a.txt", 0o600, 1, "a"},
-		}, readDir(t, wt.WorkspacePath))
+		}, readDir(t, wt.FS))
 	})
 
 	t.Run("Adding a file in a removed directory should be fine", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		rt := NewRepositoryTest(t)
-		wt := NewWorkspaceTest(t, rt.RepositoryStorage.Dir)
+		wt := NewWorkspaceTest(t, rt.RepositoryDir)
 
 		// Add first commit.
 		rt.AddLocal("a.txt", "a")
@@ -198,7 +198,7 @@ func TestMerge(t *testing.T) {
 		assert.NoError(err)
 		rt.VerifyRevisionSnapshot(revId1, nil, []FileInfo{
 			{"a.txt", 0o600, 1, "a"},
-			{"b", 0o700 | os.ModeDir, 0, ""},
+			{"b", 0o700 | fs.ModeDir, 0, ""},
 			{"b/c.txt", 0o600, 1, "c"},
 		})
 
@@ -224,9 +224,9 @@ func TestMerge(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal([]FileInfo{
 			{"a.txt", 0o600, 1, "a"},
-			{"b", 0o700 | os.ModeDir, 0, ""},
+			{"b", 0o700 | fs.ModeDir, 0, ""},
 			{"b/d.txt", 0o600, 1, "d"},
-		}, readDir(t, wt.WorkspacePath))
+		}, readDir(t, wt.FS))
 
 		// A merge commit should have been created.
 		assert.NotEqual(revId1, localRev2)
@@ -239,7 +239,7 @@ func TestMerge(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		rt := NewRepositoryTest(t)
-		wt := NewWorkspaceTest(t, rt.RepositoryStorage.Dir)
+		wt := NewWorkspaceTest(t, rt.RepositoryDir)
 
 		// Add first commit.
 		rt.AddLocal("a.txt", "a")
@@ -272,7 +272,7 @@ func TestMerge(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		rt := NewRepositoryTest(t)
-		wt := NewWorkspaceTest(t, rt.RepositoryStorage.Dir)
+		wt := NewWorkspaceTest(t, rt.RepositoryDir)
 
 		// Add first commit.
 		rt.AddLocal("a.txt", "a")
@@ -306,7 +306,7 @@ func TestForceCommit(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		rt := NewRepositoryTest(t)
-		wt := NewWorkspaceTest(t, rt.RepositoryStorage.Dir)
+		wt := NewWorkspaceTest(t, rt.RepositoryDir)
 
 		// Add first commit.
 		rt.AddLocal("a.txt", "a")
@@ -317,7 +317,7 @@ func TestForceCommit(t *testing.T) {
 		rt.VerifyRevisionSnapshot(remoteRev1, nil, []FileInfo{
 			{"a.txt", 0o600, 1, "a"},
 			{"b.txt", 0o600, 1, "b"},
-			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d.txt", 0o600, 1, "d"},
 		})
 
@@ -337,7 +337,7 @@ func TestForceCommit(t *testing.T) {
 		rt.VerifyRevisionSnapshot(remoteRev2, nil, []FileInfo{
 			{"a.txt", 0o600, 2, "aa"},
 			{"b.txt", 0o600, 2, "bb"},
-			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/f.txt", 0o600, 1, "f"},
 		})
 
@@ -358,11 +358,11 @@ func TestForceCommit(t *testing.T) {
 		expectedState := []FileInfo{
 			{"a.txt", 0o600, 3, "aaa"},
 			{"b.txt", 0o600, 2, "bb"},
-			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/f.txt", 0o600, 1, "f"},
 		}
 		rt.VerifyRevisionSnapshot(commitRev, nil, expectedState)
-		assert.Equal(expectedState, readDir(t, wt.WorkspacePath))
+		assert.Equal(expectedState, readDir(t, wt.FS))
 	})
 }
 
@@ -377,7 +377,7 @@ func (m *changeRemoteCommitMonitor) OnStart(entry *lib.RevisionEntry) {
 		return
 	}
 	m.committed = true
-	commit, err := lib.NewCommit(m.rt.Repository, m.rt.t.TempDir())
+	commit, err := lib.NewCommit(m.rt.Repository, td.NewRealFS(m.rt.t))
 	m.rt.assert.NoError(err)
 	err = commit.Add(td.RevisionEntry("update.txt", lib.RevisionEntryAdd))
 	m.rt.assert.NoError(err)

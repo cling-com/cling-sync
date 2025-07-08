@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
-	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -17,7 +16,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		storage, err := NewFileStorage(t.TempDir(), StoragePurposeRepository)
+		storage, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
 		assert.NoError(err)
 		repo1, err := InitNewRepository(storage, userPassphrase)
 		assert.NoError(err)
@@ -32,7 +31,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 	t.Run("MasterKeyInfo.EncryptedKEK is actually encrypted with user's passphrase", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		storage, err := NewFileStorage(t.TempDir(), StoragePurposeRepository)
+		storage, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
 		assert.NoError(err)
 		repo1, err := InitNewRepository(storage, userPassphrase)
 		assert.NoError(err)
@@ -56,7 +55,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 	t.Run("OpenWithKeys", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		storage, err := NewFileStorage(t.TempDir(), StoragePurposeRepository)
+		storage, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
 		assert.NoError(err)
 		repo1, err := InitNewRepository(storage, userPassphrase)
 		assert.NoError(err)
@@ -74,11 +73,11 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		t.Run(fmt.Sprintf("Tampering with %s is detected", tamper), func(t *testing.T) {
 			t.Parallel()
 			assert := NewAssert(t)
-			_, storage := testRepository(t)
+			_, storage, fs := testRepositoryWithFS(t)
 
 			// Manipulate the UserKeySalt.
-			configFilePath := filepath.Join(storage.clingDir, "repository.txt")
-			_ = os.Chmod(configFilePath, 0o600)
+			configFilePath := filepath.Join(".cling", "repository.txt")
+			_ = fs.Chmod(configFilePath, 0o600)
 			toml, err := storage.Open()
 			assert.NoError(err)
 			masterKeyInfo, err := parseRepositoryConfig(toml)
@@ -98,7 +97,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 			default:
 				panic("invalid tamper")
 			}
-			f, err := os.OpenFile(configFilePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+			f, err := fs.OpenWrite(configFilePath)
 			assert.NoError(err)
 			defer f.Close() //nolint:errcheck
 			err = WriteToml(f, "", toml)
@@ -188,7 +187,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 	t.Run("Maximum block size", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		repo, storage := testRepository(t)
+		repo, storage, fs := testRepositoryWithFS(t)
 
 		writeData := make([]byte, MaxBlockDataSize)
 		_, _ = rand.Read(writeData)
@@ -200,10 +199,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Equal(writeData, readData)
 
 		// Get the file size of the block file.
-		file, err := os.Open(storage.blockPath(header.BlockId))
-		assert.NoError(err)
-		defer file.Close() //nolint:errcheck
-		stat, err := file.Stat()
+		stat, err := fs.Stat(storage.blockPath(header.BlockId))
 		assert.NoError(err)
 		assert.Equal(int64(MaxBlockSize), stat.Size())
 	})
@@ -353,11 +349,18 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 
 func testRepository(t *testing.T) (*Repository, *FileStorage) {
 	t.Helper()
+	repository, storage, _ := testRepositoryWithFS(t)
+	return repository, storage
+}
+
+func testRepositoryWithFS(t *testing.T) (*Repository, *FileStorage, FS) {
+	t.Helper()
 	userPassphrase := []byte("user passphrase")
 	assert := NewAssert(t)
-	storage, err := NewFileStorage(t.TempDir(), StoragePurposeRepository)
+	fs := td.NewFS(t)
+	storage, err := NewFileStorage(fs, StoragePurposeRepository)
 	assert.NoError(err)
 	repo, err := InitNewRepository(storage, userPassphrase)
 	assert.NoError(err)
-	return repo, storage
+	return repo, storage, fs
 }

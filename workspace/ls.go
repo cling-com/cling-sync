@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -85,12 +84,8 @@ type LsOptions struct {
 	PathFilter lib.PathFilter
 }
 
-func Ls(repository *lib.Repository, opts *LsOptions) ([]LsFile, error) {
-	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("ls-%d", os.Getpid()))
-	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
-		return nil, lib.WrapErrorf(err, "failed to create temporary directory %s", tmpDir)
-	}
-	snapshot, err := lib.NewRevisionSnapshot(repository, opts.RevisionId, tmpDir)
+func Ls(repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, error) {
+	snapshot, err := lib.NewRevisionSnapshot(repository, opts.RevisionId, tmpFS)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}

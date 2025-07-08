@@ -2,11 +2,12 @@ package workspace
 
 import (
 	"io/fs"
-	"os"
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -17,9 +18,8 @@ func TestCp(t *testing.T) {
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		tmp := filepath.Join(t.TempDir(), "tmp")
-		out := filepath.Join(t.TempDir(), "cp")
-		assert.NoError(os.MkdirAll(out, 0o700))
+		tmp := td.NewFS(t)
+		out := td.NewFS(t)
 		rt := NewRepositoryTest(t)
 		rt.AddLocal("a.txt", "a")
 		rt.AddLocal("b.txt", "b")
@@ -33,32 +33,29 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from rev1.
-		assert.NoError(os.MkdirAll(tmp, 0o700))
 		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]FileInfo{
 			{"a.txt", 0o600, 1, "a"},
 			{"b.txt", 0o600, 1, "b"},
-			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 1, "c"},
-			{"c/d", 0o700 | os.ModeDir, 0, ""},
+			{"c/d", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d/2.txt", 0o600, 2, "cc"},
 		}, readDir(t, out))
 
 		// Trying to copy from rev2 should fail, because files already exist.
-		assert.NoError(os.RemoveAll(tmp))
-		assert.NoError(os.MkdirAll(tmp, 0o700))
+		tmp = td.NewFS(t)
 		err = Cp(rt.Repository, out, &CpOptions{revId2, NewTestCpMonitor(), nil}, tmp)
 		assert.Error(err, "failed to copy")
-		assert.Error(err, "file exists")
+		assert.Error(err, "exists")
 	})
 
 	t.Run("Overwrite", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		tmp := t.TempDir()
-		targetDir := t.TempDir()
-		assert.NoError(os.MkdirAll(targetDir, 0o700))
+		tmp := td.NewFS(t)
+		out := td.NewFS(t)
 		rt := NewRepositoryTest(t)
 		rt.AddLocal("a.txt", "aaa")
 		rt.AddLocal("b.txt", "b")
@@ -77,47 +74,37 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from rev1.
-		assert.NoError(os.MkdirAll(tmp, 0o700))
-		err = Cp(rt.Repository, targetDir, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
+		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]FileInfo{
 			{"a.txt", 0o600, 3, "aaa"},
 			{"b.txt", 0o600, 1, "b"},
-			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 1, "c"},
-			{"c/d", 0o700 | os.ModeDir, 0, ""},
+			{"c/d", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d/2.txt", 0o600, 2, "cc"},
-		}, readDir(t, targetDir))
+		}, readDir(t, out))
 
 		// Copy all from the rev2.
-		assert.NoError(os.RemoveAll(tmp))
-		assert.NoError(os.MkdirAll(tmp, 0o700))
-		err = Cp(rt.Repository, targetDir, &CpOptions{revId2, NewTestCpMonitorOverwrite(), nil}, tmp)
+		tmp = td.NewFS(t)
+		err = Cp(rt.Repository, out, &CpOptions{revId2, NewTestCpMonitorOverwrite(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]FileInfo{
 			{"a.txt", 0o600, 1, "a"},
 			{"b.txt", 0o777, 1, "b"},
-			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 1, "c"},
 			{"c/3.txt", 0o600, 3, "ccc"},
-			{"c/d", 0o700 | os.ModeDir, 0, ""},
+			{"c/d", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d/2.txt", 0o600, 2, "cc"},
-		}, readDir(t, targetDir))
+		}, readDir(t, out))
 	})
 
-	t.Run("Parent directory without rx permission is not created", func(t *testing.T) {
+	t.Run("Parent directory without rx permission should still be created", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		tmp := t.TempDir()
-		out := t.TempDir()
-		t.Cleanup(func() {
-			_ = filepath.WalkDir(out, func(path string, d os.DirEntry, err error) error {
-				_ = os.Chmod(path, 0o777) //nolint:gosec
-				return nil
-			})
-		})
-		assert.NoError(os.MkdirAll(out, 0o700))
-		assert.NoError(os.MkdirAll(tmp, 0o700))
+		tmp := td.NewFS(t)
+		out := td.NewFS(t)
 		rt := NewRepositoryTest(t)
 		rt.AddLocal("c/1.txt", "c1")
 		rt.UpdateLocalMode("c", 0o500)
@@ -126,12 +113,10 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		assert.NoError(os.RemoveAll(tmp))
-		assert.NoError(os.MkdirAll(tmp, 0o700))
 		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
 		assert.NoError(err)
 		assert.Equal([]FileInfo{
-			{"c", 0o500 | os.ModeDir, 0, ""},
+			{"c", 0o500 | fs.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 2, "c1"},
 		}, readDir(t, out))
 	})
@@ -139,10 +124,8 @@ func TestCp(t *testing.T) {
 	t.Run("PathFilter", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		tmp := filepath.Join(t.TempDir(), "tmp")
-		out := filepath.Join(t.TempDir(), "cp")
-		assert.NoError(os.MkdirAll(out, 0o700))
-		assert.NoError(os.MkdirAll(tmp, 0o700))
+		tmp := td.NewFS(t)
+		out := td.NewFS(t)
 		rt := NewRepositoryTest(t)
 		rt.AddLocal("a.txt", "a")
 		rt.AddLocal("b.txt", "b")
@@ -157,9 +140,9 @@ func TestCp(t *testing.T) {
 		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), pathFilter}, tmp)
 		assert.NoError(err)
 		assert.Equal([]FileInfo{
-			{"c", 0o700 | os.ModeDir, 0, ""},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 2, "c1"},
-			{"c/d", 0o700 | os.ModeDir, 0, ""},
+			{"c/d", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d/2.txt", 0o600, 2, "c2"},
 		}, readDir(t, out))
 	})
@@ -167,10 +150,8 @@ func TestCp(t *testing.T) {
 	t.Run("FileMode is restored (as much as possible)", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		tmp := filepath.Join(t.TempDir(), "tmp")
-		out := filepath.Join(t.TempDir(), "cp")
-		assert.NoError(os.MkdirAll(out, 0o700))
-		assert.NoError(os.MkdirAll(tmp, 0o700))
+		tmp := td.NewFS(t)
+		out := td.NewFS(t)
 		rt := NewRepositoryTest(t)
 
 		rt.AddLocal("a.txt", "a")
@@ -190,11 +171,11 @@ func TestCp(t *testing.T) {
 			gid = gi
 		}
 		assert.NotEqual(0, gid, "current user has no additional groups")
-		err = os.Chown(rt.LocalPath("a.txt"), -1, gid)
+		err = rt.FS.Chown("a.txt", -1, gid)
 		assert.NoError(err)
 
 		// Set `setuid`, `setgid`, and `sticky`.
-		err = os.Chmod(rt.LocalPath("a.txt"), 0o777|os.ModeSetuid|os.ModeSetgid|os.ModeSticky)
+		err = rt.FS.Chmod("a.txt", 0o777|fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)
 		assert.NoError(err)
 
 		// Commit.
@@ -206,10 +187,10 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		stat := rt.LocalStat("a.txt")
-		cpStat, err := os.Stat(filepath.Join(out, "a.txt"))
+		cpStat, err := out.Stat("a.txt")
 		assert.NoError(err)
 		// We do not preserve setuid, setgid, and sticky.
-		assert.Equal(stat.Mode()&os.ModePerm, cpStat.Mode())
+		assert.Equal(stat.Mode()&fs.ModePerm, cpStat.Mode())
 		assert.Equal(stat.Size(), cpStat.Size())
 		assert.Equal(stat.ModTime(), cpStat.ModTime())
 		// Verify extended metadata if supported. We use `EnhanceMetadata` to test this,
@@ -232,34 +213,33 @@ func TestCp(t *testing.T) {
 	})
 }
 
-func readDir(t *testing.T, basePath string) []FileInfo {
+func readDir(t *testing.T, fs_ lib.FS) []FileInfo {
 	t.Helper()
 	fileInfos := []FileInfo{}
 	assert := lib.NewAssert(t)
-	err := filepath.WalkDir(basePath, func(path string, d fs.DirEntry, err error) error {
+	err := fs_.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if filepath.Base(path) == ".cling" {
 			return filepath.SkipDir
 		}
-		name, err := filepath.Rel(basePath, path)
 		assert.NoError(err)
-		if name == "." {
+		if path == "." {
 			return nil
 		}
-		info, err := os.Stat(path)
+		info, err := fs_.Stat(path)
 		assert.NoError(err)
 		content := ""
 		var size int
 		if !info.IsDir() {
-			c, err := os.ReadFile(path)
+			c, err := lib.ReadFile(fs_, path)
 			assert.NoError(err)
 			content = string(c)
 			size = int(info.Size())
 		}
 		fileInfos = append(fileInfos, FileInfo{
-			Path:    name,
+			Path:    path,
 			Mode:    info.Mode(),
 			Size:    size,
 			Content: content,
@@ -267,6 +247,7 @@ func readDir(t *testing.T, basePath string) []FileInfo {
 		return nil
 	})
 	assert.NoError(err)
+	slices.SortFunc(fileInfos, func(a, b FileInfo) int { return strings.Compare(a.Path, b.Path) })
 	return fileInfos
 }
 

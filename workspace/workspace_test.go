@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -12,77 +11,77 @@ func TestWorkspaceNewAndOpen(t *testing.T) {
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		local := t.TempDir()
-		remote := t.TempDir()
+		local := td.NewFS(t)
+		remote := "the/remote/repository"
 
 		// Create new workspace.
-		ws, err := NewWorkspace(local, RemoteRepository(remote))
+		ws, err := NewWorkspace(local, td.NewFS(t), RemoteRepository(remote))
 		assert.NoError(err)
-		assert.Equal(local, ws.WorkspacePath)
 		assert.Equal(remote, string(ws.RemoteRepository))
 		head, err := ws.Head()
 		assert.NoError(err)
 		assert.Equal(true, head.IsRoot())
 
 		// Open workspace.
-		open, err := OpenWorkspace(local)
+		open, err := OpenWorkspace(local, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(ws.RemoteRepository, open.RemoteRepository)
-		assert.Equal(ws.WorkspacePath, open.WorkspacePath)
 	})
 
 	t.Run("Non existing workspace", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		local := filepath.Join(t.TempDir(), "local")
+		local := td.NewFS(t)
 
 		// Open workspace.
-		_, err := OpenWorkspace(local)
+		_, err := OpenWorkspace(local, td.NewFS(t))
 		assert.Equal(lib.ErrStorageNotFound, err)
 	})
 
 	t.Run("Call NewWorkspace on existing workspace", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		local := t.TempDir()
-		remote := t.TempDir()
+		local := td.NewFS(t)
+		remote := "the/remote/repository"
 
 		// Create new workspace.
-		_, err := NewWorkspace(local, RemoteRepository(remote))
+		_, err := NewWorkspace(local, td.NewFS(t), RemoteRepository(remote))
 		assert.NoError(err)
 
 		// Try to create new workspace inside existing workspace.
-		_, err = NewWorkspace(local, RemoteRepository(remote))
+		_, err = NewWorkspace(local, td.NewFS(t), RemoteRepository(remote))
 		assert.ErrorIs(err, lib.ErrStorageAlreadyExists)
 	})
 
 	t.Run("Workspaces can be nested", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		local := t.TempDir()
-		remote := t.TempDir()
+		local := td.NewFS(t)
+		remote := "the/remote/repository"
 
 		// Create new workspace.
-		_, err := NewWorkspace(local, RemoteRepository(remote))
+		_, err := NewWorkspace(local, td.NewFS(t), RemoteRepository(remote))
 		assert.NoError(err)
 
 		// Try to create new workspace in a sub directory.
-		localSub := filepath.Join(local, "sub")
-		_, err = NewWorkspace(localSub, RemoteRepository(remote))
+		localSub, err := local.MkSub("sub")
+		assert.NoError(err)
+		_, err = NewWorkspace(localSub, td.NewFS(t), RemoteRepository(remote))
 		assert.NoError(err)
 	})
 
 	t.Run("Workspace alongside repository", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		dir := t.TempDir()
+		fs := td.NewFS(t)
+		remote := "the/remote/repository"
 
-		repositoryStorage, err := lib.NewFileStorage(dir, lib.StoragePurposeRepository)
+		repositoryStorage, err := lib.NewFileStorage(fs, lib.StoragePurposeRepository)
 		assert.NoError(err)
 		err = repositoryStorage.Init(lib.Toml{"encryption": {"version": "1"}}, "header comment")
 		assert.NoError(err)
 
-		_, err = NewWorkspace(dir, RemoteRepository(dir))
+		_, err = NewWorkspace(fs, td.NewFS(t), RemoteRepository(remote))
 		assert.NoError(err)
 	})
 }

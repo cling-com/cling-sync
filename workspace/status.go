@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
@@ -64,23 +62,24 @@ type StatusOptions struct {
 	Monitor    StagingEntryMonitor
 }
 
-func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpDir string) (StatusFiles, error) {
+func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpFS lib.FS) (StatusFiles, error) {
 	head, err := repository.Head()
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get head")
 	}
-	snapshotDir := filepath.Join(tmpDir, "snapshot")
-	stagingTmpDir := filepath.Join(tmpDir, "staging")
-	for _, dir := range []string{snapshotDir, stagingTmpDir} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, lib.WrapErrorf(err, "failed to create temporary directory %s", dir)
-		}
+	snapshotFS, err := tmpFS.MkSub("snapshot")
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to create temporary snapshot directory")
 	}
-	snapshot, err := lib.NewRevisionSnapshot(repository, head, snapshotDir)
+	stagingTmpFS, err := tmpFS.MkSub("staging")
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to create temporary staging directory")
+	}
+	snapshot, err := lib.NewRevisionSnapshot(repository, head, snapshotFS)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	staging, err := NewStaging(ws.WorkspacePath, opts.PathFilter, stagingTmpDir, opts.Monitor)
+	staging, err := NewStaging(ws.FS, opts.PathFilter, stagingTmpFS, opts.Monitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}

@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,25 +16,20 @@ import (
 var td = lib.TestData{} //nolint:gochecknoglobals
 
 type WorkspaceTest struct {
-	Workspace     *Workspace
-	WorkspacePath string
-	t             *testing.T
-	assert        lib.Assert
+	Workspace *Workspace
+	FS        *lib.RealFS
+	t         *testing.T
+	assert    lib.Assert
 }
 
 func NewWorkspaceTest(t *testing.T, repositoryDir string) *WorkspaceTest {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	workspacePath := t.TempDir()
-	t.Cleanup(func() {
-		_ = filepath.WalkDir(workspacePath, func(path string, d os.DirEntry, err error) error {
-			_ = os.Chmod(path, 0o777) //nolint:gosec
-			return nil
-		})
-	})
-	workspace, err := NewWorkspace(workspacePath, RemoteRepository(repositoryDir))
+	workspaceFS := td.NewRealFS(t)
+	tmp := td.NewFS(t)
+	workspace, err := NewWorkspace(workspaceFS, tmp, RemoteRepository(repositoryDir))
 	assert.NoError(err)
-	return &WorkspaceTest{workspace, workspacePath, t, assert}
+	return &WorkspaceTest{workspace, workspaceFS, t, assert}
 }
 
 func (wt *WorkspaceTest) LocalHead() lib.RevisionId {
@@ -44,23 +39,16 @@ func (wt *WorkspaceTest) LocalHead() lib.RevisionId {
 	return head
 }
 
-func (wt *WorkspaceTest) LocalPath(path string) string {
-	wt.t.Helper()
-	return filepath.Join(wt.Workspace.WorkspacePath, path)
-}
-
 func (wt *WorkspaceTest) AddLocal(path string, content string) {
 	wt.t.Helper()
-	path = wt.LocalPath(path)
-	wt.assert.NoError(os.MkdirAll(filepath.Dir(path), 0o700))
-	err := os.WriteFile(path, []byte(content), 0o600)
+	wt.assert.NoError(wt.FS.MkdirAll(filepath.Dir(path)))
+	err := lib.WriteFile(wt.FS, path, []byte(content))
 	wt.assert.NoError(err)
 }
 
-func (wt *WorkspaceTest) LocalStat(path string) os.FileInfo {
+func (wt *WorkspaceTest) LocalStat(path string) fs.FileInfo {
 	wt.t.Helper()
-	path = wt.LocalPath(path)
-	stat, err := os.Stat(path)
+	stat, err := wt.FS.Stat(path)
 	wt.assert.NoError(err)
 	return stat
 }
@@ -91,35 +79,32 @@ func (wt *WorkspaceTest) LocalFileMetadata(path string) *lib.FileMetadata {
 
 func (wt *WorkspaceTest) UpdateLocal(path string, content string) {
 	wt.t.Helper()
-	path = wt.LocalPath(path)
-	err := os.WriteFile(path, []byte(content), 0o600)
+	err := lib.WriteFile(wt.FS, path, []byte(content))
 	wt.assert.NoError(err)
 }
 
 func (wt *WorkspaceTest) RemoveLocal(path string) {
 	wt.t.Helper()
-	path = filepath.Join(wt.Workspace.WorkspacePath, path)
-	err := os.RemoveAll(path)
+	err := wt.FS.RemoveAll(path)
 	wt.assert.NoError(err)
 }
 
 func (wt *WorkspaceTest) UpdateLocalMTime(path string, t time.Time) {
 	wt.t.Helper()
-	path = wt.LocalPath(path)
-	err := os.Chtimes(path, t, t)
+	err := wt.FS.Chmtime(path, t)
 	wt.assert.NoError(err)
 }
 
-func (wt *WorkspaceTest) UpdateLocalMode(path string, mode os.FileMode) {
+func (wt *WorkspaceTest) UpdateLocalMode(path string, mode fs.FileMode) {
 	wt.t.Helper()
-	path = wt.LocalPath(path)
-	err := os.Chmod(path, mode)
+	err := wt.FS.Chmod(path, mode)
 	wt.assert.NoError(err)
 }
 
 type RepositoryTest struct {
 	WorkspaceTest
 	Repository        *lib.Repository
+	RepositoryDir     string
 	RepositoryStorage *lib.FileStorage
 	t                 *testing.T
 	assert            lib.Assert
@@ -128,18 +113,13 @@ type RepositoryTest struct {
 func NewRepositoryTest(t *testing.T) *RepositoryTest {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	repositoryDir := t.TempDir()
-	t.Cleanup(func() {
-		_ = filepath.WalkDir(repositoryDir, func(path string, d os.DirEntry, err error) error {
-			_ = os.Chmod(path, 0o777) //nolint:gosec
-			return nil
-		})
-	})
-	repository, storage := testRepository(t, repositoryDir)
-	wt := NewWorkspaceTest(t, repositoryDir)
+	repositoryFS := td.NewRealFS(t)
+	repository, storage := testRepository(t, repositoryFS)
+	wt := NewWorkspaceTest(t, repositoryFS.BasePath)
 	return &RepositoryTest{
 		WorkspaceTest:     *wt,
 		Repository:        repository,
+		RepositoryDir:     repositoryFS.BasePath,
 		RepositoryStorage: storage,
 		t:                 t,
 		assert:            assert,
@@ -186,10 +166,9 @@ func (rt *RepositoryTest) VerifyRevisionSnapshot(
 
 func (rt *RepositoryTest) RevisionSnapshot(revisionId lib.RevisionId, pathFilter lib.PathFilter) []*lib.RevisionEntry {
 	rt.t.Helper()
-	tmpDir := filepath.Join(rt.t.TempDir(), "revision-snapshot")
-	defer os.RemoveAll(tmpDir) //nolint:errcheck
-	rt.assert.NoError(os.MkdirAll(tmpDir, 0o700))
-	snapshot, err := lib.NewRevisionSnapshot(rt.Repository, revisionId, tmpDir)
+	tmpFS := td.NewRealFS(rt.t)
+	defer tmpFS.RemoveAll(".") //nolint:errcheck
+	snapshot, err := lib.NewRevisionSnapshot(rt.Repository, revisionId, tmpFS)
 	rt.assert.NoError(err)
 	defer snapshot.Remove() //nolint:errcheck
 	reader := snapshot.Reader(pathFilter)
@@ -216,7 +195,7 @@ func (rt *RepositoryTest) VerifyRevision(revisionId lib.RevisionId, expected []R
 type RevisionEntryInfo struct {
 	Path    string
 	Type    lib.RevisionEntryType
-	Mode    os.FileMode
+	Mode    fs.FileMode
 	Content string
 }
 
@@ -264,7 +243,7 @@ func VerifyRevisionReader(t *testing.T, r lib.RevisionEntryReader, expected []Re
 
 type FileInfo struct {
 	Path    string
-	Mode    os.FileMode
+	Mode    fs.FileMode
 	Size    int
 	Content string
 }
@@ -279,7 +258,7 @@ func NewTestStagingMonitor() *testStagingMonitor {
 	return &testStagingMonitor{}
 }
 
-func (m *testStagingMonitor) OnStart(path string, dirEntry os.DirEntry) {
+func (m *testStagingMonitor) OnStart(path string, dirEntry fs.DirEntry) {
 }
 
 func (m *testStagingMonitor) OnEnd(path string, excluded bool, metadata *lib.FileMetadata) {
@@ -312,11 +291,11 @@ func (m *testCommitMonitor) OnAddBlock(
 func (m *testCommitMonitor) OnEnd(entry *lib.RevisionEntry) {
 }
 
-func testRepository(t *testing.T, dir string) (*lib.Repository, *lib.FileStorage) {
+func testRepository(t *testing.T, fs *lib.RealFS) (*lib.Repository, *lib.FileStorage) {
 	t.Helper()
 	userPassphrase := []byte("user passphrase")
 	assert := lib.NewAssert(t)
-	storage, err := lib.NewFileStorage(dir, lib.StoragePurposeRepository)
+	storage, err := lib.NewFileStorage(fs, lib.StoragePurposeRepository)
 	assert.NoError(err)
 	repo, err := lib.InitNewRepository(storage, userPassphrase)
 	assert.NoError(err)

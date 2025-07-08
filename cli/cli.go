@@ -59,6 +59,9 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	// Make sure the local directory either does not exist or is empty.
 	_, err = os.Stat(localPath)
 	if errors.Is(err, os.ErrNotExist) { //nolint:gocritic
+		if err := os.MkdirAll(localPath, 0o700); err != nil {
+			return lib.WrapErrorf(err, "failed to create directory %s", localPath)
+		}
 	} else if err != nil {
 		return lib.Errorf("cannot stat local directory %s", localPath)
 	} else {
@@ -82,7 +85,7 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get absolute path for %s", repositoryURI)
 		}
-		storage, err = lib.NewFileStorage(repositoryURI, lib.StoragePurposeRepository)
+		storage, err = lib.NewFileStorage(lib.NewRealFS(repositoryURI), lib.StoragePurposeRepository)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to connect to repository storage")
 		}
@@ -92,7 +95,15 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		return err
 	}
 	// We know the repository exists, so let's create the workspace.
-	workspace, err := ws.NewWorkspace(localPath, ws.RemoteRepository(repositoryURI))
+	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-workspace")
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to create temporary directory")
+	}
+	workspace, err := ws.NewWorkspace(
+		lib.NewRealFS(localPath),
+		lib.NewRealFS(tmpDir),
+		ws.RemoteRepository(repositoryURI),
+	)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create workspace")
 	}
@@ -176,7 +187,26 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
 	}
-	storage, err := lib.NewFileStorage(repositoryPath, lib.StoragePurposeRepository)
+	stat, err := os.Stat(repositoryPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(repositoryPath, 0o700); err != nil {
+				return lib.WrapErrorf(err, "failed to create directory %s", repositoryPath)
+			}
+		} else {
+			return lib.WrapErrorf(err, "failed to stat %s", repositoryPath)
+		}
+	} else if !stat.IsDir() {
+		return lib.Errorf("%s is not a directory", repositoryPath)
+	}
+	files, err := os.ReadDir(repositoryPath)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to read directory %s", repositoryPath)
+	}
+	if len(files) > 0 {
+		return lib.Errorf("directory %s is not empty", repositoryPath)
+	}
+	storage, err := lib.NewFileStorage(lib.NewRealFS(repositoryPath), lib.StoragePurposeRepository)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create storage")
 	}
@@ -184,7 +214,11 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to initialize repository")
 	}
-	workspace, err := ws.NewWorkspace(".", ws.RemoteRepository(repositoryPath))
+	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-workspace")
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to create temporary directory")
+	}
+	workspace, err := ws.NewWorkspace(lib.NewRealFS("."), lib.NewRealFS(tmpDir), ws.RemoteRepository(repositoryPath))
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create workspace")
 	}
@@ -193,7 +227,7 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 }
 
 func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
-	workspace, err := ws.OpenWorkspace(".")
+	workspace, err := openWorkspace()
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
@@ -268,15 +302,11 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		&lib.PathInclusionFilter{Includes: []lib.PathPattern{pattern}},
 		&lib.PathExclusionFilter{Excludes: args.Exclude, Includes: args.Include},
 	}}
-	tmpDir, err := workspace.NewTmpDir("cp")
-	if err != nil {
-		return err //nolint:wrapcheck
-	}
 	cpOnExists := ws.CpOnExistsAbort
 	if args.Overwrite {
 		cpOnExists = ws.CpOnExistsOverwrite
 	}
-	mon := NewCpMonitor(workspace.WorkspacePath, cpOnExists, args.Verbose, args.IgnoreErrors, args.NoProgress)
+	mon := NewCpMonitor(cpOnExists, args.Verbose, args.IgnoreErrors, args.NoProgress)
 	revisionId, err := revisionId(repository, args.Revision)
 	if err != nil {
 		return err
@@ -286,7 +316,11 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Monitor:    mon,
 		RevisionId: revisionId,
 	}
-	err = ws.Cp(repository, flags.Arg(1), opts, tmpDir)
+	tmpFS, err := workspace.TempFS.MkSub("cp")
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	err = ws.Cp(repository, lib.NewRealFS(flags.Arg(1)), opts, tmpFS)
 	mon.Close()
 	if args.IgnoreErrors && mon.errors > 0 {
 		fmt.Printf("%d errors ignored\n", mon.errors)
@@ -305,7 +339,7 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 }
 
 func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
-	workspace, err := ws.OpenWorkspace(".")
+	workspace, err := openWorkspace()
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
@@ -354,8 +388,8 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return err
 	}
-	stagingMonitor := NewStagingMonitor(workspace.WorkspacePath, args.Verbose, args.NoProgress)
-	cpMonitor := NewCpMonitor(workspace.WorkspacePath, ws.CpOnExistsAbort, args.Verbose, false, args.NoProgress)
+	stagingMonitor := NewStagingMonitor(args.Verbose, args.NoProgress)
+	cpMonitor := NewCpMonitor(ws.CpOnExistsAbort, args.Verbose, false, args.NoProgress)
 	commitMonitor := NewCommitMonitor(args.Verbose, args.NoProgress)
 	opts := &ws.MergeOptions{
 		Author:         args.Author,
@@ -418,7 +452,7 @@ To select remote changes, run `+"`"+`%s cp --overwrite <remote-path> .`+"`"+`
 }
 
 func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
-	workspace, err := ws.OpenWorkspace(".")
+	workspace, err := openWorkspace()
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
@@ -495,13 +529,13 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return err
 	}
-	tmpDir, err := workspace.NewTmpDir("status")
+	tmpFS, err := workspace.TempFS.MkSub("status")
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	mon := NewStagingMonitor(workspace.WorkspacePath, args.Verbose, args.NoProgress)
+	mon := NewStagingMonitor(args.Verbose, args.NoProgress)
 	opts := &ws.StatusOptions{PathFilter: pathFilter, Monitor: mon}
-	result, err := ws.Status(workspace, repository, opts, tmpDir)
+	result, err := ws.Status(workspace, repository, opts, tmpFS)
 	mon.Close()
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -520,7 +554,7 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 }
 
 func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
-	workspace, err := ws.OpenWorkspace(".")
+	workspace, err := openWorkspace()
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
@@ -605,7 +639,11 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		return err
 	}
 	opts := &ws.LsOptions{RevisionId: revisionId, PathFilter: pathFilter}
-	files, err := ws.Ls(repository, opts)
+	tmpFS, err := workspace.TempFS.MkSub("ls")
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	files, err := ws.Ls(repository, tmpFS, opts)
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
@@ -643,7 +681,7 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 }
 
 func LogCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
-	workspace, err := ws.OpenWorkspace(".")
+	workspace, err := openWorkspace()
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
@@ -721,7 +759,7 @@ func LogCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 }
 
 func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
-	workspace, err := ws.OpenWorkspace(".")
+	workspace, err := openWorkspace()
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
@@ -825,7 +863,7 @@ func ServeCmd(argv []string) error {
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
 	}
-	storage, err := lib.NewFileStorage(repositoryPath, lib.StoragePurposeRepository)
+	storage, err := lib.NewFileStorage(lib.NewRealFS(repositoryPath), lib.StoragePurposeRepository)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open storage")
 	}
@@ -867,6 +905,18 @@ func revisionId(repository *lib.Repository, revision string) (lib.RevisionId, er
 	}
 	revisionId = lib.RevisionId(b)
 	return revisionId, nil
+}
+
+func openWorkspace() (*ws.Workspace, error) {
+	path, err := filepath.Abs(".")
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to get absolute path for %s", path)
+	}
+	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-workspace")
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to create temporary directory")
+	}
+	return ws.OpenWorkspace(lib.NewRealFS(path), lib.NewRealFS(tmpDir)) //nolint:wrapcheck
 }
 
 func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Repository, error) {
@@ -934,7 +984,7 @@ func openRepositoryStorage(workspace *ws.Workspace) (lib.Storage, error) { //nol
 			clingHTTP.NewDefaultHTTPClient(http.DefaultClient, context.Background()),
 		), nil
 	}
-	storage, err := lib.NewFileStorage(string(workspace.RemoteRepository), lib.StoragePurposeRepository)
+	storage, err := lib.NewFileStorage(lib.NewRealFS(string(workspace.RemoteRepository)), lib.StoragePurposeRepository)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
 	}

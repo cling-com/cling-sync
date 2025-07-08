@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"slices"
 	"time"
 )
@@ -16,12 +14,12 @@ const DefaultRevisionTempChunkSize = 4 * 1024 * 1024
 
 // todo: encrypt the temporary files
 type RevisionTemp struct {
-	dir    string
+	fs     FS
 	chunks int
 }
 
 func (rt *RevisionTemp) Reader(pathFilter PathFilter) *RevisionTempReader {
-	return &RevisionTempReader{dir: rt.dir, chunks: rt.chunks, pathFilter: pathFilter} //nolint:exhaustruct
+	return &RevisionTempReader{fs: rt.fs, chunks: rt.chunks, pathFilter: pathFilter} //nolint:exhaustruct
 }
 
 func (rt *RevisionTemp) Chunks() int {
@@ -29,14 +27,14 @@ func (rt *RevisionTemp) Chunks() int {
 }
 
 func (rt *RevisionTemp) Remove() error {
-	if err := os.RemoveAll(rt.dir); err != nil {
-		return WrapErrorf(err, "failed to remove temporary directory %s", rt.dir)
+	if err := rt.fs.RemoveAll("."); err != nil {
+		return WrapErrorf(err, "failed to remove temporary fs %s", rt.fs)
 	}
 	return nil
 }
 
 type RevisionTempReader struct {
-	dir          string
+	fs           FS
 	pathFilter   PathFilter
 	chunks       int
 	chunkIndex   int
@@ -74,7 +72,7 @@ func (rtr *RevisionTempReader) ReadChunk(i int) ([]*RevisionEntry, error) {
 	if i < 0 || i >= rtr.chunks {
 		return nil, Errorf("chunk index out of range")
 	}
-	f, err := os.Open(rtr.chunkFilename(i))
+	f, err := rtr.fs.OpenRead(rtr.chunkFilename(i))
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to open chunk file %d", i)
 	}
@@ -102,7 +100,7 @@ func (rtr *RevisionTempReader) ReadChunkRaw(i int) ([]byte, error) {
 	if i < 0 || i >= rtr.chunks {
 		return nil, Errorf("chunk index out of range")
 	}
-	f, err := os.Open(rtr.chunkFilename(i))
+	f, err := rtr.fs.OpenRead(rtr.chunkFilename(i))
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to open chunk file %d", i)
 	}
@@ -115,11 +113,11 @@ func (rtr *RevisionTempReader) ReadChunkRaw(i int) ([]byte, error) {
 }
 
 func (rtr *RevisionTempReader) chunkFilename(index int) string {
-	return filepath.Join(rtr.dir, fmt.Sprintf("%d.sorted", index))
+	return fmt.Sprintf("%d.sorted", index)
 }
 
 type RevisionTempWriter struct {
-	dir          string
+	fs           FS
 	chunk        []*RevisionEntry
 	chunkSize    int
 	maxChunkSize int
@@ -127,8 +125,8 @@ type RevisionTempWriter struct {
 	fileExt      string
 }
 
-func NewRevisionTempWriter(dir string, maxChunkSize int) *RevisionTempWriter {
-	return &RevisionTempWriter{dir: dir, maxChunkSize: maxChunkSize, fileExt: "raw"} //nolint:exhaustruct
+func NewRevisionTempWriter(fs FS, maxChunkSize int) *RevisionTempWriter {
+	return &RevisionTempWriter{fs: fs, maxChunkSize: maxChunkSize, fileExt: "raw"} //nolint:exhaustruct
 }
 
 func (rtw *RevisionTempWriter) Add(re *RevisionEntry) error {
@@ -149,13 +147,13 @@ func (rtw *RevisionTempWriter) Finalize() (*RevisionTemp, error) { //nolint:funl
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
 	// Create a new RevisionTempWriter to store the sorted chunks.
-	sorted := NewRevisionTempWriter(rtw.dir, rtw.maxChunkSize)
+	sorted := NewRevisionTempWriter(rtw.fs, rtw.maxChunkSize)
 	sorted.fileExt = "sorted"
 	// Open all chunks with a buffered reader.
-	readerFiles := make([]*os.File, rtw.chunks)
+	readerFiles := make([]io.ReadCloser, rtw.chunks)
 	readers := make([]io.Reader, rtw.chunks)
 	for i := range rtw.chunks {
-		f, err := os.Open(rtw.chunkFilename(i))
+		f, err := rtw.fs.OpenRead(rtw.chunkFilename(i))
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to open chunk file")
 		}
@@ -223,15 +221,15 @@ func (rtw *RevisionTempWriter) Finalize() (*RevisionTemp, error) { //nolint:funl
 		if err := readerFiles[i].Close(); err != nil {
 			return nil, WrapErrorf(err, "failed to close chunk file")
 		}
-		if err := os.Remove(rtw.chunkFilename(i)); err != nil {
+		if err := rtw.fs.Remove(rtw.chunkFilename(i)); err != nil {
 			return nil, WrapErrorf(err, "failed to remove chunk file")
 		}
 	}
-	return &RevisionTemp{dir: sorted.dir, chunks: sorted.chunks}, nil
+	return &RevisionTemp{fs: sorted.fs, chunks: sorted.chunks}, nil
 }
 
 func (rtw *RevisionTempWriter) chunkFilename(index int) string {
-	return filepath.Join(rtw.dir, fmt.Sprintf("%d.%s", index, rtw.fileExt))
+	return fmt.Sprintf("%d.%s", index, rtw.fileExt)
 }
 
 // Sort the current chunk and write it to disk.
@@ -251,7 +249,7 @@ func (rtw *RevisionTempWriter) rotateChunk() error {
 		return err
 	}
 	// todo: encrypt the data before writing to disk.
-	file, err := os.OpenFile(rtw.chunkFilename(rtw.chunks), os.O_CREATE|os.O_WRONLY, 0o600)
+	file, err := rtw.fs.OpenWrite(rtw.chunkFilename(rtw.chunks))
 	if err != nil {
 		return WrapErrorf(err, "failed to open chunk file")
 	}
@@ -289,7 +287,7 @@ func NewRevisionTempCache(temp *RevisionTemp, maxChunksInCache int) (*RevisionTe
 	firstEntries := make([]*RevisionEntry, temp.Chunks())
 	reader := temp.Reader(nil)
 	for i := range temp.Chunks() {
-		f, err := os.Open(reader.chunkFilename(i))
+		f, err := reader.fs.OpenRead(reader.chunkFilename(i))
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to open chunk file %d", i)
 		}

@@ -3,12 +3,38 @@ package lib
 import (
 	"crypto/sha256"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
+	"testing"
 )
 
 type TestData struct{}
 
 var td = TestData{} //nolint:gochecknoglobals
+
+// Return a new FS that is cleaned up after the test.
+// todo: Make the FS implementation configurable.
+func (td TestData) NewFS(tb testing.TB) FS {
+	tb.Helper()
+	return td.NewRealFS(tb)
+	// return NewMemoryFS(10000000)
+}
+
+// Return a new RealFS that is cleaned up after the test.
+func (td TestData) NewRealFS(tb testing.TB) *RealFS {
+	tb.Helper()
+	dir := tb.TempDir()
+	tb.Cleanup(func() {
+		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			_ = os.Chmod(path, 0o700) //nolint:gosec,forbidigo
+			return nil
+		})
+		_ = os.RemoveAll(dir) //nolint:forbidigo
+	})
+	return NewRealFS(dir)
+}
 
 func (td TestData) RawKey(suffix string) RawKey {
 	return RawKey([]byte(strings.Repeat("k", RawKeySize-len(suffix)) + suffix))

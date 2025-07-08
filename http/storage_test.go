@@ -424,7 +424,7 @@ func testWriteBlock(t *testing.T, storage *lib.FileStorage, blockId lib.BlockId,
 func testStorage(t *testing.T) *lib.FileStorage {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	storage, err := lib.NewFileStorage(t.TempDir(), lib.StoragePurposeRepository)
+	storage, err := lib.NewFileStorage(td.NewFS(t), lib.StoragePurposeRepository)
 	assert.NoError(err)
 	err = storage.Init(lib.Toml{"some": {"key": "value"}}, "some header comment")
 	assert.NoError(err)

@@ -3,7 +3,7 @@ package workspace
 import (
 	"errors"
 	"io"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"time"
 
@@ -39,20 +39,19 @@ type CpOptions struct {
 	PathFilter lib.PathFilter
 }
 
-func Cp(repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir string) error {
-	snapshot, err := lib.NewRevisionSnapshot(repository, opts.RevisionId, tmpDir)
+func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.FS) error {
+	snapshot, err := lib.NewRevisionSnapshot(repository, opts.RevisionId, tmpFS)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
 	defer snapshot.Remove() //nolint:errcheck
 	reader := snapshot.Reader(opts.PathFilter)
 	mon := opts.Monitor
-	targetPath = filepath.Clean(targetPath)
 	directories := []*lib.RevisionEntry{}
 	restoreDirFileModes := func() error {
 		for _, entry := range directories {
-			target := filepath.Join(targetPath, entry.Path.FSString())
-			if err := restoreFileMode(target, entry.Metadata); err != nil {
+			target := entry.Path.FSString()
+			if err := restoreFileMode(targetFS, target, entry.Metadata); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", entry.Metadata.ModeAndPerm, target)
 			}
 		}
@@ -68,12 +67,12 @@ func Cp(repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir s
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		target := filepath.Join(targetPath, entry.Path.FSString())
+		target := entry.Path.FSString()
 		mon.OnStart(entry, target)
-		if err := restore(entry, repository, target, mon, blockBuf); err != nil {
+		if err := restore(entry, repository, targetFS, target, mon, blockBuf); err != nil {
 			return lib.WrapErrorf(err, "failed to copy %s", target)
 		}
-		if err := restoreFileMode(target, entry.Metadata); err != nil {
+		if err := restoreFileMode(targetFS, target, entry.Metadata); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				mon.OnEnd(entry, target)
 				continue
@@ -84,7 +83,7 @@ func Cp(repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir s
 		if mode.IsDir() {
 			// Temporarily change the permissions if the directory is not writable.
 			if mode&0o700 != 0o700 {
-				if err := os.Chmod(target, mode|0o700); err != nil {
+				if err := targetFS.Chmod(target, mode|0o700); err != nil {
 					if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 						mon.OnEnd(entry, target)
 						continue
@@ -106,13 +105,14 @@ func Cp(repository *lib.Repository, targetPath string, opts *CpOptions, tmpDir s
 func restore( //nolint:funlen
 	entry *lib.RevisionEntry,
 	repository *lib.Repository,
+	targetFS lib.FS,
 	target string,
 	mon CpMonitor,
 	blockBuf lib.BlockBuf,
 ) error {
 	md := entry.Metadata
 	if md.ModeAndPerm.IsDir() {
-		if err := os.MkdirAll(target, 0o700); err != nil {
+		if err := targetFS.MkdirAll(target); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				mon.OnEnd(entry, target)
 				return nil
@@ -120,18 +120,18 @@ func restore( //nolint:funlen
 			return lib.WrapErrorf(err, "failed to create directory %s", target)
 		}
 	} else {
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		if err := targetFS.MkdirAll(filepath.Dir(target)); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				mon.OnEnd(entry, target)
 				return nil
 			}
 			return lib.WrapErrorf(err, "failed to create parent directory %s", target)
 		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, md.ModeAndPerm.AsFileMode())
-		if errors.Is(err, os.ErrExist) {
+		f, err := targetFS.OpenWriteExcl(target)
+		if errors.Is(err, fs.ErrExist) {
 			switch mon.OnExists(entry, target) {
 			case CpOnExistsOverwrite:
-				f, err = os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, md.ModeAndPerm.AsFileMode())
+				f, err = targetFS.OpenWrite(target)
 			case CpOnExistsIgnore:
 				mon.OnEnd(entry, target)
 				return nil
@@ -172,21 +172,28 @@ func restore( //nolint:funlen
 			}
 			return lib.WrapErrorf(err, "failed to close file %s", target)
 		}
+		if err := targetFS.Chmod(target, md.ModeAndPerm.AsFileMode()); err != nil {
+			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
+				mon.OnEnd(entry, target)
+				return nil
+			}
+			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, target)
+		}
 	}
 	return nil
 }
 
-func restoreFileMode(path string, md *lib.FileMetadata) error {
-	if err := os.Chmod(path, md.ModeAndPerm.AsFileMode()&os.ModePerm); err != nil {
+func restoreFileMode(fs lib.FS, path string, md *lib.FileMetadata) error {
+	if err := fs.Chmod(path, (md.ModeAndPerm & lib.ModePerm).AsFileMode()); err != nil {
 		return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, path)
 	}
 	if md.HasUID() && md.HasGID() {
-		if err := os.Chown(path, int(md.UID), int(md.GID)); err != nil {
+		if err := fs.Chown(path, int(md.UID), int(md.GID)); err != nil {
 			return lib.WrapErrorf(err, "failed to restore file owner %d and group %d for %s", md.GID, md.UID, path)
 		}
 	}
 	mtime := time.Unix(md.MTimeSec, int64(md.MTimeNSec))
-	if err := os.Chtimes(path, time.Time{}, mtime); err != nil {
+	if err := fs.Chmtime(path, mtime); err != nil {
 		return lib.WrapErrorf(err, "failed to restore mtime %s for %s", mtime, path)
 	}
 	// todo: handle birthtime or allow the user to use birthtime instead of mtime.

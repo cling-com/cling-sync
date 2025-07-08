@@ -5,10 +5,10 @@
 package workspace
 
 import (
-	"os"
+	"io/fs"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
 
-func EnhanceMetadata(md *lib.FileMetadata, fileInfo os.FileInfo) {
+func EnhanceMetadata(md *lib.FileMetadata, fileInfo fs.FileInfo) {
 }

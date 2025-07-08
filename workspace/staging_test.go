@@ -1,7 +1,7 @@
 package workspace
 
 import (
-	"os"
+	"io/fs"
 	"testing"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -22,7 +22,7 @@ func TestStaging(t *testing.T) {
 		rt.UpdateLocalMode("b/c.txt", 0o400)
 
 		// Create a remote commit with a modified file, missing files, and a new file.
-		commit, err := lib.NewCommit(rt.Repository, t.TempDir())
+		commit, err := lib.NewCommit(rt.Repository, td.NewFS(t))
 		assert.NoError(err)
 		assert.NoError(commit.Add(td.RevisionEntryExt("a.txt", lib.RevisionEntryAdd, 0o600, "a")))
 		bDirEntry := td.RevisionEntry("b", lib.RevisionEntryAdd)
@@ -35,26 +35,25 @@ func TestStaging(t *testing.T) {
 		assert.Equal(false, remoteRev1.IsRoot())
 		rt.VerifyRevision(remoteRev1, []RevisionEntryInfo{
 			{"a.txt", lib.RevisionEntryAdd, 0o600, "a"},
-			{"b", lib.RevisionEntryAdd, 0o700 | os.ModeDir, ""},
+			{"b", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, ""},
 			{"b/remote.txt", lib.RevisionEntryAdd, 0o123, "rrr"},
 		})
 
 		// Create a staging.
-		staging, err := NewStaging(
-			rt.Workspace.WorkspacePath, nil, t.TempDir(), NewTestStagingMonitor())
+		staging, err := NewStaging(rt.Workspace.FS, nil, rt.Workspace.TempFS, NewTestStagingMonitor())
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
 		VerifyRevisionTemp(t, finalized, []RevisionEntryInfo{
 			{"a.txt", lib.RevisionEntryAdd, 0o600, "a"},
-			{"b", lib.RevisionEntryAdd, 0o700 | os.ModeDir, ""},
+			{"b", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, ""},
 			{"b/c.txt", lib.RevisionEntryAdd, 0o400, "cc"},
-			{"b/e", lib.RevisionEntryAdd, 0o700 | os.ModeDir, ""},
+			{"b/e", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, ""},
 			{"b/e/f.txt", lib.RevisionEntryAdd, 0o600, "fff"},
 		})
 
 		// Merge the staging with a snapshot of the remote revision.
-		snapshot, err := lib.NewRevisionSnapshot(rt.Repository, remoteRev1, t.TempDir())
+		snapshot, err := lib.NewRevisionSnapshot(rt.Repository, remoteRev1, td.NewFS(t))
 		assert.NoError(err)
 		merged, err := staging.MergeWithSnapshot(snapshot)
 		assert.NoError(err)
@@ -64,7 +63,7 @@ func TestStaging(t *testing.T) {
 			{"b/c.txt", lib.RevisionEntryAdd, 0o400, "cc"},
 			// Metadata of `b/remote.txt` should match the repository version.
 			{"b/remote.txt", lib.RevisionEntryDelete, 0o123, "rrr"},
-			{"b/e", lib.RevisionEntryAdd, 0o700 | os.ModeDir, ""},
+			{"b/e", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, ""},
 			{"b/e/f.txt", lib.RevisionEntryAdd, 0o600, "fff"},
 		})
 	})

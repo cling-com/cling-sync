@@ -15,7 +15,7 @@ func TestStatus(t *testing.T) {
 		rt := NewRepositoryTest(t)
 
 		// Empty workspace.
-		status, err := Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
+		status, err := Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
@@ -26,7 +26,7 @@ func TestStatus(t *testing.T) {
 		rt.AddLocal("c/d/2.txt", "....")
 
 		// "Dirty" workspace.
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
+		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"A a.txt",
@@ -40,7 +40,7 @@ func TestStatus(t *testing.T) {
 		// Commit, workspace should be "clean" again.
 		_, err = Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
+		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 		assert.NoError(err)
@@ -51,7 +51,7 @@ func TestStatus(t *testing.T) {
 		rt.UpdateLocalMTime("c/1.txt", time.Now())
 
 		// "Dirty" workspace.
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
+		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"D b.txt",
@@ -66,7 +66,7 @@ func TestStatus(t *testing.T) {
 		rt := NewRepositoryTest(t)
 
 		// Empty workspace.
-		status, err := Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
+		status, err := Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
@@ -79,7 +79,7 @@ func TestStatus(t *testing.T) {
 		// Commit, workspace should be "clean".
 		_, err = Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
+		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
@@ -87,7 +87,7 @@ func TestStatus(t *testing.T) {
 		rt.RemoveLocal("c")
 
 		// "Dirty" workspace.
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
+		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"D c/",
@@ -99,7 +99,7 @@ func TestStatus(t *testing.T) {
 		// Commit, workspace should be "clean" again.
 		_, err = Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
 		assert.NoError(err)
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), t.TempDir())
+		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 	})

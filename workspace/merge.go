@@ -7,11 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
@@ -57,8 +56,9 @@ func (mc MergeConflictsError) Error() string {
 
 type Merger struct {
 	ws          *Workspace
+	tempFS      lib.FS
 	repository  *lib.Repository
-	directories map[string]os.FileInfo
+	directories map[string]fs.FileInfo
 	blockBuf    lib.BlockBuf
 }
 
@@ -66,11 +66,16 @@ type Merger struct {
 // Return a `MergeConflictsError` error if there are conflicts.
 // todo: return new revision id and the local changes.
 func Merge(ws *Workspace, repository *lib.Repository, opts *MergeOptions) (lib.RevisionId, error) {
+	tempFS, err := ws.TempFS.MkSub("merge")
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create merge tmp dir")
+	}
+	defer tempFS.RemoveAll(".") //nolint:errcheck
 	head, err := repository.Head()
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get repository head")
 	}
-	staging, localChanges, wsRevision, err := buildLocalChanges(ws, repository, opts.StagingMonitor)
+	staging, localChanges, wsRevision, err := buildLocalChanges(ws, tempFS, repository, opts.StagingMonitor)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build local changes")
 	}
@@ -81,11 +86,11 @@ func Merge(ws *Workspace, repository *lib.Repository, opts *MergeOptions) (lib.R
 	if head == wsHead && localChanges.Source.Chunks() == 0 {
 		return lib.RevisionId{}, ErrUpToDate
 	}
-	remoteRevision, err := buildRemoteChanges(ws, repository, head)
+	remoteRevision, err := buildRemoteChanges(tempFS, repository, head)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
-	merger := Merger{ws, repository, make(map[string]os.FileInfo), lib.BlockBuf{}}
+	merger := Merger{ws, tempFS, repository, make(map[string]fs.FileInfo), lib.BlockBuf{}}
 	conflicts, err := findConflicts(localChanges.Source, remoteRevision, wsRevision)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to find conflicts")
@@ -126,19 +131,24 @@ type ForceCommitOptions struct {
 // Afterwards, merge the repository into the workspace.
 // Return a `lib.EmptyCommit` error if there are no local changes.
 func ForceCommit(ws *Workspace, repository *lib.Repository, opts *ForceCommitOptions) (lib.RevisionId, error) {
-	staging, localChanges, _, err := buildLocalChanges(ws, repository, opts.StagingMonitor)
+	tempFS, err := ws.TempFS.MkSub("merge")
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create merge tmp dir")
+	}
+	defer tempFS.RemoveAll(".") //nolint:errcheck
+	staging, localChanges, _, err := buildLocalChanges(ws, tempFS, repository, opts.StagingMonitor)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build local changes")
 	}
 	if localChanges.Source.Chunks() == 0 {
 		return lib.RevisionId{}, lib.ErrEmptyCommit
 	}
-	merger := &Merger{ws, repository, make(map[string]os.FileInfo), lib.BlockBuf{}}
+	merger := &Merger{ws, tempFS, repository, make(map[string]fs.FileInfo), lib.BlockBuf{}}
 	newHead, err := merger.commitLocalChanges(localChanges.Source, opts.CommitMonitor, opts.Author, opts.Message)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to commit local changes")
 	}
-	remoteRevision, err := buildRemoteChanges(ws, repository, newHead)
+	remoteRevision, err := buildRemoteChanges(tempFS, repository, newHead)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
@@ -168,11 +178,11 @@ func (m *Merger) commitLocalChanges(
 	author string,
 	message string,
 ) (lib.RevisionId, error) {
-	tmpDir, err := m.ws.NewTmpDir("commit")
+	tmpFS, err := m.tempFS.MkSub("commit")
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create commit tmp dir")
 	}
-	commit, err := lib.NewCommit(m.repository, tmpDir)
+	commit, err := lib.NewCommit(m.repository, tmpFS)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create commit")
 	}
@@ -193,16 +203,16 @@ func (m *Merger) commitLocalChanges(
 			mon.OnEnd(entry)
 			continue
 		}
-		localPath := filepath.Join(m.ws.WorkspacePath, entry.Path.FSString())
-		stat, err := os.Stat(localPath)
-		if os.IsNotExist(err) {
+		localPath := entry.Path.FSString()
+		stat, err := m.ws.FS.Stat(localPath)
+		if errors.Is(err, fs.ErrNotExist) {
 			// todo: make special errors out of these so we can distinguish them later.
 			return lib.RevisionId{}, lib.Errorf("file %s was deleted during merge - aborting merge", localPath)
 		}
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat %s", localPath)
 		}
-		md, err := addToRepository(localPath, stat, m.repository, entry, mon.OnAddBlock, m.blockBuf)
+		md, err := addToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon.OnAddBlock, m.blockBuf)
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", localPath)
 		}
@@ -283,10 +293,9 @@ func (m *Merger) makeDirsWritable(relPath string) error {
 		if _, ok := m.directories[parent]; ok {
 			break
 		}
-		path := filepath.Join(m.ws.WorkspacePath, parent)
-		stat, err := os.Stat(path)
+		stat, err := m.ws.FS.Stat(parent)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, fs.ErrNotExist) {
 				return nil
 			}
 			return lib.WrapErrorf(err, "failed to stat directory %s", parent)
@@ -294,7 +303,7 @@ func (m *Merger) makeDirsWritable(relPath string) error {
 		m.directories[parent] = stat
 		parent = filepath.Dir(parent)
 		if stat.Mode()&0o700 != 0o700 {
-			if err := os.Chmod(path, stat.Mode()|0o700); err != nil {
+			if err := m.ws.FS.Chmod(parent, stat.Mode()|0o700); err != nil {
 				return lib.WrapErrorf(err, "failed to make directory %s writable", parent)
 			}
 		}
@@ -313,13 +322,13 @@ func (m *Merger) restoreDirFileModes() error {
 		fileInfo := m.directories[path]
 		mode := fileInfo.Mode()
 		if mode&0o700 != 0o700 {
-			if err := os.Chmod(filepath.Join(m.ws.WorkspacePath, path), mode|0o700); err != nil {
+			if err := m.ws.FS.Chmod(path, mode|0o700); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", mode, path)
 			}
 		}
 		// Restore mtime.
-		if err := os.Chtimes(filepath.Join(m.ws.WorkspacePath, path), time.Time{}, fileInfo.ModTime()); err != nil {
-			if os.IsNotExist(err) {
+		if err := m.ws.FS.Chmtime(path, fileInfo.ModTime()); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
 			return lib.WrapErrorf(err, "failed to restore mtime %s for %s", fileInfo.ModTime(), path)
@@ -386,19 +395,19 @@ func (m *Merger) copyRepositoryFiles(
 			continue
 		}
 		// Make sure parent directories are writable.
-		targetPath := filepath.Join(m.ws.WorkspacePath, entry.Path.FSString())
+		targetPath := entry.Path.FSString()
 		if entry.Type != lib.RevisionEntryAdd && entry.Type != lib.RevisionEntryUpdate {
 			return lib.Errorf("unexpected revision entry type %s for %s", entry.Type, targetPath)
 		}
 		// Write the file if it is different or does not exist.
 		if isDir {
 			if !existsInStaging {
-				if err := os.Mkdir(targetPath, 0o700); err != nil {
+				if err := m.ws.FS.Mkdir(targetPath); err != nil {
 					return lib.WrapErrorf(err, "failed to create directory %s", targetPath)
 				}
 			}
 			// Only update metadata.
-			if err := restoreFileMode(targetPath, md); err != nil {
+			if err := restoreFileMode(m.ws.FS, targetPath, md); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, targetPath)
 			}
 			continue
@@ -412,7 +421,7 @@ func (m *Merger) copyRepositoryFiles(
 			}
 		}
 		if !existsInStaging || !md.IsEqualRestorableAttributes(stagingEntry.Metadata) {
-			if err := restoreFileMode(targetPath, md); err != nil {
+			if err := restoreFileMode(m.ws.FS, targetPath, md); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, targetPath)
 			}
 		}
@@ -428,19 +437,15 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 	localChanges *lib.RevisionTempCache,
 ) error {
 	deleteDirs := make(map[string]bool)
-	err := filepath.WalkDir(m.ws.WorkspacePath, func(path string, d os.DirEntry, err error) error {
+	err := m.ws.FS.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to walk directory %s", path)
 		}
-		if path == m.ws.WorkspacePath {
+		if path == "." {
 			return nil
 		}
 		if filepath.Base(path) == ".cling" {
 			return filepath.SkipDir
-		}
-		relPath, err := filepath.Rel(m.ws.WorkspacePath, path)
-		if err != nil {
-			return lib.WrapErrorf(err, "failed to get relative path for %s", path)
 		}
 		fileInfo, err := d.Info()
 		if err != nil {
@@ -450,7 +455,7 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 			// todo: handle symlinks
 			return nil
 		}
-		repositoryPath := lib.NewPath(strings.Split(relPath, string(os.PathSeparator))...)
+		repositoryPath := lib.NewPath(strings.Split(path, lib.PathSeparator)...)
 		stagingEntry, existsInStaging, err := staging.Get(repositoryPath, d.IsDir())
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from staging cache for %s", path)
@@ -486,23 +491,23 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 			if fileInfo.ModTime() != stagingEntry.Metadata.MTime() || fileInfo.Size() != stagingEntry.Metadata.Size {
 				return lib.Errorf("file %s was modified during merge - aborting merge", path)
 			}
-			if err := m.makeDirsWritable(relPath); err != nil {
+			if err := m.makeDirsWritable(path); err != nil {
 				return lib.WrapErrorf(err, "failed to make directories writable for %s", path)
 			}
-			if err := os.Remove(path); err != nil {
+			if err := m.ws.FS.Remove(path); err != nil {
 				return lib.WrapErrorf(err, "failed to delete %s", path)
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return lib.WrapErrorf(err, "failed to walk directory %s", m.ws.WorkspacePath)
+		return lib.WrapErrorf(err, "failed to walk directory %s", m.ws.FS)
 	}
 	for path := range deleteDirs {
 		if err := m.makeDirsWritable(path); err != nil {
 			return lib.WrapErrorf(err, "failed to make directories writable for %s", path)
 		}
-		if err := os.Remove(path); err != nil {
+		if err := m.ws.FS.Remove(path); err != nil {
 			return lib.WrapErrorf(err, "failed to delete %s", path)
 		}
 	}
@@ -512,7 +517,7 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, target string) error {
 	md := entry.Metadata
 	if md.ModeAndPerm.IsDir() {
-		if err := os.MkdirAll(target, 0o700); err != nil {
+		if err := m.ws.FS.MkdirAll(target); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				mon.OnEnd(entry, target)
 				return nil
@@ -521,14 +526,14 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 		}
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+	if err := m.ws.FS.MkdirAll(filepath.Dir(target)); err != nil {
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 			mon.OnEnd(entry, target)
 			return nil
 		}
 		return lib.WrapErrorf(err, "failed to create parent directory %s", target)
 	}
-	f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, md.ModeAndPerm.AsFileMode())
+	f, err := m.ws.FS.OpenWrite(target)
 	if err != nil {
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 			mon.OnEnd(entry, target)
@@ -562,13 +567,21 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 		}
 		return lib.WrapErrorf(err, "failed to close file %s", target)
 	}
+	if err := m.ws.FS.Chmod(target, md.ModeAndPerm.AsFileMode()); err != nil {
+		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
+			mon.OnEnd(entry, target)
+			return nil
+		}
+		return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, target)
+	}
 	return nil
 }
 
 // Add the file contents to the repository and return the file metadata.
 func addToRepository(
+	fs lib.FS,
 	path string,
-	fileInfo os.FileInfo,
+	fileInfo fs.FileInfo,
 	repository *lib.Repository,
 	entry *lib.RevisionEntry,
 	onAddBlock func(entry *lib.RevisionEntry, header *lib.BlockHeader, existed bool, dataSize int64),
@@ -582,7 +595,7 @@ func addToRepository(
 	// If the hash is the same, we can skip the whole block calculation.
 	if entry != nil && len(entry.Metadata.BlockIds) > 0 && entry.Metadata != nil &&
 		entry.Metadata.Size == fileInfo.Size() {
-		md, err := computeFileHash(path, fileInfo)
+		md, err := computeFileHash(fs, path, fileInfo)
 		if err != nil {
 			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to create file metadata")
 		}
@@ -594,7 +607,7 @@ func addToRepository(
 	// todo: what about symlinks
 	blockIds := []lib.BlockId{}
 	fileHash := sha256.New()
-	f, err := os.Open(path)
+	f, err := fs.OpenRead(path)
 	if err != nil {
 		return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
 	}
@@ -628,6 +641,7 @@ func addToRepository(
 // Return all three (staging, local changes, workspace revision) as a `lib.RevisionTempCache`.
 func buildLocalChanges(
 	ws *Workspace,
+	tempFS lib.FS,
 	repository *lib.Repository,
 	mon StagingEntryMonitor,
 ) (stagingCache *lib.RevisionTempCache, localChangesCache *lib.RevisionTempCache, wsRevisionCache *lib.RevisionTempCache, err error) {
@@ -635,11 +649,11 @@ func buildLocalChanges(
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to get workspace head")
 	}
-	stagingTmpDir, err := ws.NewTmpDir("staging")
+	stagingTmpDir, err := tempFS.MkSub("staging")
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create staging tmp dir")
 	}
-	wsRevisionStateDir, err := ws.NewTmpDir("snapshot")
+	wsRevisionStateDir, err := tempFS.MkSub("snapshot")
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create snapshot tmp dir")
 	}
@@ -651,7 +665,7 @@ func buildLocalChanges(
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create revision temp cache")
 	}
-	staging, err := NewStaging(ws.WorkspacePath, nil, stagingTmpDir, mon)
+	staging, err := NewStaging(ws.FS, nil, stagingTmpDir, mon)
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to detect local changes")
 	}
@@ -676,11 +690,11 @@ func buildLocalChanges(
 
 // Build a `lib.RevisionTempCache` based on the `lib.RevisionSnapshot` of the remote `head` revision.
 func buildRemoteChanges(
-	ws *Workspace,
+	tempFS lib.FS,
 	repository *lib.Repository,
 	head lib.RevisionId,
 ) (remoteRevisionCache *lib.RevisionTempCache, err error) {
-	remoteRevisionTmp, err := ws.NewTmpDir("repository-snapshot")
+	remoteRevisionTmp, err := tempFS.MkSub("repository-snapshot")
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create repository snapshot tmp dir")
 	}

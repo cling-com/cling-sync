@@ -13,7 +13,7 @@ func TestCommit(t *testing.T) {
 		assert := NewAssert(t)
 		repo, _ := testRepository(t)
 
-		commit, err := NewCommit(repo, t.TempDir())
+		commit, err := NewCommit(repo, td.NewFS(t))
 		assert.NoError(err)
 		e1 := td.RevisionEntry("a/1.txt", RevisionEntryAdd)
 		e2 := td.RevisionEntry("a/2.txt", RevisionEntryUpdate)
@@ -33,7 +33,7 @@ func TestCommit(t *testing.T) {
 		assert.Equal([]*RevisionEntry{e1, e2, e3}, entries)
 
 		// Add a second revision.
-		commit2, err := NewCommit(repo, t.TempDir())
+		commit2, err := NewCommit(repo, td.NewFS(t))
 		assert.NoError(err)
 		e4 := td.RevisionEntry("a/1.txt", RevisionEntryDelete)
 		assert.NoError(commit2.Add(e4))
@@ -53,7 +53,7 @@ func TestCommit(t *testing.T) {
 		assert := NewAssert(t)
 		repo, _ := testRepository(t)
 
-		commit, err := NewCommit(repo, t.TempDir())
+		commit, err := NewCommit(repo, td.NewFS(t))
 		assert.NoError(err)
 		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
 		assert.ErrorIs(err, ErrEmptyCommit)
@@ -66,7 +66,7 @@ func TestCommit(t *testing.T) {
 		head, err := repo.Head()
 		assert.NoError(err)
 
-		commit, err := NewCommit(repo, t.TempDir())
+		commit, err := NewCommit(repo, td.NewFS(t))
 		assert.NoError(err)
 
 		// Change the head.

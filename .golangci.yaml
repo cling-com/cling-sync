@@ -23,6 +23,8 @@ linters:
     - gocyclo
     - gomodguard
     - inamedparam
+    - interfacebloat
+    - ireturn
     - lll
     - makezero
     - maintidx
@@ -54,6 +56,10 @@ linters:
             - $gostd
             - "golang.org/x/crypto/argon2"
             - "golang.org/x/crypto/chacha20poly1305"
+    forbidigo:
+      forbid:
+        - pattern: '^os\.'
+          msg: "Prefer io/fs over os"
     funlen:
       lines: 60
       statements: 60

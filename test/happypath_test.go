@@ -1,4 +1,4 @@
-//nolint:paralleltest
+//nolint:paralleltest,forbidigo
 package main
 
 import (

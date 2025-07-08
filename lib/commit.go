@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"os"
 	"time"
 )
 
@@ -11,23 +10,16 @@ type Commit struct {
 	BaseRevision RevisionId
 	repository   *Repository
 	tempWriter   *RevisionTempWriter
-	tmpDir       string
+	tmpFS        FS
 }
 
-func NewCommit(repository *Repository, tmpDir string) (*Commit, error) {
-	files, err := os.ReadDir(tmpDir)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to read temporary directory %s", tmpDir)
-	}
+func NewCommit(repository *Repository, tmpFS FS) (*Commit, error) {
 	head, err := repository.Head()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read head revision")
 	}
-	if len(files) > 0 {
-		return nil, Errorf("temporary directory %s is not empty", tmpDir)
-	}
-	tempWriter := NewRevisionTempWriter(tmpDir, DefaultRevisionTempChunkSize)
-	return &Commit{head, repository, tempWriter, tmpDir}, nil
+	tempWriter := NewRevisionTempWriter(tmpFS, DefaultRevisionTempChunkSize)
+	return &Commit{head, repository, tempWriter, tmpFS}, nil
 }
 
 func (c *Commit) Add(entry *RevisionEntry) error {

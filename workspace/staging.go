@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -13,7 +12,7 @@ import (
 )
 
 type StagingEntryMonitor interface {
-	OnStart(path string, dirEntry os.DirEntry)
+	OnStart(path string, dirEntry fs.DirEntry)
 	OnEnd(path string, excluded bool, metadata *lib.FileMetadata)
 }
 
@@ -21,20 +20,20 @@ type Staging struct {
 	PathFilter lib.PathFilter
 	tempWriter *lib.RevisionTempWriter
 	temp       *lib.RevisionTemp
-	tmpDir     string
+	tmpFS      lib.FS
 }
 
 // Build a `Staging` from the `src` directory.
 // `.cling` is always ignored.
 func NewStaging(
-	src string,
+	src lib.FS,
 	pathFilter lib.PathFilter,
-	tmpDir string,
+	tmp lib.FS,
 	mon StagingEntryMonitor,
 ) (*Staging, error) {
-	tempWriter := lib.NewRevisionTempWriter(tmpDir, lib.DefaultRevisionTempChunkSize)
-	staging := &Staging{pathFilter, tempWriter, nil, tmpDir}
-	err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+	tempWriter := lib.NewRevisionTempWriter(tmp, lib.DefaultRevisionTempChunkSize)
+	staging := &Staging{pathFilter, tempWriter, nil, tmp}
+	err := src.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -50,29 +49,25 @@ func NewStaging(
 			return nil
 		}
 		mon.OnStart(path, d)
-		relPath, err := filepath.Rel(src, path)
-		if err != nil {
-			return lib.WrapErrorf(err, "failed to get relative path for %s", path)
-		}
 		// Even though files are filtered out in Staging.Add, we still
 		// want to eagerly exclude them to avoid unnecessary work (file hash).
 		// Especially, we want to skip directories if they are excluded.
-		if pathFilter != nil && !pathFilter.Include(relPath) {
+		if pathFilter != nil && !pathFilter.Include(path) {
 			mon.OnEnd(path, true, nil)
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if relPath == "." {
+		if path == "." {
 			mon.OnEnd(path, true, nil)
 			return nil
 		}
 		// todo: this might be insecure, perhaps we should use filepath.Split and
 		// filepath.Clean directly in lib.NewPath.
-		repoPath := lib.NewPath(strings.Split(relPath, string(os.PathSeparator))...)
+		repoPath := lib.NewPath(strings.Split(path, lib.PathSeparator)...)
 		var fileMetadata lib.FileMetadata
-		fileMetadata, err = computeFileHash(path, fileInfo)
+		fileMetadata, err = computeFileHash(src, path, fileInfo)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get metadata for %s", path)
 		}
@@ -110,8 +105,8 @@ func (s *Staging) MergeWithSnapshot(snapshot *lib.RevisionSnapshot) (*lib.Revisi
 	}
 	revReader := snapshot.Reader(s.PathFilter)
 	stgReader := stgTemp.Reader(s.PathFilter)
-	final := filepath.Join(s.tmpDir, "final")
-	if err := os.MkdirAll(final, 0o700); err != nil {
+	final, err := s.tmpFS.MkSub("final")
+	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create commit directory")
 	}
 	finalWriter := lib.NewRevisionTempWriter(final, lib.MaxBlockDataSize)
@@ -233,11 +228,11 @@ func (s *Staging) add(path lib.Path, md *lib.FileMetadata) (bool, error) {
 	return true, nil
 }
 
-func computeFileHash(path string, fileInfo os.FileInfo) (lib.FileMetadata, error) {
+func computeFileHash(fs lib.FS, path string, fileInfo fs.FileInfo) (lib.FileMetadata, error) {
 	if fileInfo.IsDir() {
 		return newFileMetadata(fileInfo, lib.Sha256{}, nil), nil
 	}
-	f, err := os.Open(path)
+	f, err := fs.OpenRead(path)
 	if err != nil {
 		return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
 	}

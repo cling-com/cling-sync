@@ -5,7 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
+	"io"
+	"io/fs"
 	"path/filepath"
 	"strings"
 )
@@ -57,86 +58,82 @@ type Storage interface {
 }
 
 type FileStorage struct {
-	Dir      string
-	Purpose  StoragePurpose
-	clingDir string
+	FS      FS
+	Purpose StoragePurpose
 }
 
-func NewFileStorage(dir string, purpose StoragePurpose) (*FileStorage, error) {
-	return &FileStorage{Dir: dir, Purpose: purpose, clingDir: filepath.Join(dir, ".cling")}, nil
+func NewFileStorage(fs FS, purpose StoragePurpose) (*FileStorage, error) {
+	return &FileStorage{FS: fs, Purpose: purpose}, nil
 }
 
-func (fs *FileStorage) Init(config Toml, headerComment string) error {
-	stat, err := os.Stat(fs.Dir)
+func (s *FileStorage) Init(config Toml, headerComment string) error {
+	stat, err := s.FS.Stat(".")
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir(fs.Dir, 0o700); err != nil {
-				return WrapErrorf(err, "failed to create directory %s", fs.Dir)
-			}
-		} else {
-			return WrapErrorf(err, "failed to stat directory %s", fs.Dir)
-		}
+		return WrapErrorf(err, "failed to stat %s", s.FS)
 	} else if !stat.IsDir() {
-		return Errorf("%s is not a directory", fs.Dir)
+		return Errorf("%s is not a directory", s.FS)
 	}
-	purposeDir := filepath.Join(fs.clingDir, string(fs.Purpose))
-	_, err = os.Stat(purposeDir)
-	if !errors.Is(err, os.ErrNotExist) {
+	purposeDir := filepath.Join(".cling", string(s.Purpose))
+	_, err = s.FS.Stat(purposeDir)
+	if !errors.Is(err, fs.ErrNotExist) {
 		return ErrStorageAlreadyExists
 	}
-	err = os.MkdirAll(purposeDir, 0o700)
-	if err != nil && !errors.Is(err, os.ErrExist) {
+	err = s.FS.MkdirAll(purposeDir)
+	if err != nil && !errors.Is(err, fs.ErrExist) {
 		return WrapErrorf(err, "failed to create new directory %s", purposeDir)
 	}
 	// Create the directory layout.
 	mkClingDir := func(names ...string) error {
-		fullPath := filepath.Join(append([]string{fs.clingDir}, names...)...)
-		if err := os.Mkdir(fullPath, 0o700); err != nil {
+		fullPath := filepath.Join(append([]string{".cling"}, names...)...)
+		if err := s.FS.Mkdir(fullPath); err != nil {
 			return WrapErrorf(err, "failed to create new directory %s", fullPath)
 		}
 		return nil
 	}
-	if err := mkClingDir(string(fs.Purpose), "refs"); err != nil {
+	if err := mkClingDir(string(s.Purpose), "refs"); err != nil {
 		return err
 	}
-	if err := mkClingDir(string(fs.Purpose), "objects"); err != nil {
+	if err := mkClingDir(string(s.Purpose), "objects"); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(fs.configFilePath(), os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := s.FS.OpenWrite(s.configFilePath())
 	if err != nil {
-		return WrapErrorf(err, "failed to open config file %s", fs.configFilePath())
+		return WrapErrorf(err, "failed to open config file %s", s.configFilePath())
 	}
 	defer f.Close() //nolint:errcheck
 	if err := WriteToml(f, headerComment, config); err != nil {
-		return WrapErrorf(err, "failed to write config file %s", fs.configFilePath())
+		return WrapErrorf(err, "failed to write config file %s", s.configFilePath())
 	}
 	if err := f.Close(); err != nil {
-		return WrapErrorf(err, "failed to close config file %s", fs.configFilePath())
+		return WrapErrorf(err, "failed to close config file %s", s.configFilePath())
+	}
+	if err := s.FS.Chmod(s.configFilePath(), 0o600); err != nil {
+		return WrapErrorf(err, "failed to change permissions of %s", s.configFilePath())
 	}
 	return nil
 }
 
-func (fs *FileStorage) Open() (Toml, error) {
-	f, err := os.Open(fs.configFilePath())
-	if errors.Is(err, os.ErrNotExist) {
+func (s *FileStorage) Open() (Toml, error) {
+	f, err := s.FS.OpenRead(s.configFilePath())
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil, ErrStorageNotFound
 	}
 	if err != nil {
-		return nil, WrapErrorf(err, "failed to open config file %s", fs.configFilePath())
+		return nil, WrapErrorf(err, "failed to open config file %s", s.configFilePath())
 	}
 	defer f.Close() //nolint:errcheck
 	toml, err := ReadToml(f)
 	if err != nil {
-		return nil, WrapErrorf(err, "failed to read config file %s", fs.configFilePath())
+		return nil, WrapErrorf(err, "failed to read config file %s", s.configFilePath())
 	}
 	return toml, nil
 }
 
-func (fs *FileStorage) HasBlock(blockId BlockId) (bool, error) {
-	p := fs.blockPath(blockId)
-	_, err := os.Stat(p)
+func (s *FileStorage) HasBlock(blockId BlockId) (bool, error) {
+	p := s.blockPath(blockId)
+	_, err := s.FS.Stat(p)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return false, nil
 		}
 		return false, WrapErrorf(err, "failed to stat block file %s", p)
@@ -144,7 +141,7 @@ func (fs *FileStorage) HasBlock(blockId BlockId) (bool, error) {
 	return true, nil
 }
 
-func (fs *FileStorage) WriteBlock(block Block) (bool, error) { //nolint:funlen
+func (s *FileStorage) WriteBlock(block Block) (bool, error) {
 	if len(block.EncryptedData) > MaxEncryptedBlockDataSize {
 		return false, Errorf(
 			"block data too large: %d bytes, max %d",
@@ -159,96 +156,33 @@ func (fs *FileStorage) WriteBlock(block Block) (bool, error) { //nolint:funlen
 			len(block.EncryptedData),
 		)
 	}
-	targetPath := fs.blockPath(block.Header.BlockId)
-	_, err := os.Stat(targetPath)
+	targetPath := s.blockPath(block.Header.BlockId)
+	_, err := s.FS.Stat(targetPath)
 	if err == nil {
 		return true, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return false, WrapErrorf(err, "failed to stat block file %s", targetPath)
 	}
-	suffix, err := RandStr(32)
-	if err != nil {
-		return false, WrapErrorf(err, "failed to generate random suffix for %s", targetPath)
-	}
-	tmpPath := targetPath + suffix
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+	if err := s.FS.MkdirAll(filepath.Dir(targetPath)); err != nil {
 		return false, WrapErrorf(err, "failed to create directory for %s", targetPath)
-	}
-	file, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE, 0o400)
-	if err != nil {
-		return false, WrapErrorf(err, "failed to open temporary file %s", tmpPath)
 	}
 	var header bytes.Buffer
 	if err := MarshalBlockHeader(&block.Header, &header); err != nil {
 		return false, WrapErrorf(err, "failed to marshal block header %s", block.Header.BlockId)
 	}
 	headerBytes := header.Bytes()
-	if _, err := file.Write(headerBytes); err != nil {
-		_ = file.Close()
-		// Try to delete the file in case of an error.
-		if err := os.Remove(tmpPath); err != nil {
-			return false, WrapErrorf(
-				err,
-				"failed to write header and failed to remove temporary file %s (it is garbage now)",
-				tmpPath,
-			)
-		}
-		return false, WrapErrorf(
-			err,
-			"failed to write header of block %s to temporary file %s",
-			block.Header.BlockId,
-			tmpPath,
-		)
-	}
-	if _, err := file.Write(block.EncryptedData); err != nil {
-		_ = file.Close()
-		// Try to delete the file in case of an error.
-		if err := os.Remove(tmpPath); err != nil {
-			return false, WrapErrorf(
-				err,
-				"failed to write data and failed to remove temporary file %s (it is garbage now)",
-				tmpPath,
-			)
-		}
-		return false, WrapErrorf(
-			err,
-			"failed to write data of block %s to temporary file %s",
-			block.Header.BlockId,
-			tmpPath,
-		)
-	}
-	if err := file.Close(); err != nil {
-		// Try to delete the file in case of an error.
-		if err := os.Remove(tmpPath); err != nil {
-			return false, WrapErrorf(
-				err,
-				"failed to close temporary file %s and failed to remove it (it is garbage now)",
-				tmpPath,
-			)
-		}
-		return false, WrapErrorf(err, "failed to close temporary file %s of block %s", tmpPath, block.Header.BlockId)
-	}
-	if err := os.Rename(tmpPath, targetPath); err != nil {
-		// Try to delete the file in case of an error.
-		if err := os.Remove(tmpPath); err != nil {
-			return false, WrapErrorf(
-				err,
-				"failed to rename temporary file %s to %s and failed to remove temporary file (it is garbage now)",
-				tmpPath,
-				targetPath,
-			)
-		}
-		return false, WrapErrorf(err, "failed to rename temporary file %s to %s", tmpPath, targetPath)
+	if err := AtomicWriteFile(s.FS, targetPath, 0o400, headerBytes, block.EncryptedData); err != nil {
+		return false, WrapErrorf(err, "failed to write block %s", block.Header.BlockId)
 	}
 	return false, nil
 }
 
 // Return `ErrBlockNotFound` if the block does not exist.
-func (fs *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error) {
-	path := fs.blockPath(blockId)
-	file, err := os.Open(path)
+func (s *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error) {
+	path := s.blockPath(blockId)
+	file, err := s.FS.OpenRead(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, BlockHeader{}, WrapErrorf(ErrBlockNotFound, "block %s does not exist", blockId)
 		}
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to open block file %s", path)
@@ -281,11 +215,11 @@ func (fs *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHe
 }
 
 // Return `ErrBlockNotFound` if the block does not exist.
-func (fs *FileStorage) ReadBlockHeader(blockId BlockId) (BlockHeader, error) {
-	path := fs.blockPath(blockId)
-	file, err := os.Open(path)
+func (s *FileStorage) ReadBlockHeader(blockId BlockId) (BlockHeader, error) {
+	path := s.blockPath(blockId)
+	file, err := s.FS.OpenRead(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return BlockHeader{}, WrapErrorf(ErrBlockNotFound, "block %s does not exist", blockId)
 		}
 		return BlockHeader{}, WrapErrorf(err, "failed to open block file %s", path)
@@ -302,51 +236,56 @@ func (fs *FileStorage) ReadBlockHeader(blockId BlockId) (BlockHeader, error) {
 	return UnmarshalBlockHeader(blockId, bytes.NewBuffer(buf[:]))
 }
 
-func (fs *FileStorage) WriteControlFile(section ControlFileSection, name string, data []byte) error {
-	path, err := fs.controlFilePath(section, name)
+func (s *FileStorage) WriteControlFile(section ControlFileSection, name string, data []byte) error {
+	path, err := s.controlFilePath(section, name)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := s.FS.MkdirAll(filepath.Dir(path)); err != nil {
 		return WrapErrorf(err, "failed to create directory for control file %s", path)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := AtomicWriteFile(s.FS, path, 0o600, data); err != nil {
 		return WrapErrorf(err, "failed to write control file %s", path)
 	}
 	return nil
 }
 
-func (fs *FileStorage) ReadControlFile(section ControlFileSection, name string) ([]byte, error) {
-	path, err := fs.controlFilePath(section, name)
+func (s *FileStorage) ReadControlFile(section ControlFileSection, name string) ([]byte, error) {
+	path, err := s.controlFilePath(section, name)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	f, err := s.FS.OpenRead(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, WrapErrorf(ErrControlFileNotFound, "control file %s/%s does not exist", section, name)
 		}
+		return nil, WrapErrorf(err, "failed to read control file %s", path)
+	}
+	defer f.Close() //nolint:errcheck
+	data, err := io.ReadAll(f)
+	if err != nil {
 		return nil, WrapErrorf(err, "failed to read control file %s", path)
 	}
 	return data, nil
 }
 
-func (fs *FileStorage) HasControlFile(section ControlFileSection, name string) (bool, error) {
-	path, err := fs.controlFilePath(section, name)
+func (s *FileStorage) HasControlFile(section ControlFileSection, name string) (bool, error) {
+	path, err := s.controlFilePath(section, name)
 	if err != nil {
 		return false, err
 	}
-	_, err = os.Stat(path)
+	_, err = s.FS.Stat(path)
 	return err == nil, nil
 }
 
-func (fs *FileStorage) DeleteControlFile(section ControlFileSection, name string) error {
-	path, err := fs.controlFilePath(section, name)
+func (s *FileStorage) DeleteControlFile(section ControlFileSection, name string) error {
+	path, err := s.controlFilePath(section, name)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+	if err := s.FS.Remove(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			return WrapErrorf(ErrControlFileNotFound, "control file %s/%s does not exist", section, name)
 		}
 		return WrapErrorf(err, "failed to delete control file %s", path)
@@ -354,19 +293,19 @@ func (fs *FileStorage) DeleteControlFile(section ControlFileSection, name string
 	return nil
 }
 
-func (fs *FileStorage) blockPath(blockId BlockId) string {
+func (s *FileStorage) blockPath(blockId BlockId) string {
 	hexPath := hex.EncodeToString(blockId[:])
-	return filepath.Join(fs.clingDir, string(fs.Purpose), "objects", hexPath[:2], hexPath[2:4], hexPath[4:])
+	return filepath.Join(".cling", string(s.Purpose), "objects", hexPath[:2], hexPath[2:4], hexPath[4:])
 }
 
-func (fs *FileStorage) controlFilePath(section ControlFileSection, name string) (string, error) {
+func (s *FileStorage) controlFilePath(section ControlFileSection, name string) (string, error) {
 	name = filepath.Clean(name)
 	if strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, "..") || len(name) == 0 {
 		return "", Errorf("invalid file name %s", name)
 	}
-	return filepath.Join(fs.clingDir, string(fs.Purpose), string(section), name), nil
+	return filepath.Join(".cling", string(s.Purpose), string(section), name), nil
 }
 
-func (fs *FileStorage) configFilePath() string {
-	return filepath.Join(fs.clingDir, fmt.Sprintf("%s.txt", fs.Purpose))
+func (s *FileStorage) configFilePath() string {
+	return filepath.Join(".cling", fmt.Sprintf("%s.txt", s.Purpose))
 }

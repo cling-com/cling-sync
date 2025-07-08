@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -15,8 +15,8 @@ func TestRevisionTemp(t *testing.T) {
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, 500)
+		fs := td.NewFS(t)
+		sut := NewRevisionTempWriter(fs, 500)
 
 		add := func(path string, mode ModeAndPerm) {
 			err := sut.Add(&RevisionEntry{Path(path), RevisionEntryAdd, td.FileMetadata(mode)})
@@ -25,16 +25,16 @@ func TestRevisionTemp(t *testing.T) {
 
 		add("/some/dir1", ModeDir)
 		add("/some/dir1/fileb", 0)
-		files, _ := os.ReadDir(dir)
+		files, _ := fs.ReadDir(".")
 		assert.Equal(0, len(files))
 		// Now it should rotate.
 		add("/some/dir1/filea", 0)
-		files, _ = os.ReadDir(dir)
+		files, _ = fs.ReadDir(".")
 		assert.Equal(1, len(files))
 		add("/some/dir2/filec", 0)
 		add("/some/dir1/a", 0)
 		add("/some/dir1/b", 0)
-		files, _ = os.ReadDir(dir)
+		files, _ = fs.ReadDir(".")
 		assert.Equal(2, len(files))
 		add("/some/dir2/filea", 0)
 		add("/some/dir2", ModeDir)
@@ -58,11 +58,11 @@ func TestRevisionTemp(t *testing.T) {
 	t.Run("Chunk size is not exceeded", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		dir := t.TempDir()
+		fs := td.NewFS(t)
 
 		// First, try with a chunk size that *exactly* fits 3 entries.
 		entry := td.RevisionEntry("1.txt", RevisionEntryAdd)
-		sut := NewRevisionTempWriter(dir, entry.MarshalledSize()*3)
+		sut := NewRevisionTempWriter(fs, entry.MarshalledSize()*3)
 		for i := range 3 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryAdd))
 			assert.NoError(err)
@@ -73,7 +73,7 @@ func TestRevisionTemp(t *testing.T) {
 		assert.Equal(1, sut.chunks, "chunk should have been rotated")
 
 		// Now, try with a chunk size that is on byte smaller than 3 entries.
-		sut = NewRevisionTempWriter(dir, entry.MarshalledSize()*3-1)
+		sut = NewRevisionTempWriter(fs, entry.MarshalledSize()*3-1)
 		for i := range 2 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryAdd))
 			assert.NoError(err)
@@ -88,9 +88,9 @@ func TestRevisionTemp(t *testing.T) {
 		// This basically makes sure that we always use `RevisionEntryPathCompare`.
 		t.Parallel()
 		assert := NewAssert(t)
-		dir := t.TempDir()
+		fs := td.NewFS(t)
 		// Use a small chunk size to force rotation.
-		sut := NewRevisionTempWriter(dir, 700)
+		sut := NewRevisionTempWriter(fs, 700)
 
 		add := func(path string, mode ModeAndPerm) {
 			err := sut.Add(&RevisionEntry{Path(path), RevisionEntryAdd, td.FileMetadata(mode)})
@@ -135,8 +135,8 @@ func TestRevisionTemp(t *testing.T) {
 	t.Run("Single chuck", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, DefaultRevisionTempChunkSize)
+		fs := td.NewFS(t)
+		sut := NewRevisionTempWriter(fs, DefaultRevisionTempChunkSize)
 
 		err := sut.Add(td.RevisionEntry("/some/dir/fileb", RevisionEntryAdd))
 		assert.NoError(err)
@@ -146,15 +146,19 @@ func TestRevisionTemp(t *testing.T) {
 		assert.NoError(err)
 		merged := readAllRevsisionTemp(t, temp, nil)
 		assert.Equal(2, len(merged))
-		assert.Equal("/some/dir/filea", string(merged[0].Path))
-		assert.Equal("/some/dir/fileb", string(merged[1].Path))
+		names := []string{}
+		for _, entry := range merged {
+			names = append(names, string(entry.Path))
+		}
+		slices.Sort(names)
+		assert.Equal([]string{"/some/dir/filea", "/some/dir/fileb"}, names)
 	})
 
 	t.Run("Duplicate paths in the same chunk are rejected", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, DefaultRevisionTempChunkSize)
+		fs := td.NewFS(t)
+		sut := NewRevisionTempWriter(fs, DefaultRevisionTempChunkSize)
 
 		err := sut.Add(td.RevisionEntry("/some/dir/file", RevisionEntryAdd))
 		assert.NoError(err)
@@ -167,8 +171,8 @@ func TestRevisionTemp(t *testing.T) {
 	t.Run("Duplicate paths in different chunks are rejected", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, 1)
+		fs := td.NewFS(t)
+		sut := NewRevisionTempWriter(fs, 1)
 
 		err := sut.Add(td.RevisionEntry("/some/dir/file", RevisionEntryAdd))
 		assert.NoError(err)
@@ -184,8 +188,8 @@ func TestRevisionTemp(t *testing.T) {
 	t.Run("PathFilter", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, DefaultRevisionTempChunkSize)
+		fs := td.NewFS(t)
+		sut := NewRevisionTempWriter(fs, DefaultRevisionTempChunkSize)
 
 		for _, path := range []string{"a.txt", "sub/a.txt", "b.txt"} {
 			err := sut.Add(td.RevisionEntry(path, RevisionEntryAdd))
@@ -204,8 +208,8 @@ func TestRevisionTemp(t *testing.T) {
 	t.Run("PathFilter filtering everything", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, DefaultRevisionTempChunkSize)
+		fs := td.NewFS(t)
+		sut := NewRevisionTempWriter(fs, DefaultRevisionTempChunkSize)
 
 		for _, path := range []string{"a.txt", "sub/a.txt", "b.txt"} {
 			err := sut.Add(td.RevisionEntry(path, RevisionEntryAdd))
@@ -241,7 +245,7 @@ func TestRevisionTemp(t *testing.T) {
 		// Shuffle the paths to simulate unordered input.
 		rand.Shuffle(len(paths), func(i, j int) { paths[i], paths[j] = paths[j], paths[i] })
 		// Use small chunk size to force rotation.
-		sut := NewRevisionTempWriter(t.TempDir(), 32*1024)
+		sut := NewRevisionTempWriter(td.NewFS(t), 32*1024)
 		for _, p := range paths {
 			assert.NoError(sut.Add(td.RevisionEntry(p, RevisionEntryAdd)))
 		}
@@ -264,8 +268,8 @@ func TestRevisionTempCache(t *testing.T) {
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		dir := t.TempDir()
-		sut := NewRevisionTempWriter(dir, 500)
+		fs := td.NewFS(t)
+		sut := NewRevisionTempWriter(fs, 500)
 		add := func(path string, mode ModeAndPerm) {
 			err := sut.Add(&RevisionEntry{Path(path), RevisionEntryAdd, td.FileMetadata(mode)})
 			assert.NoError(err)
@@ -314,14 +318,14 @@ func TestRevisionTempCache(t *testing.T) {
 
 func BenchmarkRevisionTemp(b *testing.B) {
 	assert := NewAssert(b)
-	dir := b.TempDir()
-	sut := NewRevisionTempWriter(dir, 16*1024) // Force chunk rotation.
+	fs := td.NewFS(b)
+	sut := NewRevisionTempWriter(fs, 16*1024) // Force chunk rotation.
 	for b.Loop() {
 		path := fmt.Sprintf("/%d/%d/%d", rand.Int(), rand.Int(), rand.Int()) //nolint:gosec
 		_ = sut.Add(td.RevisionEntry(path, RevisionEntryAdd))
 	}
 	if b.N > 1000 {
-		files, _ := os.ReadDir(dir)
+		files, _ := fs.ReadDir(".")
 		// Make sure we wrote multiple files.
 		assert.Greater(len(files), 1)
 	}

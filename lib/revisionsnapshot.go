@@ -7,7 +7,6 @@ package lib
 import (
 	"errors"
 	"io"
-	"os"
 	"slices"
 )
 
@@ -16,14 +15,7 @@ type RevisionSnapshot struct {
 	RevisionId RevisionId
 }
 
-func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpDir string) (*RevisionSnapshot, error) {
-	files, err := os.ReadDir(tmpDir)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to read temporary directory %s", tmpDir)
-	}
-	if len(files) > 0 {
-		return nil, Errorf("temporary directory %s is not empty", tmpDir)
-	}
+func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpFS FS) (*RevisionSnapshot, error) {
 	// Build a list of all revisions.
 	revisions := make([]*Revision, 0)
 	r := revision
@@ -36,7 +28,7 @@ func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpDir str
 		revisions = append(revisions, &revision)
 		r = revision.Parent
 	}
-	tempWriter := NewRevisionTempWriter(tmpDir, DefaultRevisionTempChunkSize)
+	tempWriter := NewRevisionTempWriter(tmpFS, DefaultRevisionTempChunkSize)
 	if err := revisionNWayMerge(repository, revisions, tempWriter); err != nil {
 		return nil, WrapErrorf(err, "failed to revision n-way merge revisions")
 	}
