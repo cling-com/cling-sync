@@ -62,11 +62,11 @@ func TestHTTPStorageClient(t *testing.T) {
 		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
 		blockId := td.BlockId("1")
 
-		_, _, err := client.ReadBlock(blockId, lib.BlockBuf{})
+		_, _, err := client.ReadBlock(blockId)
 		assert.ErrorIs(err, lib.ErrBlockNotFound)
 
 		header := testWriteBlock(t, storage, blockId, []byte("abcd"))
-		data, readHeader, err := client.ReadBlock(blockId, lib.BlockBuf{})
+		data, readHeader, err := client.ReadBlock(blockId)
 		assert.NoError(err)
 		assert.Equal(header, readHeader)
 		assert.Equal([]byte("abcd"), data)
@@ -110,7 +110,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
-		data, readHeader, err := storage.ReadBlock(blockId, lib.BlockBuf{})
+		data, readHeader, err := storage.ReadBlock(blockId)
 		assert.NoError(err)
 		assert.Equal(block.Header, readHeader)
 		assert.Equal(block.EncryptedData, data)
@@ -293,7 +293,7 @@ func TestHTTPStorageServer(t *testing.T) {
 		resp, err := http.DefaultClient.Do(req)
 		assert.NoError(err)
 		assert.Equal(201, resp.StatusCode)
-		data, readHeader, err := storage.ReadBlock(blockId, lib.BlockBuf{})
+		data, readHeader, err := storage.ReadBlock(blockId)
 		assert.NoError(err)
 		assert.Equal(header, readHeader)
 		assert.Equal([]byte("abcdefgh"), data)

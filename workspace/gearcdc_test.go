@@ -28,12 +28,11 @@ func TestGearCDCBasics(t *testing.T) {
 		t.Helper()
 		buf := bytes.NewBufferString(input)
 		sut := NewGearCDC(buf, mask, minSize, maxSize)
-		dst := lib.BlockBuf{}
 		res := []string{}
 		var block []byte
 		var err error
 		for {
-			block, err = sut.Read(dst)
+			block, err = sut.Read()
 			if errors.Is(err, io.EOF) {
 				break
 			}
@@ -133,13 +132,12 @@ func TestGearCDCWithDefaults(t *testing.T) {
 		t.Helper()
 		buf := bytes.NewBuffer(input)
 		sut := NewGearCDCWithDefaults(buf)
-		dst := lib.BlockBuf{}
 
 		i := 0
 		var blockIds []lib.BlockId
 		var lastBlockLen int
 		for {
-			block, err := sut.Read(dst)
+			block, err := sut.Read()
 			if errors.Is(err, io.EOF) {
 				break
 			}
@@ -185,11 +183,11 @@ func TestGearCDCWithDefaults(t *testing.T) {
 		assert := lib.NewAssert(t)
 		input := []byte{1}
 		sut := NewGearCDCWithDefaults(bytes.NewBuffer(input))
-		dst := lib.BlockBuf{}
-		block, err := sut.Read(dst)
+
+		block, err := sut.Read()
 		assert.NoError(err)
 		assert.Equal(input, block)
-		_, err = sut.Read(dst)
+		_, err = sut.Read()
 		assert.ErrorIs(err, io.EOF)
 	})
 	t.Run("Input at minSize", func(t *testing.T) {
@@ -197,11 +195,11 @@ func TestGearCDCWithDefaults(t *testing.T) {
 		assert := lib.NewAssert(t)
 		input := randBytes(defaultMinBlockSize)
 		sut := NewGearCDCWithDefaults(bytes.NewBuffer(input))
-		dst := lib.BlockBuf{}
-		block, err := sut.Read(dst)
+
+		block, err := sut.Read()
 		assert.NoError(err)
 		assert.Equal(input, block)
-		_, err = sut.Read(dst)
+		_, err = sut.Read()
 		assert.ErrorIs(err, io.EOF)
 	})
 	t.Run("Highly repetitive input", func(t *testing.T) {
@@ -236,7 +234,6 @@ func TestGearCDCWithDefaults(t *testing.T) {
 }
 
 func BenchmarkGearCDCWithDefaults(b *testing.B) {
-	dst := lib.BlockBuf{}
 	b.SetBytes(100 * 1024 * 1024)
 	for b.Loop() {
 		b.StopTimer()
@@ -248,7 +245,7 @@ func BenchmarkGearCDCWithDefaults(b *testing.B) {
 		sut := NewGearCDCWithDefaults(bytes.NewBuffer(data))
 		b.StartTimer()
 		for {
-			_, err := sut.Read(dst)
+			_, err := sut.Read()
 			if errors.Is(err, io.EOF) {
 				break
 			}

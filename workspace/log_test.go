@@ -134,7 +134,7 @@ type TestStatusFile struct {
 
 func revisionLog(rt *RepositoryTest, revId lib.RevisionId, files []TestStatusFile) TestRevisionLog {
 	rt.t.Helper()
-	revision, err := rt.Repository.ReadRevision(revId, lib.BlockBuf{})
+	revision, err := rt.Repository.ReadRevision(revId)
 	rt.assert.NoError(err)
 	return TestRevisionLog{revId, revision, files}
 }

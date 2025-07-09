@@ -59,7 +59,6 @@ type Merger struct {
 	tempFS      lib.FS
 	repository  *lib.Repository
 	directories map[string]fs.FileInfo
-	blockBuf    lib.BlockBuf
 }
 
 // Merge the changes from the repository into the workspace and vice versa.
@@ -90,7 +89,7 @@ func Merge(ws *Workspace, repository *lib.Repository, opts *MergeOptions) (lib.R
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
-	merger := Merger{ws, tempFS, repository, make(map[string]fs.FileInfo), lib.BlockBuf{}}
+	merger := Merger{ws, tempFS, repository, make(map[string]fs.FileInfo)}
 	conflicts, err := findConflicts(localChanges.Source, remoteRevision, wsRevision)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to find conflicts")
@@ -143,7 +142,7 @@ func ForceCommit(ws *Workspace, repository *lib.Repository, opts *ForceCommitOpt
 	if localChanges.Source.Chunks() == 0 {
 		return lib.RevisionId{}, lib.ErrEmptyCommit
 	}
-	merger := &Merger{ws, tempFS, repository, make(map[string]fs.FileInfo), lib.BlockBuf{}}
+	merger := &Merger{ws, tempFS, repository, make(map[string]fs.FileInfo)}
 	newHead, err := merger.commitLocalChanges(localChanges.Source, opts.CommitMonitor, opts.Author, opts.Message)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to commit local changes")
@@ -212,7 +211,7 @@ func (m *Merger) commitLocalChanges(
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat %s", localPath)
 		}
-		md, err := addToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon.OnAddBlock, m.blockBuf)
+		md, err := addToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon.OnAddBlock)
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", localPath)
 		}
@@ -543,7 +542,7 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 	}
 	defer f.Close() //nolint:errcheck
 	for _, blockId := range entry.Metadata.BlockIds {
-		data, _, err := m.repository.ReadBlock(blockId, m.blockBuf)
+		data, _, err := m.repository.ReadBlock(blockId)
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				mon.OnEnd(entry, target)
@@ -585,7 +584,6 @@ func addToRepository(
 	repository *lib.Repository,
 	entry *lib.RevisionEntry,
 	onAddBlock func(entry *lib.RevisionEntry, header *lib.BlockHeader, existed bool, dataSize int64),
-	blockBuf lib.BlockBuf,
 ) (lib.FileMetadata, error) {
 	if fileInfo.IsDir() {
 		return newFileMetadata(fileInfo, lib.Sha256{}, nil), nil
@@ -615,7 +613,7 @@ func addToRepository(
 	// Read blocks and add them to the repository.
 	cdc := NewGearCDCWithDefaults(f)
 	for {
-		data, err := cdc.Read(blockBuf)
+		data, err := cdc.Read()
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -625,7 +623,7 @@ func addToRepository(
 		if _, err := fileHash.Write(data); err != nil {
 			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to update file hash")
 		}
-		existed, blockHeader, err := repository.WriteBlock(data, blockBuf)
+		existed, blockHeader, err := repository.WriteBlock(data)
 		if err != nil {
 			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to write block")
 		}

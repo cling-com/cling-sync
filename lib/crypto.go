@@ -123,6 +123,11 @@ func Decrypt(ciphertext []byte, cipher cryptoCipher.AEAD, associatedData []byte,
 	return plaintext, nil
 }
 
+// Re-uses the ciphertext buffer.
+func DecryptInPlace(ciphertext []byte, cipher cryptoCipher.AEAD, associatedData []byte) ([]byte, error) {
+	return Decrypt(ciphertext, cipher, associatedData, ciphertext[nonceSize:])
+}
+
 func CalculateSha256(data []byte) Sha256 {
 	sha := sha256.New()
 	sha.Write(data)

@@ -45,7 +45,6 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	if sorted.Chunks() == 0 {
 		return RevisionId{}, ErrEmptyCommit
 	}
-	blockBuf := BlockBuf{}
 	blockIds := []BlockId{}
 	sortedReader := sorted.Reader(nil)
 	for chunk := range sorted.Chunks() {
@@ -53,7 +52,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to read sorted chunk file")
 		}
-		_, blockHeader, err := c.repository.WriteBlock(buf, blockBuf)
+		_, blockHeader, err := c.repository.WriteBlock(buf)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to write block")
 		}
@@ -68,7 +67,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 		Parent:        c.BaseRevision,
 		Blocks:        blockIds,
 	}
-	revisionId, err := c.repository.WriteRevision(revision, blockBuf)
+	revisionId, err := c.repository.WriteRevision(revision)
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write revision")
 	}

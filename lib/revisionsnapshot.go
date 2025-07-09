@@ -19,9 +19,8 @@ func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpFS FS) 
 	// Build a list of all revisions.
 	revisions := make([]*Revision, 0)
 	r := revision
-	blockBuf := BlockBuf{}
 	for !r.IsRoot() {
-		revision, err := repository.ReadRevision(r, blockBuf)
+		revision, err := repository.ReadRevision(r)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read revision: %s", r)
 		}
@@ -49,7 +48,7 @@ func revisionNWayMerge(
 	readers := make([]*RevisionReader, len(revisions))
 	heap := []*RevisionEntry{}
 	for i, revision := range revisions {
-		readers[i] = NewRevisionReader(repository, revision, BlockBuf{})
+		readers[i] = NewRevisionReader(repository, revision)
 		re, err := readers[i].Read()
 		if errors.Is(err, io.EOF) {
 			continue

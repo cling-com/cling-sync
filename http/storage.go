@@ -89,7 +89,7 @@ func (c *HTTPStorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
 	return resp.StatusCode == http.StatusOK, nil
 }
 
-func (c *HTTPStorageClient) ReadBlock(blockId lib.BlockId, buf lib.BlockBuf) ([]byte, lib.BlockHeader, error) {
+func (c *HTTPStorageClient) ReadBlock(blockId lib.BlockId) ([]byte, lib.BlockHeader, error) {
 	resp, err := c.request(http.MethodGet, "/storage/block/"+blockId.String(), nil, 404)
 	if err != nil {
 		return nil, lib.BlockHeader{}, lib.WrapErrorf(err, "failed to read block")
@@ -271,7 +271,7 @@ func (s *HTTPStorageServer) ReadBlock(w http.ResponseWriter, r *http.Request) {
 		s.error(lib.WrapErrorf(err, "invalid block ID"), w, http.StatusBadRequest)
 		return
 	}
-	data, header, err := s.Storage.ReadBlock(lib.BlockId(id), lib.BlockBuf{})
+	data, header, err := s.Storage.ReadBlock(lib.BlockId(id))
 	if err != nil {
 		if errors.Is(err, lib.ErrBlockNotFound) {
 			w.WriteHeader(http.StatusNotFound)

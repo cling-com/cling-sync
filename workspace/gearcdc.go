@@ -7,6 +7,7 @@
 package workspace
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"math/rand/v2"
@@ -54,10 +55,11 @@ func NewGearCDC(r io.Reader, mask uint64, minSize, maxSize int) *GearCDC {
 // If we reach the end of the underlying reader, return `io.EOF`.
 //
 // Return a slice of `dst` with the read bytes.
-func (g *GearCDC) Read(dst lib.BlockBuf) ([]byte, error) {
+func (g *GearCDC) Read() ([]byte, error) {
 	i := g.bufOffset
 	dstIndex := 0
 	var window uint64
+	buf := bytes.NewBuffer(nil)
 	for {
 		if i == g.bufSize {
 			n, err := g.r.Read(g.buf)
@@ -75,7 +77,7 @@ func (g *GearCDC) Read(dst lib.BlockBuf) ([]byte, error) {
 			i = 0
 		}
 		b := g.buf[i]
-		dst[dstIndex] = b
+		buf.WriteByte(b)
 		dstIndex++
 		i++
 		window = (window << 1) ^ g.table[b]
@@ -84,5 +86,5 @@ func (g *GearCDC) Read(dst lib.BlockBuf) ([]byte, error) {
 		}
 	}
 	g.bufOffset = i
-	return dst[:dstIndex], nil
+	return buf.Bytes(), nil
 }

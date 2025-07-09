@@ -140,11 +140,11 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		repo, _ := testRepository(t)
 
 		writeData := []byte("plaintext")
-		existed, writeHeader, err := repo.WriteBlock(writeData, BlockBuf{})
+		existed, writeHeader, err := repo.WriteBlock(writeData)
 		assert.NoError(err)
 		assert.Equal(false, existed)
 
-		readData, readHeader, err := repo.ReadBlock(writeHeader.BlockId, BlockBuf{})
+		readData, readHeader, err := repo.ReadBlock(writeHeader.BlockId)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 		assert.Equal(writeHeader, readHeader)
@@ -191,10 +191,10 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 
 		writeData := make([]byte, MaxBlockDataSize)
 		_, _ = rand.Read(writeData)
-		_, header, err := repo.WriteBlock(writeData, BlockBuf{})
+		_, header, err := repo.WriteBlock(writeData)
 		assert.NoError(err)
 		assert.Equal(MaxEncryptedBlockDataSize, int(header.EncryptedDataSize))
-		readData, _, err := repo.ReadBlock(header.BlockId, BlockBuf{})
+		readData, _, err := repo.ReadBlock(header.BlockId)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 
@@ -210,7 +210,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		repo, _ := testRepository(t)
 
 		writeData := make([]byte, MaxBlockDataSize+1)
-		_, header, err := repo.WriteBlock(writeData, BlockBuf{})
+		_, header, err := repo.WriteBlock(writeData)
 		assert.Error(err, "exceeds maximum block size")
 		assert.Equal(BlockHeader{}, header) //nolint:exhaustruct
 	})
@@ -226,13 +226,13 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 			writeData[i] = byte(i % 32)
 		}
 		assert.Equal(true, IsCompressible(writeData))
-		existed, header, err := repo.WriteBlock(writeData, BlockBuf{})
+		existed, header, err := repo.WriteBlock(writeData)
 		assert.NoError(err)
 		assert.Equal(false, existed)
 		assert.Equal(header.Flags&BlockFlagDeflate, BlockFlagDeflate)
 		assert.Less(int(header.EncryptedDataSize), len(writeData)/5, "data should be very compressible")
 
-		readData, _, err := repo.ReadBlock(header.BlockId, BlockBuf{})
+		readData, _, err := repo.ReadBlock(header.BlockId)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 	})
@@ -246,13 +246,13 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		writeData := make([]byte, MaxBlockDataSize)
 		_, _ = rand.Read(writeData)
 		assert.Equal(false, IsCompressible(writeData))
-		existed, header, err := repo.WriteBlock(writeData, BlockBuf{})
+		existed, header, err := repo.WriteBlock(writeData)
 		assert.NoError(err)
 		assert.Equal(false, existed)
 		assert.Equal(uint64(0), header.Flags&BlockFlagDeflate)
 		assert.Equal(int(header.EncryptedDataSize), len(writeData)+TotalCipherOverhead)
 
-		readData, _, err := repo.ReadBlock(header.BlockId, BlockBuf{})
+		readData, _, err := repo.ReadBlock(header.BlockId)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 	})
@@ -270,13 +270,13 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 			writeData[i] = byte(i % 32)
 		}
 		assert.Equal(true, IsCompressible(writeData))
-		existed, header, err := repo.WriteBlock(writeData, BlockBuf{})
+		existed, header, err := repo.WriteBlock(writeData)
 		assert.NoError(err)
 		assert.Equal(false, existed)
 		assert.Equal(uint64(0), header.Flags&BlockFlagDeflate)
 		assert.Equal(int(header.EncryptedDataSize), len(writeData)+TotalCipherOverhead)
 
-		readData, _, err := repo.ReadBlock(header.BlockId, BlockBuf{})
+		readData, _, err := repo.ReadBlock(header.BlockId)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 	})
@@ -292,7 +292,7 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		head, err := repo.Head()
 		assert.NoError(err)
 
-		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3}, BlockBuf{})
+		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3})
 		assert.NoError(err)
 
 		revision := Revision{
@@ -303,10 +303,10 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 			Blocks:        []BlockId{blockHeader.BlockId},
 			Parent:        head,
 		}
-		revisionId, err := repo.WriteRevision(&revision, BlockBuf{})
+		revisionId, err := repo.WriteRevision(&revision)
 		assert.NoError(err)
 
-		readRevision, err := repo.ReadRevision(revisionId, BlockBuf{})
+		readRevision, err := repo.ReadRevision(revisionId)
 		assert.NoError(err)
 		assert.Equal(revision, readRevision)
 	})
@@ -318,7 +318,7 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 
 		// Create a revision that is not based on the current head.
 		revisionId := td.RevisionId("1")
-		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3}, BlockBuf{})
+		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3})
 		assert.NoError(err)
 
 		revision := Revision{
@@ -329,7 +329,7 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 			Blocks:        []BlockId{blockHeader.BlockId},
 			Parent:        revisionId,
 		}
-		_, err = repo.WriteRevision(&revision, BlockBuf{})
+		_, err = repo.WriteRevision(&revision)
 		assert.ErrorIs(err, ErrHeadChanged)
 	})
 
@@ -342,22 +342,42 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(true, head.IsRoot())
 
-		_, err = repo.ReadRevision(head, BlockBuf{})
+		_, err = repo.ReadRevision(head)
 		assert.Error(err, "root revision cannot be read")
 	})
 }
 
-func testRepository(t *testing.T) (*Repository, *FileStorage) {
-	t.Helper()
-	repository, storage, _ := testRepositoryWithFS(t)
+func BenchmarkWriteBlock(b *testing.B) {
+	repository, _ := testRepository(b)
+	data := make([]byte, MaxBlockDataSize/2)
+	_, err := rand.Read(data)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for b.Loop() {
+		// Make sure we don't write the same block twice.
+		_, err = rand.Read(data[:100])
+		if err != nil {
+			b.Fatal(err)
+		}
+		existed, _, _ := repository.WriteBlock(data)
+		if existed {
+			b.Fatal("block already existed")
+		}
+	}
+}
+
+func testRepository(tb testing.TB) (*Repository, *FileStorage) {
+	tb.Helper()
+	repository, storage, _ := testRepositoryWithFS(tb)
 	return repository, storage
 }
 
-func testRepositoryWithFS(t *testing.T) (*Repository, *FileStorage, FS) {
-	t.Helper()
+func testRepositoryWithFS(tb testing.TB) (*Repository, *FileStorage, FS) {
+	tb.Helper()
 	userPassphrase := []byte("user passphrase")
-	assert := NewAssert(t)
-	fs := td.NewFS(t)
+	assert := NewAssert(tb)
+	fs := td.NewFS(tb)
 	storage, err := NewFileStorage(fs, StoragePurposeRepository)
 	assert.NoError(err)
 	repo, err := InitNewRepository(storage, userPassphrase)

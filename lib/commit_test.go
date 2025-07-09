@@ -70,7 +70,7 @@ func TestCommit(t *testing.T) {
 		assert.NoError(err)
 
 		// Change the head.
-		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3}, BlockBuf{})
+		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3})
 		assert.NoError(err)
 		_, err = repo.WriteRevision(&Revision{
 			TimestampSec:  123456789,
@@ -79,7 +79,7 @@ func TestCommit(t *testing.T) {
 			Author:        "test author",
 			Parent:        head,
 			Blocks:        []BlockId{blockHeader.BlockId},
-		}, BlockBuf{})
+		})
 		assert.NoError(err)
 
 		// Try to commit with the head changed.
@@ -91,11 +91,11 @@ func TestCommit(t *testing.T) {
 }
 
 func readRevision(repo *Repository, revisionId RevisionId) (*Revision, []*RevisionEntry, error) {
-	revision, err := repo.ReadRevision(revisionId, BlockBuf{})
+	revision, err := repo.ReadRevision(revisionId)
 	if err != nil {
 		return nil, nil, err
 	}
-	rr := NewRevisionReader(repo, &revision, BlockBuf{})
+	rr := NewRevisionReader(repo, &revision)
 	entries := []*RevisionEntry{}
 	for {
 		entry, err := rr.Read()

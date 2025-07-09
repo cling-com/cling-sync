@@ -57,16 +57,15 @@ func Log(repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
 	}
 	logs := []RevisionLog{}
 	revisionId := head
-	blockBuf := lib.BlockBuf{}
 	for !revisionId.IsRoot() {
-		revision, err := repository.ReadRevision(revisionId, blockBuf)
+		revision, err := repository.ReadRevision(revisionId)
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read revision %s", revisionId)
 		}
 		files := []StatusFile{}
 		matchedAtLeastOnePath := false
 		if opts.Status || opts.PathFilter != nil {
-			revisionReader := lib.NewRevisionReader(repository, &revision, blockBuf)
+			revisionReader := lib.NewRevisionReader(repository, &revision)
 			for {
 				entry, err := revisionReader.Read()
 				if errors.Is(err, io.EOF) {

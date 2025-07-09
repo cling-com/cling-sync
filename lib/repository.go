@@ -17,8 +17,6 @@ const (
 	MaxBlockDataSize          = MaxEncryptedBlockDataSize - TotalCipherOverhead
 )
 
-type BlockBuf [MaxBlockSize]byte
-
 type BlockId Sha256Hmac
 
 func (id BlockId) String() string {
@@ -193,7 +191,7 @@ func DecryptRepositoryKeys(storage Storage, passphrase []byte) (*RepositoryKeys,
 }
 
 // Return `true` if the block already existed.
-func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (bool, BlockHeader, error) {
+func (r *Repository) WriteBlock(data []byte) (bool, BlockHeader, error) {
 	if len(data) > MaxBlockDataSize {
 		return false, BlockHeader{}, Errorf("data size %d exceeds maximum block size %d", len(data), MaxBlockDataSize)
 	}
@@ -207,7 +205,7 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (bool, BlockHeader, e
 	// Compress data if possible.
 	var header BlockHeader
 	if IsCompressible(data) {
-		compressed, err := Compress(data, buf)
+		compressed, err := Compress(data)
 		if err != nil {
 			return false, BlockHeader{}, WrapErrorf(err, "failed to compress data")
 		}
@@ -237,7 +235,8 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (bool, BlockHeader, e
 			blockId,
 		)
 	}
-	encryptedData, err := Encrypt(data, dekCypher, nil, buf[:])
+	encryptedData := make([]byte, len(data)+TotalCipherOverhead)
+	encryptedData, err = Encrypt(data, dekCypher, nil, encryptedData)
 	if err != nil {
 		return false, BlockHeader{}, WrapErrorf(err, "failed to encrypt data with DEK for block %s", blockId)
 	}
@@ -258,12 +257,13 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (bool, BlockHeader, e
 	return false, block.Header, nil
 }
 
-func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error) {
-	encryptedData, header, err := r.storage.ReadBlock(blockId, buf)
+func (r *Repository) ReadBlock(blockId BlockId) ([]byte, BlockHeader, error) {
+	encryptedData, header, err := r.storage.ReadBlock(blockId)
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block %s", blockId)
 	}
-	dek, err := Decrypt(header.EncryptedDEK[:], r.kekCipher, blockId[:], buf[:])
+	dek := make([]byte, RawKeySize)
+	dek, err = Decrypt(header.EncryptedDEK[:], r.kekCipher, blockId[:], dek)
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to decrypt DEK with KEK for block %s", blockId)
 	}
@@ -275,12 +275,12 @@ func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHead
 			blockId,
 		)
 	}
-	data, err := Decrypt(encryptedData, dekCypher, nil, buf[:])
+	data, err := DecryptInPlace(encryptedData, dekCypher, nil)
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to decrypt data with DEK for block %s", blockId)
 	}
 	if header.Flags&BlockFlagDeflate != 0 {
-		data, err = Decompress(data, buf)
+		data, err = Decompress(data)
 		if err != nil {
 			return nil, BlockHeader{}, WrapErrorf(err, "failed to decompress data")
 		}
@@ -297,11 +297,11 @@ func (r *Repository) Head() (RevisionId, error) {
 }
 
 // Return `ErrRootRevision` if revisionId is the root revisionId.
-func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision, error) {
+func (r *Repository) ReadRevision(revisionId RevisionId) (Revision, error) {
 	if revisionId.IsRoot() {
 		return Revision{}, ErrRootRevision
 	}
-	data, _, err := r.ReadBlock(BlockId(revisionId), buf)
+	data, _, err := r.ReadBlock(BlockId(revisionId))
 	if err != nil {
 		return Revision{}, WrapErrorf(err, "failed to read revision %s", revisionId)
 	}
@@ -315,7 +315,7 @@ func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision
 // Write a revision and set it as the current HEAD.
 // A revision can only reference the current head as their parent.
 // Return `ErrHeadChanged` if the head has changed during the commit.
-func (r *Repository) WriteRevision(revision *Revision, buf BlockBuf) (RevisionId, error) {
+func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
 	if len(revision.Blocks) == 0 {
 		return RevisionId{}, Errorf("revision is empty")
 	}
@@ -345,7 +345,7 @@ func (r *Repository) WriteRevision(revision *Revision, buf BlockBuf) (RevisionId
 	if err := MarshalRevision(revision, revBuf); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to marshal revision")
 	}
-	_, blockHeader, err := r.WriteBlock(revBuf.Bytes(), buf)
+	_, blockHeader, err := r.WriteBlock(revBuf.Bytes())
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write revision block")
 	}

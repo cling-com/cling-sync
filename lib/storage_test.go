@@ -198,12 +198,12 @@ func TestFileStorageMultiPurpose(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
-		data, header, err := repo.ReadBlock(repoBlock.Header.BlockId, BlockBuf{})
+		data, header, err := repo.ReadBlock(repoBlock.Header.BlockId)
 		assert.NoError(err)
 		assert.Equal(repoBlock.Header, header)
 		assert.Equal(repoBlock.EncryptedData, data)
 
-		data, header, err = workspace.ReadBlock(workspaceBlock.Header.BlockId, BlockBuf{})
+		data, header, err = workspace.ReadBlock(workspaceBlock.Header.BlockId)
 		assert.NoError(err)
 		assert.Equal(workspaceBlock.Header, header)
 		assert.Equal(workspaceBlock.EncryptedData, data)
@@ -283,7 +283,7 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.Equal(true, ok)
 
 		// Read back the whole block with `ReadBlock`.
-		readData, readHeader, err := sut.ReadBlock(block.Header.BlockId, BlockBuf{})
+		readData, readHeader, err := sut.ReadBlock(block.Header.BlockId)
 		assert.NoError(err)
 		assert.Equal(block.Header, readHeader)
 		assert.Equal(block.EncryptedData, readData)
@@ -302,7 +302,7 @@ func TestFileStorageBlocks(t *testing.T) {
 		err = sut.Init(nil, "")
 		assert.NoError(err)
 
-		_, _, err = sut.ReadBlock(td.BlockId("1"), BlockBuf{})
+		_, _, err = sut.ReadBlock(td.BlockId("1"))
 		assert.ErrorIs(err, ErrBlockNotFound)
 
 		_, err = sut.ReadBlockHeader(td.BlockId("1"))

@@ -38,7 +38,7 @@ type Storage interface {
 	HasBlock(blockId BlockId) (bool, error)
 
 	// Return `ErrBlockNotFound` if the block does not exist.
-	ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error)
+	ReadBlock(blockId BlockId) ([]byte, BlockHeader, error)
 
 	// Return `ErrBlockNotFound` if the block does not exist.
 	ReadBlockHeader(blockId BlockId) (BlockHeader, error)
@@ -178,7 +178,7 @@ func (s *FileStorage) WriteBlock(block Block) (bool, error) {
 }
 
 // Return `ErrBlockNotFound` if the block does not exist.
-func (s *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error) {
+func (s *FileStorage) ReadBlock(blockId BlockId) ([]byte, BlockHeader, error) {
 	path := s.blockPath(blockId)
 	file, err := s.FS.OpenRead(path)
 	if err != nil {
@@ -188,30 +188,31 @@ func (s *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHea
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to open block file %s", path)
 	}
 	defer file.Close() //nolint:errcheck
-	bytesRead, err := file.Read(buf[:])
+	headerBytes := make([]byte, BlockHeaderSize)
+	hearderRead, err := file.Read(headerBytes)
 	if err != nil {
-		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block file %s", path)
+		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block header of %s", path)
 	}
-	if bytesRead < BlockHeaderSize {
-		return nil, BlockHeader{}, Errorf(
-			"not enough bytes read from block file %s, want at least %d, got %d",
-			path,
-			BlockHeaderSize,
-			bytesRead,
-		)
+	if hearderRead < BlockHeaderSize {
+		return nil, BlockHeader{}, Errorf("failed to read block header of %s - not enough bytes read", path)
 	}
-	header, err := UnmarshalBlockHeader(blockId, bytes.NewBuffer(buf[:BlockHeaderSize]))
+	header, err := UnmarshalBlockHeader(blockId, bytes.NewBuffer(headerBytes))
 	if err != nil {
-		return nil, BlockHeader{}, WrapErrorf(err, "failed to unmarshal block header of %s", path)
+		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block header of %s", path)
 	}
-	if int(header.EncryptedDataSize) != bytesRead-BlockHeaderSize {
+	data := make([]byte, header.EncryptedDataSize)
+	bytesRead, err := file.Read(data)
+	if err != nil {
+		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block data %s", blockId)
+	}
+	if int(header.EncryptedDataSize) != bytesRead {
 		return nil, BlockHeader{}, Errorf(
 			"read %d bytes, expected %d",
 			bytesRead-BlockHeaderSize,
 			header.EncryptedDataSize,
 		)
 	}
-	return buf[BlockHeaderSize:bytesRead], header, nil
+	return data, header, nil
 }
 
 // Return `ErrBlockNotFound` if the block does not exist.

@@ -146,9 +146,8 @@ func (rt *RepositoryTest) VerifyRevisionSnapshot(
 		if entry.Type != lib.RevisionEntryDelete && entry.Metadata.ModeAndPerm.IsRegular() {
 			// Rebuild the content from the repository.
 			buf := bytes.NewBuffer([]byte{})
-			blockBuf := lib.BlockBuf{}
 			for _, blockId := range entry.Metadata.BlockIds {
-				data, _, err := rt.Repository.ReadBlock(blockId, blockBuf)
+				data, _, err := rt.Repository.ReadBlock(blockId)
 				rt.assert.NoError(err)
 				buf.Write(data)
 			}
@@ -186,9 +185,9 @@ func (rt *RepositoryTest) RevisionSnapshot(revisionId lib.RevisionId, pathFilter
 
 func (rt *RepositoryTest) VerifyRevision(revisionId lib.RevisionId, expected []RevisionEntryInfo) {
 	rt.t.Helper()
-	revision, err := rt.Repository.ReadRevision(revisionId, lib.BlockBuf{})
+	revision, err := rt.Repository.ReadRevision(revisionId)
 	rt.assert.NoError(err)
-	r := lib.NewRevisionReader(rt.Repository, &revision, lib.BlockBuf{})
+	r := lib.NewRevisionReader(rt.Repository, &revision)
 	VerifyRevisionReader(rt.t, r, expected)
 }
 

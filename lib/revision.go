@@ -184,16 +184,14 @@ type RevisionReader struct {
 	repository *Repository
 	blockIndex int
 	current    io.Reader
-	blockBuf   BlockBuf
 }
 
-func NewRevisionReader(repository *Repository, revision *Revision, blockBuf BlockBuf) *RevisionReader {
+func NewRevisionReader(repository *Repository, revision *Revision) *RevisionReader {
 	return &RevisionReader{
 		revision:   revision,
 		repository: repository,
 		blockIndex: 0,
 		current:    nil,
-		blockBuf:   blockBuf,
 	}
 }
 
@@ -204,7 +202,7 @@ func (rr *RevisionReader) Read() (*RevisionEntry, error) {
 			return nil, io.EOF
 		}
 		blockId := rr.revision.Blocks[rr.blockIndex]
-		data, _, err := rr.repository.ReadBlock(blockId, rr.blockBuf)
+		data, _, err := rr.repository.ReadBlock(blockId)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read block %s", blockId)
 		}
