@@ -1,3 +1,5 @@
+//go:build !wasm
+
 //nolint:wrapcheck,forbidigo
 package lib
 

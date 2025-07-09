@@ -26,9 +26,14 @@ if [ $# -eq 0 ]; then
     echo 
     echo "  tools"
     echo "      Build tools needed for development."
+    echo
+    echo "  wasm"
+    echo "      Build the wasm binary."
     exit 1
 fi
 
+# todo: Add wasm to the list of projects. But we need to add the correct 
+#       build-tags to every command.
 projects="lib workspace http cli test"
 
 # Build all or a specific target.
@@ -80,6 +85,7 @@ build_tools() {
     cp tools/golangci-lint-*.tar.gz "$tmp_dir"
     cd "$tmp_dir"
     tar xzf golangci-lint-*.tar.gz
+    rm golangci-lint-*.tar.gz
     cd golangci-lint-*
     go build -o "$root/tools/golangci-lint" ./cmd/golangci-lint
     cd "$root"
@@ -97,6 +103,7 @@ case "$cmd" in
         ;;
     fmt)
         build_tools
+        projects="$projects wasm"
         echo ">>> Formatting code"
         run_project_cmd "$root/tools/golangci-lint fmt" "$@"
         ;;
@@ -111,7 +118,11 @@ case "$cmd" in
             bash test/test.sh
             exit 0
         fi
-        run_project_cmd "go test -mod vendor ./... -count 1" "$@"
+        if [ $# -gt 0 ] && [ "$1" = "wasm" ]; then
+            bash wasm/build.sh build
+            exit 0
+        fi
+        run_project_cmd "go test ./... -count 1" "$@"
         ;;
     precommit)
         bash $0 fmt "$@"
@@ -125,6 +136,9 @@ case "$cmd" in
         fi
         echo
         echo "Looks perfect, go ahead and commit this beauty."
+        ;;
+    wasm)
+        bash wasm/build.sh "$@"
         ;;
     *)
         echo "Unknown target: $cmd"

@@ -8,6 +8,14 @@
 
 cling-sync is a _client-side encrypted_, _revisional_ archival storage system.
 
+## OS Support
+
+Currently, the main focus is on supporting MacOS and Linux. It should work on Windows, but is not
+tested at the moment.
+
+The fact that `cling-sync` is written in plain Go (no CGO) and uses only the standard library
+with a few select `golang.org/x` dependencies should make it highly portable.
+
 ## Usage
 
 **Build the Command Line Interface (CLI) tool:**
@@ -21,14 +29,6 @@ Install [Go](https://go.dev/doc/install) version 1.24.2 or later and run:
     ./cling-sync <command>
 
 See `./cling-sync --help` for more information.
-
-## OS Support
-
-Currently, the main focus is on supporting MacOS and Linux. It should work on Windows, but is not
-tested at the moment.
-
-The fact that `cling-sync` is written in plain Go (no CGO) and uses only the standard library
-with a few select `golang.org/x` dependencies should make it highly portable.
 
 ### Example Workflow
 
@@ -86,6 +86,32 @@ This will start a HTTP server on port `4242` that serves the repository at `/pat
     cling-sync attach http://127.0.0.1:4242 /path/to/workspace
 
 This will attach the repository at `127.0.0.1:4242` to the workspace at `/path/to/workspace`.
+
+## WASM Support
+
+WASM support is a main focus of this project.
+
+Play around with the WASM example included in this repository. First, serve a repository:
+
+    cling-sync serve --address 127.0.0.1:4242 /path/to/repository
+
+Then, build the WASM example:
+
+    ./build.sh wasm dev
+
+Finally, open the example in your browser:
+
+    open http://127.0.0.1:8000/example.html
+
+### Output Size
+
+Using the standard Go compiler (default), the WASM binary is quite huge (about 5MB).
+
+To compile using [TinyGo](https://tinygo.org/), use the `--optimize` flag:
+
+    ./build.sh wasm dev --optimize
+
+This reduces the binary size to about 600KB, which is okay for now.
 
 ## Cryptography
 

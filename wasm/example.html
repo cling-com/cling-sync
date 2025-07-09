@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script src="build/wasm_exec.js"></script>
+    <script type="module">
+        const go = new Go();
+        const wasm = await WebAssembly.instantiateStreaming(fetch("build/main.wasm"), go.importObject)
+        go.run(wasm.instance);
+
+        function log(...args) {
+            for (const arg of args) {
+                document.getElementById("log").value += arg + " ";
+            }
+            document.getElementById("log").value += "\n";
+        }
+
+        let repository;
+        async function run() {
+            const repositoryURI = document.getElementById("uri").value;
+            const passphrase = document.getElementById("passphrase").value;
+            const excludes = document.getElementById("excludes").value;
+
+            log(">>> Opening repository at", repositoryURI);
+            try {
+                repository = await repositoryAPI.open(repositoryURI, passphrase);
+            } catch (err) {
+                log(">>> Error", err);
+                return;
+            }
+            log(">>> Repository", repository);
+
+            const head = await repositoryAPI.head(repository);
+            try {
+                log(">>> Head revision", head);
+            } catch (err) {
+                log(">>> Error", err);
+                return;
+            }
+
+            log(">>> Listing files");
+            try {
+                const ls = await repositoryAPI.ls(repository, excludes);
+                document.getElementById("ls").querySelector("tbody").innerHTML = ls;
+            } catch (err) {
+                log(">>> Error", err);
+                return;
+            }
+        }
+
+        document.getElementById("open").addEventListener("click", run);
+
+        document.addEventListener("click", async function (e) {
+            if (e.target.tagName !== "A") {
+                return
+            }
+            const index = e.target.href.indexOf("#download:");
+            if (index === -1) {
+                return
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+                const arg = e.target.href.substring(index + "#download:".length);
+                log(">>> Downloading file");
+                const [data, downloadFilename] = await repositoryAPI.readFile(repository, arg, "");
+                log(`    ${downloadFilename} (${data.length} bytes)`);
+
+                const blob = new Blob([data], {type: "application/octet-stream"});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = downloadFilename;
+                a.click();
+            } finally {
+                window.location.hash = "";
+            }
+        });
+    </script>
+    <style>
+        html,
+        body {
+            font-family: sans-serif;
+            margin: 1%;
+            padding: 0;
+            height: 100%;
+            display: flex;
+            font-size: 16px;
+            flex-direction: column;
+        }
+
+        label {
+            display: inline-flex;
+            flex-direction: column;
+            margin-right: 1rem;
+            font-size: 0.8rem;
+
+            & input {
+                margin-top: 0.3rem;
+            }
+        }
+
+        #controls {
+            display: flex;
+            align-items: end;
+
+            & button,
+            & input {
+                font-size: 1rem;
+            }
+        }
+
+        #log {
+            margin-top: 1rem;
+            border: none;
+            min-height: 10vh;
+        }
+
+        #ls {
+            margin-top: 1rem;
+            border-collapse: collapse;
+            flex: 1;
+
+            & thead {
+                border-bottom: 1px solid #ccc;
+            }
+
+            & th {
+                text-align: left;
+                font-weight: normal;
+            }
+        }
+    </style>
+
+</head>
+
+<body>
+    <h1>Example Repository Explorer</h1>
+    <div id="controls">
+        <label>Repository URI
+            <input type="text" id="uri" value="http://127.0.0.1:4242">
+        </label>
+        <label>Passphrase
+            <input type="text" id="passphrase" value="a">
+        </label>
+        <label>Exclude patterns
+            <input type="text" id="excludes" patterns" value=".git,vendor,tools">
+        </label>
+        <button id="open">Open</button>
+    </div>
+    <table id="ls">
+        <thead>
+            <tr>
+                <th>Mode</th>
+                <th>Size</th>
+                <th>Path</th>
+                <th>MTime</th>
+            </tr>
+        </thead>
+        <tbody>
+        </tbody>
+    </table>
+    <textarea id="log"></textarea>
+</body>
+
+</html>
