@@ -11,9 +11,9 @@ func TestCommit(t *testing.T) {
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		repo, _ := testRepository(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(repo, td.NewFS(t))
+		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
 		e1 := td.RevisionEntry("a/1.txt", RevisionEntryAdd)
 		e2 := td.RevisionEntry("a/2.txt", RevisionEntryUpdate)
@@ -25,7 +25,7 @@ func TestCommit(t *testing.T) {
 		revisionId, err := commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
 		assert.NoError(err)
 
-		revision, entries, err := readRevision(repo, revisionId)
+		revision, entries, err := readRevision(r.Repository, revisionId)
 		assert.NoError(err)
 		assert.Equal(true, revision.Parent.IsRoot())
 		assert.Equal("test author", revision.Author)
@@ -33,14 +33,14 @@ func TestCommit(t *testing.T) {
 		assert.Equal([]*RevisionEntry{e1, e2, e3}, entries)
 
 		// Add a second revision.
-		commit2, err := NewCommit(repo, td.NewFS(t))
+		commit2, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
 		e4 := td.RevisionEntry("a/1.txt", RevisionEntryDelete)
 		assert.NoError(commit2.Add(e4))
 		revisionId2, err := commit2.Commit(&CommitInfo{Author: "test author2", Message: "test message2"})
 		assert.NoError(err)
 
-		revision, entries, err = readRevision(repo, revisionId2)
+		revision, entries, err = readRevision(r.Repository, revisionId2)
 		assert.NoError(err)
 		assert.Equal(revisionId, revision.Parent)
 		assert.Equal("test author2", revision.Author)
@@ -51,9 +51,9 @@ func TestCommit(t *testing.T) {
 	t.Run("Empty commit", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		repo, _ := testRepository(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(repo, td.NewFS(t))
+		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
 		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
 		assert.ErrorIs(err, ErrEmptyCommit)
@@ -62,17 +62,16 @@ func TestCommit(t *testing.T) {
 	t.Run("Head changed during commit", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		repo, _ := testRepository(t)
-		head, err := repo.Head()
-		assert.NoError(err)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		head := r.Head()
 
-		commit, err := NewCommit(repo, td.NewFS(t))
+		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
 
 		// Change the head.
-		_, blockHeader, err := repo.WriteBlock([]byte{1, 2, 3})
+		_, blockHeader, err := r.WriteBlock([]byte{1, 2, 3})
 		assert.NoError(err)
-		_, err = repo.WriteRevision(&Revision{
+		_, err = r.WriteRevision(&Revision{
 			TimestampSec:  123456789,
 			TimestampNSec: 1234,
 			Message:       "test message",

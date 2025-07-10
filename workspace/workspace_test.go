@@ -7,12 +7,12 @@ import (
 )
 
 func TestWorkspaceNewAndOpen(t *testing.T) {
+	remote := "the/remote/repository" // This is only ever written to the workspace config.
 	t.Parallel()
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		local := td.NewFS(t)
-		remote := "the/remote/repository"
 
 		// Create new workspace.
 		ws, err := NewWorkspace(local, td.NewFS(t), RemoteRepository(remote))
@@ -42,7 +42,6 @@ func TestWorkspaceNewAndOpen(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		local := td.NewFS(t)
-		remote := "the/remote/repository"
 
 		// Create new workspace.
 		_, err := NewWorkspace(local, td.NewFS(t), RemoteRepository(remote))
@@ -57,7 +56,6 @@ func TestWorkspaceNewAndOpen(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		local := td.NewFS(t)
-		remote := "the/remote/repository"
 
 		// Create new workspace.
 		_, err := NewWorkspace(local, td.NewFS(t), RemoteRepository(remote))
@@ -74,7 +72,6 @@ func TestWorkspaceNewAndOpen(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		fs := td.NewFS(t)
-		remote := "the/remote/repository"
 
 		repositoryStorage, err := lib.NewFileStorage(fs, lib.StoragePurposeRepository)
 		assert.NoError(err)

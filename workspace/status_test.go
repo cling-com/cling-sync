@@ -12,21 +12,22 @@ func TestStatus(t *testing.T) {
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		rt := NewRepositoryTest(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
 
 		// Empty workspace.
-		status, err := Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
+		status, err := Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
 		// Add files and directories.
-		rt.AddLocal("a.txt", ".")
-		rt.AddLocal("b.txt", "..")
-		rt.AddLocal("c/1.txt", "...")
-		rt.AddLocal("c/d/2.txt", "....")
+		w.Write("a.txt", ".")
+		w.Write("b.txt", "..")
+		w.Write("c/1.txt", "...")
+		w.Write("c/d/2.txt", "....")
 
 		// "Dirty" workspace.
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
+		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"A a.txt",
@@ -38,20 +39,20 @@ func TestStatus(t *testing.T) {
 		}, statusFilesString(status))
 
 		// Commit, workspace should be "clean" again.
-		_, err = Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
+		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 		assert.NoError(err)
 
 		// Add, remove, and update files.
-		rt.RemoveLocal("b.txt")
-		rt.AddLocal("e.txt", ".....")
-		rt.UpdateLocalMTime("c/1.txt", time.Now())
+		w.Rm("b.txt")
+		w.Write("e.txt", ".....")
+		w.Touch("c/1.txt", time.Now())
 
 		// "Dirty" workspace.
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
+		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"D b.txt",
@@ -63,31 +64,32 @@ func TestStatus(t *testing.T) {
 	t.Run("Removing a directory", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		rt := NewRepositoryTest(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
 
 		// Empty workspace.
-		status, err := Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
+		status, err := Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
 		// Add files and directories.
-		rt.AddLocal("a.txt", ".")
-		rt.AddLocal("b.txt", "..")
-		rt.AddLocal("c/1.txt", "...")
-		rt.AddLocal("c/d/2.txt", "....")
+		w.Write("a.txt", ".")
+		w.Write("b.txt", "..")
+		w.Write("c/1.txt", "...")
+		w.Write("c/d/2.txt", "....")
 
 		// Commit, workspace should be "clean".
-		_, err = Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
+		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
 		// Remove directory.
-		rt.RemoveLocal("c")
+		w.Rm("c")
 
 		// "Dirty" workspace.
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
+		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"D c/",
@@ -97,9 +99,9 @@ func TestStatus(t *testing.T) {
 		}, statusFilesString(status))
 
 		// Commit, workspace should be "clean" again.
-		_, err = Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		status, err = Status(rt.Workspace, rt.Repository, fakeStatusOptions(), td.NewFS(t))
+		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 	})
@@ -111,8 +113,4 @@ func statusFilesString(files []StatusFile) []string {
 		s = append(s, file.Format())
 	}
 	return s
-}
-
-func fakeStatusOptions() *StatusOptions {
-	return &StatusOptions{nil, NewTestStagingMonitor()}
 }

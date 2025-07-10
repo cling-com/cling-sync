@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/flunderpero/cling-sync/lib"
 )
 
+var td = lib.TestData{} //nolint:gochecknoglobals
 const passphrase = "testpassphrase"
 
 // Just test a simple scenario that covers most of the common CLI commands.
@@ -30,18 +30,18 @@ func TestHappyPath(t *testing.T) {
 
 	t.Log("Add some files and merge (log, ls, merge, status)")
 	{
-		sut.AddFile("a.txt", "a")
-		sut.AddFile("b.txt", "b")
+		sut.Write("a.txt", "a")
+		sut.Write("b.txt", "b")
 		sut.Mkdir("dir1")
-		sut.AddFile("dir1/d.txt", "d")
+		sut.Write("dir1/d.txt", "d")
 		sut.ClingSync("merge", "--no-progress", "--message", "first commit")
 
 		log := sut.ClingSync("log", "--short")
 		assert.NotEqual("No revisions", log)
-		assert.Equal(1, wc(log), "A revision should have been created")
+		assert.Equal(1, td.Wc("-l", log), "A revision should have been created")
 		assert.Equal(
-			sort(sut.Ls(), 4),
-			sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
+			td.Sort(sut.Ls(), 4),
+			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
 			"Files of head should match the workspace")
 		assert.Equal("No changes", sut.ClingSync("status"), "There should be no local changes")
 	}
@@ -51,11 +51,11 @@ func TestHappyPath(t *testing.T) {
 
 	t.Log("Remove a local file, change mtime of another, create a new file and merge (status, merge, log, ls)")
 	{
-		sut.RemoveFile("a.txt")
-		sut.SetFile("b.txt", "bb")
-		sut.MTime("dir1/d.txt", time.Now().Add(time.Second))
-		sut.AddFile("c.txt", "C")
-		assert.Equal(dedent(`
+		sut.Rm("a.txt")
+		sut.Write("b.txt", "bb")
+		sut.Touch("dir1/d.txt", time.Now().Add(time.Second))
+		sut.Write("c.txt", "C")
+		assert.Equal(td.Dedent(`
 			D a.txt
 			M b.txt
 			A c.txt
@@ -66,10 +66,10 @@ func TestHappyPath(t *testing.T) {
 		sut.ClingSync("merge", "--no-progress", "--message", "second commit")
 
 		log := sut.ClingSync("log", "--short")
-		assert.Equal(2, wc(log), "Two revisions should have been created")
+		assert.Equal(2, td.Wc("-l", log), "Two revisions should have been created")
 		assert.Equal(
-			sort(sut.Ls(), 4),
-			sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
+			td.Sort(sut.Ls(), 4),
+			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
 			"Files of head should match the workspace")
 	}
 	rev2Id := sut.RepositoryHead()
@@ -86,7 +86,7 @@ func TestHappyPath(t *testing.T) {
 
 	t.Log("Log revision history (log)")
 	{
-		assert.Equal(dedent(fmt.Sprintf(`
+		assert.Equal(td.Dedent(fmt.Sprintf(`
             %s %s second commit
 
                 D a.txt
@@ -107,17 +107,17 @@ func TestHappyPath(t *testing.T) {
 
 	t.Log("Copy a file from an older revision (cp, status)")
 	{
-		assert.Equal("bb", cat("b.txt"), "`b.txt` should contain the current content")
+		assert.Equal("bb", sut.Cat("b.txt"), "`b.txt` should contain the current content")
 
 		// First, try without `--overwrite` - it should fail.
 		stderr := sut.ClingSyncError("cp", "--no-progress", "--revision", rev1Id, "b.txt", ".")
 		assert.Contains(stderr, "failed to copy b.txt")
 		assert.Contains(stderr, "file exists")
-		assert.Equal("bb", cat("b.txt"), "`b.txt` should contain still the current content")
+		assert.Equal("bb", sut.Cat("b.txt"), "`b.txt` should contain still the current content")
 
 		// Now try with `--overwrite` - it should succeed.
 		sut.ClingSync("cp", "--no-progress", "--overwrite", "--revision", rev1Id, "b.txt", ".")
-		assert.Equal("b", cat("b.txt"), "`b.txt` should contain the previous content")
+		assert.Equal("b", sut.Cat("b.txt"), "`b.txt` should contain the previous content")
 		assert.Equal(
 			"M b.txt",
 			sut.ClingSync("status", "--no-progress", "--no-summary"),
@@ -142,20 +142,20 @@ func TestHappyPath(t *testing.T) {
 	t.Log("Create and resolve conflicts with --accept-local (merge)")
 	{
 		t.Chdir("../workspace2")
-		sut.SetFile("b.txt", "b from workspace2")
+		sut.Write("b.txt", "b from workspace2")
 		sut.Mkdir("dir2")
-		sut.AddFile("dir2/e.txt", "e")
+		sut.Write("dir2/e.txt", "e")
 		sut.ClingSync("merge", "--no-progress", "--message", "conflict")
 
 		// Back to workspace1 and add conflicting changes.
 		t.Chdir("../workspace")
-		sut.SetFile("b.txt", "b from workspace")
+		sut.Write("b.txt", "b from workspace")
 		sut.Mkdir("dir2")
-		sut.AddFile("dir2/e.txt", "e from workspace")
+		sut.Write("dir2/e.txt", "e from workspace")
 
 		// Merge should fail.
 		stderr := sut.ClingSyncError("merge", "--no-progress")
-		assert.Contains(stderr, dedent(`
+		assert.Contains(stderr, td.Dedent(`
 			
 			  b.txt (remote: update, local: update)
 			  dir2/e.txt (remote: add, local: add)
@@ -169,11 +169,11 @@ func TestHappyPath(t *testing.T) {
 		assert.Equal("No changes", status)
 
 		// The workspace changes should have been committed.
-		assert.Equal("b from workspace", cat("b.txt"))
-		assert.Equal("e from workspace", cat("dir2/e.txt"))
+		assert.Equal("b from workspace", sut.Cat("b.txt"))
+		assert.Equal("e from workspace", sut.Cat("dir2/e.txt"))
 		assert.Equal(
-			sort(sut.Ls(), 4),
-			sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
+			td.Sort(sut.Ls(), 4),
+			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
 			"Files of head should match the workspace")
 	}
 }
@@ -223,10 +223,10 @@ func TestRepositoryOverHTTP(t *testing.T) {
 
 	t.Log("Commit local changes (merge)")
 	{
-		sut.AddFile("new.txt", "new")
+		sut.Write("new.txt", "new")
 		sut.ClingSync("merge", "--no-progress", "--message", "commit local changes")
 		log := sut.ClingSync("log", "--short", "--status")
-		assert.Equal(dedent(fmt.Sprintf(`
+		assert.Equal(td.Dedent(fmt.Sprintf(`
             %s %s commit local changes
 
                 A new.txt
@@ -247,6 +247,7 @@ func TestRepositoryOverHTTP(t *testing.T) {
 }
 
 type Sut struct {
+	*lib.TestFS
 	t      *testing.T
 	assert lib.Assert
 }
@@ -292,7 +293,8 @@ func NewSut(t *testing.T) *Sut {
 	t.Chdir(workspaceDir)
 	assert.NoError(err, "failed to change into temporary directory")
 
-	sut := &Sut{t, assert}
+	fs := lib.NewRealFS(".")
+	sut := &Sut{td.NewTestFS(t, fs), t, assert}
 	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "init", "../repository")
 	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
 
@@ -342,27 +344,26 @@ func (s *Sut) ClingSyncError(args ...string) string {
 func (s *Sut) RepositoryHead() string {
 	s.t.Helper()
 	log := head(s.ClingSync("log", "--short"))
-	return column(log, 1)
+	return td.Column(log, 1)
 }
 
 func (s *Sut) RepositoryHeadDate() string {
 	s.t.Helper()
 	log := head(s.ClingSync("log", "--short"))
-	return column(log, 2)
+	return td.Column(log, 2)
 }
 
 func (s *Sut) Mkdir(path string) {
 	s.t.Helper()
 	s.t.Log(gray(fmt.Sprintf("    > mkdir(%s)", path)))
-	err := os.Mkdir(path, 0o700)
-	s.assert.NoError(err, "failed to create directory %s", path)
+	s.TestFS.Mkdir(path)
 }
 
 func (s *Sut) Ls() string {
 	s.t.Helper()
 	s.t.Log(gray("    > ls"))
 	lines := []string{}
-	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
+	err := s.WalkDir(".", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -396,111 +397,22 @@ func (s *Sut) Ls() string {
 	return strings.Join(lines, "\n")
 }
 
-func (s *Sut) AddFile(path string, content string) {
+func (s *Sut) Write(path string, content string) {
 	s.t.Helper()
 	s.t.Log(gray(fmt.Sprintf("    > add(%s, %q)", path, content)))
-	err := os.WriteFile(path, []byte(content), 0o600)
-	s.assert.NoError(err, "failed to write file %s", path)
+	s.TestFS.Write(path, content)
 }
 
-func (s *Sut) RemoveFile(path string) {
+func (s *Sut) Rm(path string) {
 	s.t.Helper()
 	s.t.Log(gray(fmt.Sprintf("    > rm(%s)", path)))
-	err := os.Remove(path)
-	s.assert.NoError(err, "failed to remove file %s", path)
+	s.TestFS.Rm(path)
 }
 
-func (s *Sut) SetFile(path string, content string) {
-	s.t.Helper()
-	s.t.Log(gray(fmt.Sprintf("    > set(%s, %q)", path, content)))
-	err := os.WriteFile(path, []byte(content), 0o600)
-	s.assert.NoError(err, "failed to write file %s", path)
-}
-
-func (s *Sut) MTime(path string, mtime time.Time) {
+func (s *Sut) Touch(path string, mtime time.Time) {
 	s.t.Helper()
 	s.t.Log(gray(fmt.Sprintf("    > touch(%s, %s)", path, mtime.Format(time.RFC3339))))
-	err := os.Chtimes(path, mtime, mtime)
-	s.assert.NoError(err, "failed to change mtime of %s", path)
-}
-
-func wc(s string) int {
-	return strings.Count(s, "\n") + 1
-}
-
-func sort(s string, column int) string { //nolint:unparam
-	column -= 1 // Columns are 1-based.
-	if column < 0 {
-		panic("column < 0")
-	}
-	lines := strings.Split(s, "\n")
-	slices.SortFunc(lines, func(a, b string) int {
-		// Lazy way to remove all subsequent spaces.
-		for strings.Contains(a, "  ") {
-			a = strings.ReplaceAll(a, "  ", " ")
-		}
-		for strings.Contains(b, "  ") {
-			b = strings.ReplaceAll(b, "  ", " ")
-		}
-		icols := strings.Split(a, " ")
-		jcols := strings.Split(b, " ")
-		if len(icols) < column {
-			return 1
-		}
-		if len(jcols) < column {
-			return -1
-		}
-		return strings.Compare(icols[column], jcols[column])
-	})
-	return strings.Join(lines, "\n")
-}
-
-func column(s string, column int) string {
-	column -= 1 // Columns are 1-based.
-	if column < 0 {
-		panic("column < 0")
-	}
-	lines := strings.Split(s, "\n")
-	result := []string{}
-	for _, line := range lines {
-		if len(line) == 0 {
-			continue
-		}
-		columns := strings.Split(line, " ")
-		if len(columns) < column {
-			continue
-		}
-		result = append(result, columns[column])
-	}
-	return strings.Join(result, "\n")
-}
-
-func dedent(s string) string {
-	if s == "" {
-		return ""
-	}
-	s = strings.TrimRight(s, " \t\n")
-	if s[0] == '\n' {
-		s = s[1:]
-	}
-	lines := strings.Split(s, "\n")
-	minIndent := -1
-	for _, line := range lines {
-		if len(line) == 0 {
-			continue
-		}
-		indent := len(line) - len(strings.TrimLeft(line, " \t"))
-		if minIndent == -1 || indent < minIndent {
-			minIndent = indent
-		}
-	}
-	for i, line := range lines {
-		if len(line) == 0 {
-			continue
-		}
-		lines[i] = line[minIndent:]
-	}
-	return strings.Join(lines, "\n")
+	s.TestFS.Touch(path, mtime)
 }
 
 func gray(s string) string {
@@ -514,12 +426,4 @@ func head(s string) string {
 		return ""
 	}
 	return lines[0]
-}
-
-func cat(path string) string {
-	s, err := os.ReadFile(path)
-	if err != nil {
-		panic(err)
-	}
-	return string(s)
 }

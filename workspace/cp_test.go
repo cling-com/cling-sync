@@ -3,11 +3,8 @@ package workspace
 import (
 	"io/fs"
 	"os/user"
-	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -18,35 +15,35 @@ func TestCp(t *testing.T) {
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		tmp := td.NewFS(t)
-		out := td.NewFS(t)
-		rt := NewRepositoryTest(t)
-		rt.AddLocal("a.txt", "a")
-		rt.AddLocal("b.txt", "b")
-		rt.AddLocal("c/1.txt", "c")
-		rt.AddLocal("c/d/2.txt", "cc")
-		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		out := td.NewTestFS(t, td.NewFS(t))
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		w.Write("b.txt", "b")
+		w.Write("c/1.txt", "c")
+		w.Write("c/d/2.txt", "cc")
+		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		rt.UpdateLocal("a.txt", "a")
-		revId2, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		w.Write("a.txt", "a")
+		revId2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Copy all from rev1.
-		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
+		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil}, td.NewFS(t))
 		assert.NoError(err)
-		assert.Equal([]FileInfo{
+		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
 			{"b.txt", 0o600, 1, "b"},
 			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 1, "c"},
 			{"c/d", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d/2.txt", 0o600, 2, "cc"},
-		}, readDir(t, out))
+		}, out.Ls("."))
 
 		// Trying to copy from rev2 should fail, because files already exist.
-		tmp = td.NewFS(t)
-		err = Cp(rt.Repository, out, &CpOptions{revId2, NewTestCpMonitor(), nil}, tmp)
+		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitor(), nil}, td.NewFS(t))
 		assert.Error(err, "failed to copy")
 		assert.Error(err, "exists")
 	})
@@ -54,42 +51,42 @@ func TestCp(t *testing.T) {
 	t.Run("Overwrite", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		tmp := td.NewFS(t)
-		out := td.NewFS(t)
-		rt := NewRepositoryTest(t)
-		rt.AddLocal("a.txt", "aaa")
-		rt.AddLocal("b.txt", "b")
-		rt.AddLocal("c/1.txt", "c")
-		rt.AddLocal("c/d/2.txt", "cc")
-		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		out := td.NewTestFS(t, td.NewFS(t))
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "aaa")
+		w.Write("b.txt", "b")
+		w.Write("c/1.txt", "c")
+		w.Write("c/d/2.txt", "cc")
+		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// We make the file smaller to ensure it is truncated before overwriting.
-		rt.UpdateLocal("a.txt", "a")
+		w.Write("a.txt", "a")
 		// Removing a file should not affect anything.
-		rt.RemoveLocal("c/1.txt")
-		rt.AddLocal("c/3.txt", "ccc")
-		rt.UpdateLocalMode("b.txt", 0o777)
-		revId2, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		w.Rm("c/1.txt")
+		w.Write("c/3.txt", "ccc")
+		w.Chmod("b.txt", 0o777)
+		revId2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Copy all from rev1.
-		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
+		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil}, td.NewFS(t))
 		assert.NoError(err)
-		assert.Equal([]FileInfo{
+		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 3, "aaa"},
 			{"b.txt", 0o600, 1, "b"},
 			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 1, "c"},
 			{"c/d", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d/2.txt", 0o600, 2, "cc"},
-		}, readDir(t, out))
+		}, out.Ls("."))
 
 		// Copy all from the rev2.
-		tmp = td.NewFS(t)
-		err = Cp(rt.Repository, out, &CpOptions{revId2, NewTestCpMonitorOverwrite(), nil}, tmp)
+		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitorOverwrite(), nil}, td.NewFS(t))
 		assert.NoError(err)
-		assert.Equal([]FileInfo{
+		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
 			{"b.txt", 0o777, 1, "b"},
 			{"c", 0o700 | fs.ModeDir, 0, ""},
@@ -97,64 +94,69 @@ func TestCp(t *testing.T) {
 			{"c/3.txt", 0o600, 3, "ccc"},
 			{"c/d", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d/2.txt", 0o600, 2, "cc"},
-		}, readDir(t, out))
+		}, out.Ls("."))
 	})
 
 	t.Run("Parent directory without rx permission should still be created", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		tmp := td.NewFS(t)
 		out := td.NewFS(t)
-		rt := NewRepositoryTest(t)
-		rt.AddLocal("c/1.txt", "c1")
-		rt.UpdateLocalMode("c", 0o500)
+		tout := td.NewTestFS(t, out)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
 
-		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		w.Write("c/1.txt", "c1")
+		w.Chmod("c", 0o500)
+
+		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
+		err = Cp(r.Repository, out, &CpOptions{revId1, wstd.CpMonitor(), nil}, td.NewFS(t))
 		assert.NoError(err)
-		assert.Equal([]FileInfo{
+		assert.Equal([]lib.TestFileInfo{
 			{"c", 0o500 | fs.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 2, "c1"},
-		}, readDir(t, out))
+		}, tout.Ls("."))
 	})
 
 	t.Run("PathFilter", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		tmp := td.NewFS(t)
-		out := td.NewFS(t)
-		rt := NewRepositoryTest(t)
-		rt.AddLocal("a.txt", "a")
-		rt.AddLocal("b.txt", "b")
-		rt.AddLocal("c/1.txt", "c1")
-		rt.AddLocal("c/d/2.txt", "c2")
-		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		out := td.NewTestFS(t, td.NewFS(t))
+
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		w.Write("b.txt", "b")
+		w.Write("c/1.txt", "c1")
+		w.Write("c/d/2.txt", "c2")
+		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		pattern, err := lib.NewPathPattern("c/**/*")
 		assert.NoError(err)
 		pathFilter := &lib.PathInclusionFilter{Includes: []lib.PathPattern{pattern}}
-		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), pathFilter}, tmp)
+		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), pathFilter}, td.NewFS(t))
 		assert.NoError(err)
-		assert.Equal([]FileInfo{
+		assert.Equal([]lib.TestFileInfo{
 			{"c", 0o700 | fs.ModeDir, 0, ""},
 			{"c/1.txt", 0o600, 2, "c1"},
 			{"c/d", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d/2.txt", 0o600, 2, "c2"},
-		}, readDir(t, out))
+		}, out.Ls("."))
 	})
 
 	t.Run("FileMode is restored (as much as possible)", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		tmp := td.NewFS(t)
-		out := td.NewFS(t)
-		rt := NewRepositoryTest(t)
+		out := td.NewTestFS(t, td.NewFS(t))
 
-		rt.AddLocal("a.txt", "a")
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
 
 		// Set the gid of the file to a different group.
 		currentUser, err := user.Current()
@@ -171,24 +173,21 @@ func TestCp(t *testing.T) {
 			gid = gi
 		}
 		assert.NotEqual(0, gid, "current user has no additional groups")
-		err = rt.FS.Chown("a.txt", -1, gid)
-		assert.NoError(err)
+		w.Chown("a.txt", -1, gid)
 
 		// Set `setuid`, `setgid`, and `sticky`.
-		err = rt.FS.Chmod("a.txt", 0o777|fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)
-		assert.NoError(err)
+		w.Chmod("a.txt", 0o777|fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)
 
 		// Commit.
-		revId1, err := Merge(rt.Workspace, rt.Repository, fakeMergeOptions())
+		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		err = Cp(rt.Repository, out, &CpOptions{revId1, NewTestCpMonitor(), nil}, tmp)
+		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil}, td.NewFS(t))
 		assert.NoError(err)
 
-		stat := rt.LocalStat("a.txt")
-		cpStat, err := out.Stat("a.txt")
-		assert.NoError(err)
+		stat := w.Stat("a.txt")
+		cpStat := out.Stat("a.txt")
 		// We do not preserve setuid, setgid, and sticky.
 		assert.Equal(stat.Mode()&fs.ModePerm, cpStat.Mode())
 		assert.Equal(stat.Size(), cpStat.Size())
@@ -211,71 +210,4 @@ func TestCp(t *testing.T) {
 		cpMd.BirthtimeNSec = 0
 		assert.Equal(md, cpMd)
 	})
-}
-
-func readDir(t *testing.T, fs_ lib.FS) []FileInfo {
-	t.Helper()
-	fileInfos := []FileInfo{}
-	assert := lib.NewAssert(t)
-	err := fs_.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if filepath.Base(path) == ".cling" {
-			return filepath.SkipDir
-		}
-		assert.NoError(err)
-		if path == "." {
-			return nil
-		}
-		info, err := fs_.Stat(path)
-		assert.NoError(err)
-		content := ""
-		var size int
-		if !info.IsDir() {
-			c, err := lib.ReadFile(fs_, path)
-			assert.NoError(err)
-			content = string(c)
-			size = int(info.Size())
-		}
-		fileInfos = append(fileInfos, FileInfo{
-			Path:    path,
-			Mode:    info.Mode(),
-			Size:    size,
-			Content: content,
-		})
-		return nil
-	})
-	assert.NoError(err)
-	slices.SortFunc(fileInfos, func(a, b FileInfo) int { return strings.Compare(a.Path, b.Path) })
-	return fileInfos
-}
-
-type TestCpMonitor struct {
-	Exists CpOnExists
-}
-
-func NewTestCpMonitor() *TestCpMonitor {
-	return &TestCpMonitor{CpOnExistsAbort}
-}
-
-func NewTestCpMonitorOverwrite() *TestCpMonitor {
-	return &TestCpMonitor{CpOnExistsOverwrite}
-}
-
-func (m *TestCpMonitor) OnStart(entry *lib.RevisionEntry, targetPath string) {
-}
-
-func (m *TestCpMonitor) OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte) {
-}
-
-func (m *TestCpMonitor) OnEnd(entry *lib.RevisionEntry, targetPath string) {
-}
-
-func (m *TestCpMonitor) OnError(entry *lib.RevisionEntry, targetPath string, err error) CpOnError {
-	return CpOnErrorAbort
-}
-
-func (m *TestCpMonitor) OnExists(entry *lib.RevisionEntry, targetPath string) CpOnExists {
-	return m.Exists
 }

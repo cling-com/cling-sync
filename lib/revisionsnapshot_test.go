@@ -10,15 +10,13 @@ func TestRevisionSnapshot(t *testing.T) {
 	t.Parallel()
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
-
 		assert := NewAssert(t)
-		repo, _ := testRepository(t)
-		root, err := repo.Head()
-		assert.NoError(err)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		root := r.Head()
 
 		revId1, err := testCommit(
 			t,
-			repo,
+			r.Repository,
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/3.txt", RevisionEntryAdd),
@@ -28,7 +26,7 @@ func TestRevisionSnapshot(t *testing.T) {
 
 		revId2, err := testCommit(
 			t,
-			repo,
+			r.Repository,
 			td.RevisionEntry("b/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("b/2.txt", RevisionEntryAdd),
 			// Delete an entry.
@@ -42,7 +40,7 @@ func TestRevisionSnapshot(t *testing.T) {
 
 		revId3, err := testCommit(
 			t,
-			repo,
+			r.Repository,
 			td.RevisionEntry("b/1.txt", RevisionEntryDelete),
 			td.RevisionEntry("c/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/1.txt", RevisionEntryUpdate),
@@ -51,7 +49,7 @@ func TestRevisionSnapshot(t *testing.T) {
 		)
 		assert.NoError(err)
 
-		entries := readRevisionSnapshot(t, repo, revId3, nil)
+		entries := readRevisionSnapshot(t, r.Repository, revId3, nil)
 		assert.Equal([]*RevisionEntry{
 			td.RevisionEntry("a/1.txt", RevisionEntryUpdate),
 			td.RevisionEntry("a/3.txt", RevisionEntryUpdate),
@@ -60,7 +58,7 @@ func TestRevisionSnapshot(t *testing.T) {
 			td.RevisionEntry("c/1.txt", RevisionEntryAdd),
 		}, entries)
 
-		entries = readRevisionSnapshot(t, repo, revId2, nil)
+		entries = readRevisionSnapshot(t, r.Repository, revId2, nil)
 		assert.Equal([]*RevisionEntry{
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/3.txt", RevisionEntryUpdate),
@@ -68,7 +66,7 @@ func TestRevisionSnapshot(t *testing.T) {
 			td.RevisionEntry("b/2.txt", RevisionEntryAdd),
 		}, entries)
 
-		entries = readRevisionSnapshot(t, repo, revId1, nil)
+		entries = readRevisionSnapshot(t, r.Repository, revId1, nil)
 		assert.Equal([]*RevisionEntry{
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
@@ -77,7 +75,7 @@ func TestRevisionSnapshot(t *testing.T) {
 		}, entries)
 
 		// Root revision should be empty.
-		entries = readRevisionSnapshot(t, repo, root, nil)
+		entries = readRevisionSnapshot(t, r.Repository, root, nil)
 		assert.Equal([]*RevisionEntry{}, entries)
 	})
 
@@ -85,11 +83,11 @@ func TestRevisionSnapshot(t *testing.T) {
 		// This basically makes sure that we always use `RevisionEntryPathCompare`.
 		t.Parallel()
 		assert := NewAssert(t)
-		repo, _ := testRepository(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
 
 		_, err := testCommit(
 			t,
-			repo,
+			r.Repository,
 			td.RevisionEntryExt("a", RevisionEntryAdd, ModeDir, ""),
 			td.RevisionEntry("z.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
@@ -98,20 +96,20 @@ func TestRevisionSnapshot(t *testing.T) {
 		assert.NoError(err)
 		_, err = testCommit(
 			t,
-			repo,
+			r.Repository,
 			td.RevisionEntryExt("a", RevisionEntryAdd, ModeDir, ""),
 			td.RevisionEntryExt("a/b", RevisionEntryAdd, ModeDir, ""),
 		)
 		assert.NoError(err)
 		revId3, err := testCommit(
 			t,
-			repo,
+			r.Repository,
 			td.RevisionEntry("a.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
 		)
 		assert.NoError(err)
 
-		entries := readRevisionSnapshot(t, repo, revId3, nil)
+		entries := readRevisionSnapshot(t, r.Repository, revId3, nil)
 		assert.Equal([]*RevisionEntry{
 			td.RevisionEntry("a.txt", RevisionEntryAdd),
 			td.RevisionEntry("z.txt", RevisionEntryAdd),
@@ -126,11 +124,11 @@ func TestRevisionSnapshot(t *testing.T) {
 	t.Run("PathFilter", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		repo, _ := testRepository(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
 
 		revId1, err := testCommit(
 			t,
-			repo,
+			r.Repository,
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
@@ -140,7 +138,7 @@ func TestRevisionSnapshot(t *testing.T) {
 		assert.NoError(err)
 		filter, err := NewPathExclusionFilter([]string{"a/b"}, []string{})
 		assert.NoError(err)
-		snapshot := readRevisionSnapshot(t, repo, revId1, filter)
+		snapshot := readRevisionSnapshot(t, r.Repository, revId1, filter)
 		assert.Equal([]*RevisionEntry{
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
@@ -150,11 +148,11 @@ func TestRevisionSnapshot(t *testing.T) {
 	t.Run("Delete directory", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		repo, _ := testRepository(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
 
 		_, err := testCommit(
 			t,
-			repo,
+			r.Repository,
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
@@ -163,21 +161,21 @@ func TestRevisionSnapshot(t *testing.T) {
 		assert.NoError(err)
 		_, err = testCommit(
 			t,
-			repo,
+			r.Repository,
 			td.RevisionEntry("a/b/3.txt", RevisionEntryUpdate),
 			td.RevisionEntry("a/b/4.txt", RevisionEntryUpdate),
 		)
 		assert.NoError(err)
 		revId2, err := testCommit(
 			t,
-			repo,
+			r.Repository,
 			td.RevisionEntry("a/b", RevisionEntryDelete),
 			td.RevisionEntry("a/b/3.txt", RevisionEntryDelete),
 			td.RevisionEntry("a/b/4.txt", RevisionEntryDelete),
 		)
 		assert.NoError(err)
 
-		entries := readRevisionSnapshot(t, repo, revId2, nil)
+		entries := readRevisionSnapshot(t, r.Repository, revId2, nil)
 		assert.Equal([]*RevisionEntry{
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/2.txt", RevisionEntryAdd),

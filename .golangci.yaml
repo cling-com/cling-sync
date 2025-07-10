@@ -68,6 +68,9 @@ linters:
         - fixme
     gomoddirectives:
       replace-local: true
+    govet:
+      disable:
+        - composites
     revive:
       enable-all-rules: false
       rules:
