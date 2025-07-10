@@ -196,13 +196,13 @@ func TestCp(t *testing.T) {
 		// Verify extended metadata if supported. We use `EnhanceMetadata` to test this,
 		// because it is provides platform specific implementations.
 		md := lib.FileMetadata{GID: lib.UIDUnset, UID: lib.UIDUnset} //nolint:exhaustruct
-		EnhanceMetadata(&md, stat)
+		lib.EnhanceMetadata(&md, stat)
 		if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
 			assert.NotEqual(lib.UIDUnset, md.UID, "uid should be set on darwin and linux")
 			assert.NotEqual(lib.UIDUnset, md.GID, "gid should be set on darwin and linux")
 		}
 		cpMd := lib.FileMetadata{GID: lib.UIDUnset, UID: lib.UIDUnset} //nolint:exhaustruct
-		EnhanceMetadata(&cpMd, cpStat)
+		lib.EnhanceMetadata(&cpMd, cpStat)
 		// We don't want to compare `BirthtimeSec` and `BirthtimeNSec` because `Birthtime` is not
 		// restored and cannot be restored.
 		md.BirthtimeSec = 0

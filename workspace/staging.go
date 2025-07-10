@@ -265,6 +265,6 @@ func newFileMetadata(fileInfo fs.FileInfo, fileHash lib.Sha256, blockIds []lib.B
 		BirthtimeSec:  lib.BirthtimeUnset,
 		BirthtimeNSec: lib.BirthtimeUnset,
 	}
-	EnhanceMetadata(&md, fileInfo)
+	lib.EnhanceMetadata(&md, fileInfo)
 	return md
 }
