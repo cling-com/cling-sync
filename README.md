@@ -93,7 +93,7 @@ WASM support is a main focus of this project.
 
 Play around with the WASM example included in this repository. First, serve a repository:
 
-    cling-sync serve --address 127.0.0.1:4242 /path/to/repository
+    cling-sync serve --cors-allow-all --address 127.0.0.1:4242 /path/to/repository
 
 Then, build the WASM example:
 
