@@ -29,7 +29,7 @@ func (l *RevisionLog) Long() string {
 	date := time.Unix(r.TimestampSec, int64(r.TimestampNSec)).Format(time.RFC1123)
 	return fmt.Sprintf(
 		"Revision: %s\nAuthor:   %s\nDate:     %s\n\n    %s",
-		l.RevisionId.Long(),
+		l.RevisionId,
 		strings.ReplaceAll(r.Author, "\n", " "),
 		date,
 		strings.ReplaceAll(r.Message, "\n", "\n    "),
@@ -42,7 +42,7 @@ func (l *RevisionLog) Long() string {
 func (l *RevisionLog) Short() string {
 	r := l.Revision
 	date := time.Unix(r.TimestampSec, int64(r.TimestampNSec)).Format(time.RFC3339)
-	return fmt.Sprintf("%s %s %s", l.RevisionId.Long(), date, strings.ReplaceAll(r.Message, "\n", " "))
+	return fmt.Sprintf("%s %s %s", l.RevisionId, date, strings.ReplaceAll(r.Message, "\n", " "))
 }
 
 type LogOptions struct {

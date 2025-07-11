@@ -15,7 +15,7 @@ import (
 	"github.com/flunderpero/cling-sync/lib"
 )
 
-// We use a simplified interface to improve support for WASM, i.e. we don't
+// We use a simplified interface to improve support for Wasm, i.e. we don't
 // bring in the full HTTP client which adds a lot of dependencies.
 type HTTPClient interface {
 	Request(method string, url string, body []byte) (*HTTPResponse, error)

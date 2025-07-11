@@ -25,7 +25,7 @@ fi
 # Input:
 #   - $1 (optional): `optimize` to use the TinyGo compiler
 build_wasm() {
-    echo ">>> Building WASM"
+    echo ">>> Building Wasm"
     rm -rf build
     mkdir -p build
     if [ $# -gt 0 ] ; then

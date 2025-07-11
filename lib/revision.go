@@ -14,10 +14,6 @@ const revisionMarshalMagick = "cling-rev"
 type RevisionId BlockId
 
 func (id RevisionId) String() string {
-	return "rev:" + hex.EncodeToString(id[:])
-}
-
-func (id RevisionId) Long() string {
 	return hex.EncodeToString(id[:])
 }
 

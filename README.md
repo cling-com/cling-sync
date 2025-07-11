@@ -87,15 +87,15 @@ This will start a HTTP server on port `4242` that serves the repository at `/pat
 
 This will attach the repository at `127.0.0.1:4242` to the workspace at `/path/to/workspace`.
 
-## WASM Support
+## Wasm Support
 
-WASM support is a main focus of this project.
+Wasm support is a main focus of this project.
 
-Play around with the WASM example included in this repository. First, serve a repository:
+Play around with the Wasm example included in this repository. First, serve a repository:
 
     cling-sync serve --cors-allow-all --address 127.0.0.1:4242 /path/to/repository
 
-Then, build the WASM example:
+Then, build the Wasm example:
 
     ./build.sh wasm dev
 
@@ -105,7 +105,7 @@ Finally, open the example in your browser:
 
 ### Output Size
 
-Using the standard Go compiler (default), the WASM binary is quite huge (about 5MB).
+Using the standard Go compiler (default), the Wasm binary is quite huge (about 5MB).
 
 To compile using [TinyGo](https://tinygo.org/), use the `--optimize` flag:
 

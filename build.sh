@@ -32,9 +32,7 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-# todo: Add wasm to the list of projects. But we need to add the correct 
-#       build-tags to every command.
-projects="lib workspace http cli test"
+projects="lib workspace http cli wasm test"
 
 # Build all or a specific target.
 # Input:
@@ -103,11 +101,11 @@ case "$cmd" in
         ;;
     fmt)
         build_tools
-        projects="$projects wasm"
         echo ">>> Formatting code"
         run_project_cmd "$root/tools/golangci-lint fmt" "$@"
         ;;
     lint)
+        # todo: Lint the code that has the `wasm` build tag.
         build_tools
         echo ">>> Linting code"
         run_project_cmd "$root/tools/golangci-lint run" "$@"
@@ -116,10 +114,6 @@ case "$cmd" in
         echo ">>> Running tests"
         if [ $# -gt 0 ] && [ "$1" = "integration-bash" ]; then
             bash test/test.sh
-            exit 0
-        fi
-        if [ $# -gt 0 ] && [ "$1" = "wasm" ]; then
-            bash wasm/build.sh build
             exit 0
         fi
         run_project_cmd "go test ./... -count 1" "$@"
