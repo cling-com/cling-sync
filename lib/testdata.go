@@ -127,12 +127,12 @@ func (td TestData) NewTestFS(tb testing.TB, fs FS) *TestFS {
 func (td TestData) NewTestRepository(tb testing.TB, fs FS) *TestRepository {
 	tb.Helper()
 	assert := NewAssert(tb)
-	passphrase := []byte("testpassphrase")
+	passphrase := "testpassphrase"
 	storage, err := NewFileStorage(fs, StoragePurposeRepository)
 	assert.NoError(err)
-	repository, err := InitNewRepository(storage, passphrase)
+	repository, err := InitNewRepository(storage, []byte(passphrase))
 	assert.NoError(err)
-	return &TestRepository{repository, td.NewTestFS(tb, fs), storage, tb, assert}
+	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, tb, assert}
 }
 
 // Return the column at `column` for every line in `s`.
@@ -377,9 +377,10 @@ func (f *TestFS) Ls(path string) []TestFileInfo {
 type TestRepository struct {
 	*Repository
 	*TestFS
-	Storage *FileStorage
-	t       testing.TB
-	assert  Assert
+	Passphrase string
+	Storage    *FileStorage
+	t          testing.TB
+	assert     Assert
 }
 
 func (r *TestRepository) Head() RevisionId {
