@@ -211,7 +211,7 @@ func (m *Merger) commitLocalChanges(
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat %s", localPath)
 		}
-		md, err := addToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon.OnAddBlock)
+		md, err := AddFileToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon.OnAddBlock)
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", localPath)
 		}
@@ -577,7 +577,7 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 }
 
 // Add the file contents to the repository and return the file metadata.
-func addToRepository(
+func AddFileToRepository(
 	fs lib.FS,
 	path string,
 	fileInfo fs.FileInfo,
@@ -586,7 +586,7 @@ func addToRepository(
 	onAddBlock func(entry *lib.RevisionEntry, header *lib.BlockHeader, existed bool, dataSize int64),
 ) (lib.FileMetadata, error) {
 	if fileInfo.IsDir() {
-		return newFileMetadata(fileInfo, lib.Sha256{}, nil), nil
+		return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil), nil
 	}
 	// Fast path: If the entry already has BlockIds and the size of the file did
 	// not change, only calculate the hash.
@@ -630,7 +630,7 @@ func addToRepository(
 		onAddBlock(entry, &blockHeader, existed, int64(len(data)))
 		blockIds = append(blockIds, blockHeader.BlockId)
 	}
-	return newFileMetadata(fileInfo, lib.Sha256(fileHash.Sum(nil)), blockIds), nil
+	return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256(fileHash.Sum(nil)), blockIds), nil
 }
 
 // Create a `Staging` from `ws.WorkspacePath` and a `lib.RevisionSnapshot` based on the

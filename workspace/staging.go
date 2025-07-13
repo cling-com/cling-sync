@@ -230,7 +230,7 @@ func (s *Staging) add(path lib.Path, md *lib.FileMetadata) (bool, error) {
 
 func computeFileHash(fs lib.FS, path string, fileInfo fs.FileInfo) (lib.FileMetadata, error) {
 	if fileInfo.IsDir() {
-		return newFileMetadata(fileInfo, lib.Sha256{}, nil), nil
+		return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil), nil
 	}
 	f, err := fs.OpenRead(path)
 	if err != nil {
@@ -241,30 +241,5 @@ func computeFileHash(fs lib.FS, path string, fileInfo fs.FileInfo) (lib.FileMeta
 	if _, err := io.Copy(fileHash, f); err != nil {
 		return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to read file %s", path)
 	}
-	return newFileMetadata(fileInfo, lib.Sha256(fileHash.Sum(nil)), nil), nil
-}
-
-func newFileMetadata(fileInfo fs.FileInfo, fileHash lib.Sha256, blockIds []lib.BlockId) lib.FileMetadata {
-	mtime := fileInfo.ModTime().UTC()
-	var size int64
-	if !fileInfo.IsDir() {
-		size = fileInfo.Size()
-	}
-	md := lib.FileMetadata{
-		ModeAndPerm: lib.NewModeAndPerm(fileInfo.Mode()),
-		MTimeSec:    mtime.Unix(),
-		MTimeNSec:   int32(mtime.Nanosecond()), //nolint:gosec
-		Size:        size,
-		FileHash:    fileHash,
-		BlockIds:    blockIds,
-
-		SymlinkTarget: "", // todo: handle symlinks
-
-		UID:           lib.UIDUnset,
-		GID:           lib.UIDUnset,
-		BirthtimeSec:  lib.BirthtimeUnset,
-		BirthtimeNSec: lib.BirthtimeUnset,
-	}
-	lib.EnhanceMetadata(&md, fileInfo)
-	return md
+	return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256(fileHash.Sum(nil)), nil), nil
 }

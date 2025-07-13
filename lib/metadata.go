@@ -180,6 +180,31 @@ type FileMetadata struct {
 	BirthtimeNSec int32  // -1 (BirthtimeUnset) if not present.
 }
 
+func NewFileMetadataFromFileInfo(fileInfo fs.FileInfo, fileHash Sha256, blockIds []BlockId) FileMetadata {
+	mtime := fileInfo.ModTime().UTC()
+	var size int64
+	if !fileInfo.IsDir() {
+		size = fileInfo.Size()
+	}
+	md := FileMetadata{
+		ModeAndPerm: NewModeAndPerm(fileInfo.Mode()),
+		MTimeSec:    mtime.Unix(),
+		MTimeNSec:   int32(mtime.Nanosecond()), //nolint:gosec
+		Size:        size,
+		FileHash:    fileHash,
+		BlockIds:    blockIds,
+
+		SymlinkTarget: "", // todo: handle symlinks
+
+		UID:           UIDUnset,
+		GID:           UIDUnset,
+		BirthtimeSec:  BirthtimeUnset,
+		BirthtimeNSec: BirthtimeUnset,
+	}
+	EnhanceMetadata(&md, fileInfo)
+	return md
+}
+
 func (fm *FileMetadata) MTime() time.Time {
 	return time.Unix(fm.MTimeSec, int64(fm.MTimeNSec))
 }
