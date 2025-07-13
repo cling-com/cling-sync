@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,9 @@ func NewCommit(repository *Repository, tmpFS FS) (*Commit, error) {
 func (c *Commit) Add(entry *RevisionEntry) error {
 	if c.tempWriter == nil {
 		return Errorf("commit is closed")
+	}
+	if strings.HasPrefix(entry.Path.FSString(), "/") {
+		return Errorf("commit cannot add absolute paths to commit: %s", entry.Path)
 	}
 	return c.tempWriter.Add(entry)
 }

@@ -48,6 +48,17 @@ func TestCommit(t *testing.T) {
 		assert.Equal([]*RevisionEntry{e4}, entries)
 	})
 
+	t.Run("Absolute paths should be rejected", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		err = commit.Add(td.RevisionEntry("/a/1.txt", RevisionEntryAdd))
+		assert.Error(err, "absolute path")
+	})
+
 	t.Run("Empty commit", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
