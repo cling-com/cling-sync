@@ -5,14 +5,26 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 )
 
 func RequestLogMiddleware(handler http.Handler) http.Handler {
 	// todo: Make the log format and level configurable
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})) //nolint:exhaustruct
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Debug("HTTP request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
+		t0 := time.Now()
 		handler.ServeHTTP(w, r)
+		log.Debug(
+			"HTTP request",
+			"method",
+			r.Method,
+			"path",
+			r.URL.Path,
+			"remote",
+			r.RemoteAddr,
+			"duration",
+			time.Since(t0),
+		)
 	})
 }
 
