@@ -9,7 +9,7 @@ import (
 )
 
 type StatusFile struct {
-	Path     string
+	Path     lib.Path
 	Type     lib.RevisionEntryType
 	Metadata *lib.FileMetadata
 }
@@ -26,7 +26,7 @@ func (f StatusFile) Format() string {
 	default:
 		panic(fmt.Sprintf("invalid revision entry type %d", f.Type))
 	}
-	path := f.Path
+	path := f.Path.String()
 	if f.Metadata.ModeAndPerm.IsDir() {
 		path += "/"
 	}
@@ -100,7 +100,7 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read revision chunk file")
 		}
-		result = append(result, StatusFile{entry.Path.FSString(), entry.Type, entry.Metadata})
+		result = append(result, StatusFile{entry.Path, entry.Type, entry.Metadata})
 	}
 	return result, nil
 }

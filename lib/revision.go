@@ -111,7 +111,7 @@ func UnmarshalRevision(r io.Reader) (*Revision, error) {
 //   - sub/sub/z.txt
 func RevisionEntryPathCompare(a, b *RevisionEntry) int {
 	key := func(e *RevisionEntry) string {
-		p := strings.ReplaceAll(string(e.Path), "/", "/1")
+		p := strings.ReplaceAll(e.Path.String(), "/", "/1")
 		if e.Metadata.ModeAndPerm.IsDir() {
 			return p
 		}
@@ -135,13 +135,13 @@ func NewRevisionEntry(path Path, typ RevisionEntryType, md *FileMetadata) (Revis
 }
 
 func (se *RevisionEntry) MarshalledSize() int {
-	return len(se.Path) + 2 + 1 + // Path + len(Path) + Type
+	return se.Path.Len() + 2 + 1 + // Path + len(Path) + Type
 		se.Metadata.MarshalledSize()
 }
 
 func MarshalRevisionEntry(r *RevisionEntry, w io.Writer) error {
 	bw := NewBinaryWriter(w)
-	bw.WriteString(string(r.Path))
+	bw.WriteString(r.Path.String())
 	bw.Write(r.Type)
 	if err := MarshalFileMetadata(r.Metadata, w); err != nil {
 		return WrapErrorf(err, "failed to marshal revision entry %s", r.Path)
@@ -158,7 +158,11 @@ func UnmarshalRevisionEntry(r io.Reader) (*RevisionEntry, error) {
 	var re RevisionEntry
 	br := NewBinaryReader(r)
 	path := br.ReadString()
-	re.Path = Path(path)
+	var err error
+	re.Path, err = NewPath(path)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to unmarshal revision entry, invalid path %q", path)
+	}
 	br.Read(&re.Type)
 	metadata, err := UnmarshalFileMetadata(r)
 	if err != nil {

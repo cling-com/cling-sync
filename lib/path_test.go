@@ -7,9 +7,64 @@ import (
 
 func TestPath(t *testing.T) {
 	t.Parallel()
-	assert := NewAssert(t)
-	assert.Equal("a/b/c", NewPath("a", "b", "c").FSString())
-	assert.Equal("a%2f/b%/c", NewPath("a/", "b%", "c").FSString())
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		p, err := NewPath("a/b/c")
+		assert.NoError(err)
+		assert.Equal(Path{"a/b/c"}, p)
+	})
+
+	t.Run("Path can be empty", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		p, err := NewPath("")
+		assert.NoError(err)
+		assert.Equal(Path{""}, p)
+	})
+
+	t.Run("Paths must not be absolute", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		_, err := NewPath("/a/b/c")
+		assert.Error(err, "invalid path")
+	})
+
+	t.Run("Paths must not contain volume name", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		_, err := NewPath("C:/a/b/c")
+		assert.Error(err, "invalid path")
+	})
+
+	t.Run("Paths must not contain `//`", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		_, err := NewPath("a//b/c")
+		assert.Error(err, "invalid path")
+	})
+
+	t.Run("Paths must not be relative", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		_, err := NewPath("./a")
+		assert.Error(err, "must not be relative")
+		_, err = NewPath(".")
+		assert.Error(err, "must not be relative")
+		_, err = NewPath("..")
+		assert.Error(err, "must not be relative")
+		_, err = NewPath(".a")
+		assert.NoError(err)
+	})
+
+	t.Run("Paths must not contain `.` or `..`", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		_, err := NewPath("a/./b")
+		assert.Error(err, "must not contain `.`")
+		_, err = NewPath("a/../b")
+		assert.Error(err, "must not contain `.` or `..`")
+	})
 }
 
 func TestPathPattern(t *testing.T) {
@@ -183,10 +238,10 @@ func TestPathExclusionFilter(t *testing.T) {
 	assert := NewAssert(t)
 	sut, err := NewPathExclusionFilter([]string{"etc", "**/*.txt"}, []string{"etc/host.conf", "opt/test.txt"})
 	assert.NoError(err)
-	assert.Equal(true, sut.Include("etc/host.conf"))
-	assert.Equal(false, sut.Include("etc/passwd"))
-	assert.Equal(false, sut.Include("home/user/file.txt"))
-	assert.Equal(true, sut.Include("opt/test.txt"))
+	assert.Equal(true, sut.Include(Path{"etc/host.conf"}))
+	assert.Equal(false, sut.Include(Path{"etc/passwd"}))
+	assert.Equal(false, sut.Include(Path{"home/user/file.txt"}))
+	assert.Equal(true, sut.Include(Path{"opt/test.txt"}))
 }
 
 func TestAllPathFilter(t *testing.T) {
@@ -199,10 +254,10 @@ func TestAllPathFilter(t *testing.T) {
 	exclude2, err := NewPathExclusionFilter([]string{"**/*.txt"}, []string{"opt/test.txt", "etc"})
 	assert.NoError(err)
 	sut := AllPathFilter{Filters: []PathFilter{exclude1, exclude2}}
-	assert.Equal(true, sut.Include("etc/host.conf"))
-	assert.Equal(false, sut.Include("etc/passwd"))
-	assert.Equal(false, sut.Include("home/user/file.txt"))
-	assert.Equal(true, sut.Include("opt/test.txt"))
+	assert.Equal(true, sut.Include(Path{"etc/host.conf"}))
+	assert.Equal(false, sut.Include(Path{"etc/passwd"}))
+	assert.Equal(false, sut.Include(Path{"home/user/file.txt"}))
+	assert.Equal(true, sut.Include(Path{"opt/test.txt"}))
 }
 
 func match_func(t *testing.T) func(pattern string, path string) bool {
@@ -212,6 +267,6 @@ func match_func(t *testing.T) func(pattern string, path string) bool {
 		assert := NewAssert(t)
 		p, err := NewPathPattern(pattern)
 		assert.NoError(err)
-		return p.Match(path)
+		return p.Match(Path{path})
 	}
 }

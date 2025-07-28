@@ -58,7 +58,7 @@ func (m *CommitMonitor) OnStart(entry *lib.RevisionEntry) {
 	if !m.Verbose {
 		return
 	}
-	fmt.Printf("%s\n", entry.Path.FSString())
+	fmt.Printf("%s\n", entry.Path)
 }
 
 func (m *CommitMonitor) OnAddBlock(entry *lib.RevisionEntry, header *lib.BlockHeader, existed bool, dataSize int64) {
@@ -133,7 +133,7 @@ func NewStagingMonitor(verbose, noProgress bool) *StagingMonitor {
 	}
 }
 
-func (m *StagingMonitor) OnStart(path string, dirEntry os.DirEntry) {
+func (m *StagingMonitor) OnStart(path lib.Path, dirEntry os.DirEntry) {
 	if m.startTime.IsZero() {
 		m.startTime = time.Now()
 	}
@@ -145,7 +145,7 @@ func (m *StagingMonitor) OnStart(path string, dirEntry os.DirEntry) {
 	fmt.Printf("%s\n", path)
 }
 
-func (m *StagingMonitor) OnEnd(path string, excluded bool, metadata *lib.FileMetadata) {
+func (m *StagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) {
 	if excluded {
 		if m.Verbose {
 			fmt.Printf("  excluded\n")

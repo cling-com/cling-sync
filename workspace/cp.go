@@ -50,7 +50,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 	directories := []*lib.RevisionEntry{}
 	restoreDirFileModes := func() error {
 		for _, entry := range directories {
-			target := entry.Path.FSString()
+			target := entry.Path.String()
 			if err := restoreFileMode(targetFS, target, entry.Metadata); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", entry.Metadata.ModeAndPerm, target)
 			}
@@ -66,7 +66,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		target := entry.Path.FSString()
+		target := entry.Path.String()
 		mon.OnStart(entry, target)
 		if err := restore(entry, repository, targetFS, target, mon); err != nil {
 			return lib.WrapErrorf(err, "failed to copy %s", target)

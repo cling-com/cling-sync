@@ -156,7 +156,7 @@ func newTestRevisionLog(log RevisionLog, status bool) TestRevisionLog {
 	if status {
 		files = []TestStatusFile{}
 		for _, file := range log.Files {
-			files = append(files, TestStatusFile{file.Path, file.Type, int(file.Metadata.Size)})
+			files = append(files, TestStatusFile{file.Path.String(), file.Type, int(file.Metadata.Size)})
 		}
 	}
 	return TestRevisionLog{log.RevisionId, log.Revision, files}

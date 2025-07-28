@@ -266,8 +266,8 @@ func TestMerge(t *testing.T) {
 		conflicts, ok := err.(MergeConflictsError) //nolint:errorlint
 		assert.Equal(true, ok)
 		assert.Equal(1, len(conflicts))
-		assert.Equal("a.txt", conflicts[0].WorkspaceEntry.Path.FSString())
-		assert.Equal("a.txt", conflicts[0].RepositoryEntry.Path.FSString())
+		assert.Equal("a.txt", conflicts[0].WorkspaceEntry.Path.String())
+		assert.Equal("a.txt", conflicts[0].RepositoryEntry.Path.String())
 		assert.Equal(lib.RevisionEntryAdd, conflicts[0].WorkspaceEntry.Type)
 		assert.Equal(lib.RevisionEntryAdd, conflicts[0].RepositoryEntry.Type)
 		assert.Equal(int64(2), conflicts[0].WorkspaceEntry.Metadata.Size)

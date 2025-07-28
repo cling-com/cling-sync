@@ -137,13 +137,13 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any {
 			}
 			if file.Metadata.ModeAndPerm.IsRegular() {
 				sb.WriteString(
-					"<td><a href=\"#download:" + base64.StdEncoding.EncodeToString([]byte(file.Path)) + "\">",
+					"<td><a href=\"#download:" + base64.StdEncoding.EncodeToString([]byte(file.Path.String())) + "\">",
 				)
-				sb.WriteString(html.EscapeString(file.Path))
+				sb.WriteString(html.EscapeString(file.Path.String()))
 				sb.WriteString("</a></td>")
 			} else {
 				sb.WriteString("<td>")
-				sb.WriteString(html.EscapeString(file.Path))
+				sb.WriteString(html.EscapeString(file.Path.String()))
 				sb.WriteString("/</td>")
 			}
 			sb.WriteString("<td>")
@@ -236,7 +236,7 @@ func (r *RepositoryAPI) ReadFile(this js.Value, args []js.Value) any {
 		js.CopyBytesToJS(resultData, data.Bytes())
 		result := js.Global().Get("Array").New()
 		result.Set("0", resultData)
-		fileName := filepath.Base(file.Path.FSString())
+		fileName := filepath.Base(file.Path.String())
 		result.Set("1", js.ValueOf(fileName))
 		resolve(result)
 	})

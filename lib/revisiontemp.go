@@ -62,7 +62,7 @@ func (rtr *RevisionTempReader) Read() (*RevisionEntry, error) {
 		}
 		re := rtr.current[rtr.currentIndex]
 		rtr.currentIndex++
-		if rtr.pathFilter == nil || rtr.pathFilter.Include(re.Path.FSString()) {
+		if rtr.pathFilter == nil || rtr.pathFilter.Include(re.Path) {
 			return re, nil
 		}
 	}
@@ -87,7 +87,7 @@ func (rtr *RevisionTempReader) ReadChunk(i int) ([]*RevisionEntry, error) {
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to unmarshal revision entry from chunk file %d", i)
 		}
-		if rtr.pathFilter != nil && !rtr.pathFilter.Include(string(re.Path)) {
+		if rtr.pathFilter != nil && !rtr.pathFilter.Include(re.Path) {
 			continue
 		}
 		entries = append(entries, re)
@@ -352,10 +352,10 @@ func (rtc *RevisionTempCache) Get(path Path, isDir bool) (*RevisionEntry, bool, 
 			return nil, false, WrapErrorf(err, "failed to read chunk %d", chunkIndex)
 		}
 		for _, entry := range entries {
-			cache[string(entry.Path)] = entry
+			cache[entry.Path.String()] = entry
 		}
 	}
 	rtc.lastAccessed[chunkIndex] = time.Now().UnixNano()
-	re, ok := cache[string(entry.Path)]
+	re, ok := cache[entry.Path.String()]
 	return re, ok, nil
 }

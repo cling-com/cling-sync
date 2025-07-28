@@ -72,10 +72,10 @@ func (m *TestCpMonitor) OnExists(entry *lib.RevisionEntry, targetPath string) Cp
 
 type TestStagingMonitor struct{}
 
-func (m *TestStagingMonitor) OnStart(path string, dirEntry fs.DirEntry) {
+func (m *TestStagingMonitor) OnStart(path lib.Path, dirEntry fs.DirEntry) {
 }
 
-func (m *TestStagingMonitor) OnEnd(path string, excluded bool, metadata *lib.FileMetadata) {
+func (m *TestStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) {
 }
 
 func (m *TestStagingMonitor) Close() {

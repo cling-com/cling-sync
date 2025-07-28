@@ -6,14 +6,13 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
-	"strings"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
 
 type StagingEntryMonitor interface {
-	OnStart(path string, dirEntry fs.DirEntry)
-	OnEnd(path string, excluded bool, metadata *lib.FileMetadata)
+	OnStart(path lib.Path, dirEntry fs.DirEntry)
+	OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata)
 }
 
 type Staging struct {
@@ -33,11 +32,18 @@ func NewStaging(
 ) (*Staging, error) {
 	tempWriter := lib.NewRevisionTempWriter(tmp, lib.DefaultRevisionTempChunkSize)
 	staging := &Staging{pathFilter, tempWriter, nil, tmp}
-	err := src.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+	err := src.WalkDir(".", func(path_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if filepath.Base(path) == ".cling" {
+		if path_ == "." {
+			return nil
+		}
+		path, err := lib.NewPath(path_)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to create path from %s", path_)
+		}
+		if path.Base().String() == ".cling" {
 			return filepath.SkipDir
 		}
 		fileInfo, err := d.Info()
@@ -59,19 +65,12 @@ func NewStaging(
 			}
 			return nil
 		}
-		if path == "." {
-			mon.OnEnd(path, true, nil)
-			return nil
-		}
-		// todo: this might be insecure, perhaps we should use filepath.Split and
-		// filepath.Clean directly in lib.NewPath.
-		repoPath := lib.NewPath(strings.Split(path, lib.PathSeparator)...)
 		var fileMetadata lib.FileMetadata
 		fileMetadata, err = computeFileHash(src, path, fileInfo)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get metadata for %s", path)
 		}
-		_, err = staging.add(repoPath, &fileMetadata)
+		_, err = staging.add(path, &fileMetadata)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to add path %s to staging", path)
 		}
@@ -113,10 +112,10 @@ func (s *Staging) MergeWithSnapshot(snapshot *lib.RevisionSnapshot) (*lib.Revisi
 	add := func(path lib.Path, typ lib.RevisionEntryType, md *lib.FileMetadata) error {
 		re, err := lib.NewRevisionEntry(path, typ, md)
 		if err != nil {
-			return lib.WrapErrorf(err, "failed to create revision entry for path %s", path.FSString())
+			return lib.WrapErrorf(err, "failed to create revision entry for path %s", path)
 		}
 		if err := finalWriter.Add(&re); err != nil {
-			return lib.WrapErrorf(err, "failed to write revision entry for path %s", path.FSString())
+			return lib.WrapErrorf(err, "failed to write revision entry for path %s", path)
 		}
 		return nil
 	}
@@ -215,7 +214,7 @@ func (s *Staging) add(path lib.Path, md *lib.FileMetadata) (bool, error) {
 	if s.tempWriter == nil {
 		return false, lib.Errorf("staging is closed")
 	}
-	if s.PathFilter != nil && !s.PathFilter.Include(path.FSString()) {
+	if s.PathFilter != nil && !s.PathFilter.Include(path) {
 		return false, nil
 	}
 	re, err := lib.NewRevisionEntry(path, lib.RevisionEntryAdd, md)
@@ -228,11 +227,11 @@ func (s *Staging) add(path lib.Path, md *lib.FileMetadata) (bool, error) {
 	return true, nil
 }
 
-func computeFileHash(fs lib.FS, path string, fileInfo fs.FileInfo) (lib.FileMetadata, error) {
+func computeFileHash(fs lib.FS, path lib.Path, fileInfo fs.FileInfo) (lib.FileMetadata, error) {
 	if fileInfo.IsDir() {
 		return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil), nil
 	}
-	f, err := fs.OpenRead(path)
+	f, err := fs.OpenRead(path.String())
 	if err != nil {
 		return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
 	}

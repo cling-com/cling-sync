@@ -1,40 +1,50 @@
 package lib
 
 import (
-	"bytes"
+	"path/filepath"
 	"strings"
 )
 
 const PathDelim = "/"
 
-type (
-	Path    string
-	PathKey string
-)
+type Path struct {
+	p string
+}
 
-func NewPath(parts ...string) Path {
-	var sb strings.Builder
-	for i, part := range parts {
-		if i > 0 {
-			sb.WriteString(PathDelim)
-		}
-		sb.WriteString(escapePathPart(part))
+func NewPath(path string) (Path, error) {
+	path = filepath.ToSlash(path)
+	if strings.HasPrefix(path, "./") || path == "." || strings.HasPrefix(path, "..") {
+		return Path{""}, Errorf("invalid path %q, must not be relative", path)
 	}
-	return Path(sb.String())
+	if strings.HasPrefix(path, "../") {
+		return Path{""}, Errorf("invalid path %q, must not start with `.`", path)
+	}
+	if strings.HasPrefix(path, "/") {
+		return Path{""}, Errorf("invalid path %q, must not start with `/`", path)
+	}
+	if len(path) > 1 && path[1] == ':' && path[2] == '/' {
+		return Path{""}, Errorf("invalid path %q, must not contain volume name", path)
+	}
+	if path != "" && filepath.Clean(path) != path {
+		return Path{""}, Errorf("invalid path %q, must not contain `.` or `..`", path)
+	}
+	return Path{path}, nil
 }
 
-// Return the path with all `%25` converted back to `%` but keeping all
-// escaped `/` at `%2f`.
-func (p Path) FSString() string {
-	return strings.ReplaceAll(string(p), "%25", "%")
+func (p Path) String() string {
+	return p.p
 }
 
-// Replace `/` with `%2f` and `%` with `%25`.
-func escapePathPart(s string) string {
-	b := []byte(s)
-	b = bytes.ReplaceAll(b, []byte("%"), []byte("%25"))
-	b = bytes.ReplaceAll(b, []byte("/"), []byte("%2f"))
-	return string(b)
+func (p Path) Base() Path {
+	return Path{filepath.Base(p.p)}
+}
+
+func (p Path) Dir() Path {
+	return Path{filepath.Dir(p.p)}
+}
+
+func (p Path) Len() int {
+	return len(p.p)
 }
 
 // A pattern that matches against a file path.
@@ -112,11 +122,11 @@ func NewPathPatters(patterns []string) ([]PathPattern, error) {
 	return pp, nil
 }
 
-func (pp PathPattern) Match(p string) bool {
-	if p == "" {
+func (pp PathPattern) Match(p Path) bool {
+	if p.p == "" {
 		return false
 	}
-	return match(p, pp.parts)
+	return match(p.p, pp.parts)
 }
 
 func match(path string, parts []string) bool { //nolint:funlen
@@ -190,7 +200,7 @@ func match(path string, parts []string) bool { //nolint:funlen
 }
 
 type PathFilter interface {
-	Include(p string) bool
+	Include(p Path) bool
 }
 
 // A PathFilter that can exclude paths.
@@ -214,7 +224,7 @@ func NewPathExclusionFilter(excludes []string, includes []string) (*PathExclusio
 	return &PathExclusionFilter{Excludes: e, Includes: i}, nil
 }
 
-func (pef *PathExclusionFilter) Include(p string) bool {
+func (pef *PathExclusionFilter) Include(p Path) bool {
 	for _, exclude := range pef.Excludes {
 		if exclude.Match(p) {
 			for _, include := range pef.Includes {
@@ -240,7 +250,7 @@ func NewPathInclusionFilter(includes []string) (*PathInclusionFilter, error) {
 	return &PathInclusionFilter{Includes: patterns}, nil
 }
 
-func (pif *PathInclusionFilter) Include(p string) bool {
+func (pif *PathInclusionFilter) Include(p Path) bool {
 	for _, include := range pif.Includes {
 		if include.Match(p) {
 			return true
@@ -255,7 +265,7 @@ type AllPathFilter struct {
 	Filters []PathFilter
 }
 
-func (cpf *AllPathFilter) Include(p string) bool {
+func (cpf *AllPathFilter) Include(p Path) bool {
 	for _, filter := range cpf.Filters {
 		if !filter.Include(p) {
 			return false

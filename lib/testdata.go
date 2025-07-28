@@ -90,11 +90,11 @@ func (td TestData) RevisionEntryExt(
 	md := td.FileMetadata(mode)
 	md.FileHash = Sha256(sha.Sum(nil))
 	md.Size = int64(len(content))
-	return &RevisionEntry{
-		Path:     NewPath(strings.Split(path, "/")...),
-		Type:     entryType,
-		Metadata: md,
+	p, err := NewPath(path)
+	if err != nil {
+		panic(err)
 	}
+	return &RevisionEntry{p, entryType, md}
 }
 
 func (td TestData) Revision(parent RevisionId) *Revision {
@@ -427,7 +427,7 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 			content = buf.String()
 		}
 		actual = append(actual, TestFileInfo{
-			Path:    entry.Path.FSString(),
+			Path:    entry.Path.String(),
 			Mode:    entry.Metadata.ModeAndPerm.AsFileMode(),
 			Size:    int(entry.Metadata.Size),
 			Content: content,
@@ -445,7 +445,7 @@ func (r *TestRepository) RevisionEntryReaderInfos(reader RevisionEntryReader) []
 		}
 		r.assert.NoError(err)
 		infos = append(infos, TestRevisionEntryInfo{
-			Path: entry.Path.FSString(),
+			Path: entry.Path.String(),
 			Type: entry.Type,
 			Mode: entry.Metadata.ModeAndPerm.AsFileMode(),
 			Hash: entry.Metadata.FileHash,

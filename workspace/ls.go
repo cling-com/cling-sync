@@ -4,14 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
 	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
 
 type LsFile struct {
-	Path     string
+	Path     lib.Path
 	Metadata *lib.FileMetadata
 }
 
@@ -59,9 +58,9 @@ func (f *LsFile) Format(format *LsFormat) string {
 	}
 	var path string
 	if format.FullPath {
-		path = f.Path
+		path = f.Path.String()
 	} else {
-		path = filepath.Base(f.Path)
+		path = f.Path.Base().String()
 	}
 	if f.Metadata.ModeAndPerm.IsDir() {
 		path += "/"
@@ -100,8 +99,7 @@ func Ls(repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, er
 			}
 			return nil, lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		path := re.Path.FSString()
-		files = append(files, LsFile{path, re.Metadata})
+		files = append(files, LsFile{re.Path, re.Metadata})
 	}
 	return files, nil
 }

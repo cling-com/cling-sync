@@ -74,12 +74,12 @@ func Log(repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
 				if err != nil {
 					return nil, lib.WrapErrorf(err, "failed to read revision %s", revisionId)
 				}
-				if opts.PathFilter != nil && !opts.PathFilter.Include(string(entry.Path)) {
+				if opts.PathFilter != nil && !opts.PathFilter.Include(entry.Path) {
 					continue
 				}
 				matchedAtLeastOnePath = true
 				if opts.Status {
-					files = append(files, StatusFile{entry.Path.FSString(), entry.Type, entry.Metadata})
+					files = append(files, StatusFile{entry.Path, entry.Type, entry.Metadata})
 				}
 			}
 		}

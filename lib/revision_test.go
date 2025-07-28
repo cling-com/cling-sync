@@ -57,13 +57,13 @@ func TestRevisionEntry(t *testing.T) {
 			return td.RevisionEntry(path, RevisionEntryAdd)
 		}
 		entries := []*RevisionEntry{
-			fileEntry("/a.zip"),
-			fileEntry("/abcd.txt"),
-			dirEntry("/a"),
-			fileEntry("/a/1.md"),
-			fileEntry("/a/2.md"),
-			dirEntry("/abc"),
-			fileEntry("/abc/1.md"),
+			fileEntry("a.zip"),
+			fileEntry("abcd.txt"),
+			dirEntry("a"),
+			fileEntry("a/1.md"),
+			fileEntry("a/2.md"),
+			dirEntry("abc"),
+			fileEntry("abc/1.md"),
 		}
 		// Randomize the order of the entries.
 		rand.Shuffle(len(entries), func(i, j int) { entries[i], entries[j] = entries[j], entries[i] })
@@ -72,16 +72,16 @@ func TestRevisionEntry(t *testing.T) {
 		slices.SortFunc(actual, RevisionEntryPathCompare)
 		actualPaths := make([]string, len(actual))
 		for i, entry := range actual {
-			actualPaths[i] = string(entry.Path)
+			actualPaths[i] = entry.Path.String()
 		}
 		assert.Equal([]string{
-			"/a.zip",
-			"/abcd.txt",
-			"/a",
-			"/a/1.md",
-			"/a/2.md",
-			"/abc",
-			"/abc/1.md",
+			"a.zip",
+			"abcd.txt",
+			"a",
+			"a/1.md",
+			"a/2.md",
+			"abc",
+			"abc/1.md",
 		}, actualPaths)
 	})
 

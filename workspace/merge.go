@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
@@ -49,7 +48,7 @@ func (mc MergeConflictsError) Error() string {
 		if i > 0 {
 			s += ", "
 		}
-		s += fmt.Sprintf("%q", conflict.WorkspaceEntry.Path.FSString())
+		s += fmt.Sprintf("%q", conflict.WorkspaceEntry.Path)
 	}
 	return s + ")"
 }
@@ -202,21 +201,20 @@ func (m *Merger) commitLocalChanges(
 			mon.OnEnd(entry)
 			continue
 		}
-		localPath := entry.Path.FSString()
-		stat, err := m.ws.FS.Stat(localPath)
+		stat, err := m.ws.FS.Stat(entry.Path.String())
 		if errors.Is(err, fs.ErrNotExist) {
 			// todo: make special errors out of these so we can distinguish them later.
-			return lib.RevisionId{}, lib.Errorf("file %s was deleted during merge - aborting merge", localPath)
+			return lib.RevisionId{}, lib.Errorf("file %s was deleted during merge - aborting merge", entry.Path)
 		}
 		if err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat %s", localPath)
+			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat %s", entry.Path)
 		}
-		md, err := AddFileToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon.OnAddBlock)
+		md, err := AddFileToRepository(m.ws.FS, entry.Path, stat, m.repository, entry, mon.OnAddBlock)
 		if err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", localPath)
+			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", entry.Path)
 		}
 		if md.FileHash != entry.Metadata.FileHash {
-			return lib.RevisionId{}, lib.Errorf("file %s was modified during merge - aborting merge", localPath)
+			return lib.RevisionId{}, lib.Errorf("file %s was modified during merge - aborting merge", entry.Path)
 		}
 		entry.Metadata = &md
 		if err := commit.Add(entry); err != nil {
@@ -377,24 +375,24 @@ func (m *Merger) copyRepositoryFiles(
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		if err := m.makeDirsWritable(entry.Path.FSString()); err != nil {
-			return lib.WrapErrorf(err, "failed to make directories writable for %s", entry.Path.FSString())
+		if err := m.makeDirsWritable(entry.Path.String()); err != nil {
+			return lib.WrapErrorf(err, "failed to make directories writable for %s", entry.Path)
 		}
 		md := entry.Metadata
 		isDir := md.ModeAndPerm.IsDir()
 		stagingEntry, existsInStaging, err := staging.Get(entry.Path, isDir)
 		if err != nil {
-			return lib.WrapErrorf(err, "failed to get entry from cache for %s", entry.Path.FSString())
+			return lib.WrapErrorf(err, "failed to get entry from cache for %s", entry.Path)
 		}
 		_, isLocalChange, err := localChanges.Get(entry.Path, isDir)
 		if err != nil {
-			return lib.WrapErrorf(err, "failed to get entry from cache for %s", entry.Path.FSString())
+			return lib.WrapErrorf(err, "failed to get entry from cache for %s", entry.Path)
 		}
 		if isLocalChange {
 			continue
 		}
 		// Make sure parent directories are writable.
-		targetPath := entry.Path.FSString()
+		targetPath := entry.Path.String()
 		if entry.Type != lib.RevisionEntryAdd && entry.Type != lib.RevisionEntryUpdate {
 			return lib.Errorf("unexpected revision entry type %s for %s", entry.Type, targetPath)
 		}
@@ -454,7 +452,10 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 			// todo: handle symlinks
 			return nil
 		}
-		repositoryPath := lib.NewPath(strings.Split(path, lib.PathSeparator)...)
+		repositoryPath, err := lib.NewPath(path)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to create path from %s", path)
+		}
 		stagingEntry, existsInStaging, err := staging.Get(repositoryPath, d.IsDir())
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from staging cache for %s", path)
@@ -579,7 +580,7 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 // Add the file contents to the repository and return the file metadata.
 func AddFileToRepository(
 	fs lib.FS,
-	path string,
+	path lib.Path,
 	fileInfo fs.FileInfo,
 	repository *lib.Repository,
 	entry *lib.RevisionEntry,
@@ -605,7 +606,7 @@ func AddFileToRepository(
 	// todo: what about symlinks
 	blockIds := []lib.BlockId{}
 	fileHash := sha256.New()
-	f, err := fs.OpenRead(path)
+	f, err := fs.OpenRead(path.String())
 	if err != nil {
 		return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
 	}
