@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -148,11 +147,18 @@ func (td TestData) Column(s string, column int) string {
 		if len(line) == 0 {
 			continue
 		}
-		columns := strings.Split(line, " ")
-		if len(columns) < column {
-			continue
+		parts := strings.Split(line, " ")
+		i := 0
+		for _, part := range parts {
+			if len(part) == 0 {
+				continue
+			}
+			if i == column {
+				result = append(result, part)
+				break
+			}
+			i += 1
 		}
-		result = append(result, columns[column])
 	}
 	return strings.Join(result, "\n")
 }
@@ -464,14 +470,4 @@ func (r *TestRepository) RevisionInfos(revisionId RevisionId) []TestRevisionEntr
 func (r *TestRepository) RevisionTempInfos(temp *RevisionTemp) []TestRevisionEntryInfo {
 	r.t.Helper()
 	return r.RevisionEntryReaderInfos(temp.Reader(nil))
-}
-
-func details(msg []any) string {
-	if len(msg) == 0 {
-		return ""
-	}
-	if len(msg) == 1 {
-		return fmt.Sprintf("%v: ", msg[0])
-	}
-	return fmt.Sprintf(msg[0].(string), msg[1:]...) + ": " //nolint:forcetypeassert
 }

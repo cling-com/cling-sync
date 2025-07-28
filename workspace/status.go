@@ -79,7 +79,7 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	staging, err := NewStaging(ws.FS, opts.PathFilter, stagingTmpFS, opts.Monitor)
+	staging, err := NewStaging(ws.FS, ws.PathPrefix, opts.PathFilter, stagingTmpFS, opts.Monitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}
@@ -100,7 +100,11 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read revision chunk file")
 		}
-		result = append(result, StatusFile{entry.Path, entry.Type, entry.Metadata})
+		path, ok := entry.Path.TrimBase(ws.PathPrefix)
+		if !ok {
+			continue
+		}
+		result = append(result, StatusFile{path, entry.Type, entry.Metadata})
 	}
 	return result, nil
 }

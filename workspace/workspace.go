@@ -13,6 +13,7 @@ type RemoteRepository string
 
 type Workspace struct {
 	RemoteRepository RemoteRepository
+	PathPrefix       lib.Path
 	Storage          lib.Storage
 	FS               lib.FS
 	TempFS           lib.FS
@@ -35,15 +36,30 @@ func OpenWorkspace(fs lib.FS, tempFS lib.FS) (*Workspace, error) {
 	if !ok {
 		return nil, lib.Errorf("invalid repository config, key `remote.repository` not found")
 	}
-	return &Workspace{RemoteRepository(remoteRepository), storage, fs, tempFS}, nil
+	var pathPrefix lib.Path
+	if pathPrefixStr, ok := toml.GetValue("remote", "path-prefix"); ok {
+		pathPrefix, err = ValidatePathPrefix(pathPrefixStr)
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "invalid path prefix %q", pathPrefix)
+		}
+	}
+	return &Workspace{RemoteRepository(remoteRepository), pathPrefix, storage, fs, tempFS}, nil
 }
 
 // Create a new workspace. Workspaces can be nested, i.e. a workspace can be inside another workspace.
-func NewWorkspace(fs lib.FS, tempFS lib.FS, remoteRepository RemoteRepository) (*Workspace, error) {
+func NewWorkspace(
+	fs lib.FS,
+	tempFS lib.FS,
+	remoteRepository RemoteRepository,
+	pathPrefix lib.Path,
+) (*Workspace, error) {
 	toml := lib.Toml{
 		"remote": {
 			"repository": string(remoteRepository),
 		},
+	}
+	if pathPrefix.Len() > 0 {
+		toml["remote"]["path-prefix"] = pathPrefix.String() + "/"
 	}
 	headerComment := strings.Trim(`
 DO NOT DELETE OR CHANGE THIS FILE.
@@ -63,7 +79,7 @@ This file contains the configuration of your cling workspace.
 	if err := lib.WriteRef(storage, "head", lib.RevisionId{}); err != nil {
 		return nil, lib.WrapErrorf(err, "failed to write workspace head reference")
 	}
-	return &Workspace{remoteRepository, storage, fs, tempFS}, nil
+	return &Workspace{remoteRepository, pathPrefix, storage, fs, tempFS}, nil
 }
 
 // Remove `w.TempFS`.
@@ -166,4 +182,17 @@ func (w *Workspace) DeleteRepositoryKeys() error {
 		return lib.WrapErrorf(err, "failed to delete local repository keys")
 	}
 	return nil
+}
+
+func ValidatePathPrefix(pathPrefix string) (lib.Path, error) {
+	if pathPrefix == "" {
+		return lib.Path{}, nil
+	}
+	if strings.HasPrefix(pathPrefix, "/") {
+		return lib.Path{}, lib.Errorf("invalid path prefix %q, must not start with `/`", pathPrefix)
+	}
+	if !strings.HasSuffix(pathPrefix, "/") {
+		return lib.Path{}, lib.Errorf("invalid path prefix %q, must end with `/`", pathPrefix)
+	}
+	return lib.NewPath(pathPrefix[:len(pathPrefix)-1]) //nolint:wrapcheck
 }

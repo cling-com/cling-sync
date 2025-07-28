@@ -18,9 +18,20 @@ type WorkspaceTestData struct{}
 
 func (wstd WorkspaceTestData) NewTestWorkspace(tb testing.TB, repository *lib.Repository) *TestWorkspace {
 	tb.Helper()
+	return wstd.NewTestWorkspaceWithPathPrefix(tb, repository, "")
+}
+
+func (wstd WorkspaceTestData) NewTestWorkspaceWithPathPrefix(
+	tb testing.TB,
+	repository *lib.Repository,
+	pathPrefix string,
+) *TestWorkspace {
+	tb.Helper()
 	assert := lib.NewAssert(tb)
 	fs := td.NewFS(tb)
-	workspace, err := NewWorkspace(fs, td.NewFS(tb), RemoteRepository("test"))
+	prefix, err := ValidatePathPrefix(pathPrefix)
+	assert.NoError(err)
+	workspace, err := NewWorkspace(fs, td.NewFS(tb), RemoteRepository("test"), prefix)
 	assert.NoError(err)
 	return &TestWorkspace{workspace, td.NewTestFS(tb, fs), tb, assert}
 }
@@ -47,6 +58,10 @@ func (wstd WorkspaceTestData) StatusOptions() *StatusOptions {
 
 func (wstd WorkspaceTestData) MergeOptions() *MergeOptions {
 	return &MergeOptions{wstd.StagingMonitor(), wstd.CpMonitor(), wstd.CommitMonitor(), "author", "message"}
+}
+
+func (wstd WorkspaceTestData) LsOptions(revisionId lib.RevisionId) *LsOptions {
+	return &LsOptions{RevisionId: revisionId} //nolint:exhaustruct
 }
 
 type TestCpMonitor struct {

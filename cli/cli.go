@@ -25,10 +25,12 @@ const appName = "cling-sync"
 
 func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
-		Help bool
+		Help       bool
+		PathPrefix string
 	}{}
 	flags := flag.NewFlagSet("attach", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.StringVar(&args.PathPrefix, "path-prefix", "", "Only attach to this path inside the repository")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s attach <repository-uri> <directory>\n\n", appName)
 		fmt.Fprint(os.Stderr, "Attach a local directory to a repository.\n")
@@ -99,10 +101,15 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create temporary directory")
 	}
+	pathPrefix, err := ws.ValidatePathPrefix(args.PathPrefix)
+	if err != nil {
+		return lib.WrapErrorf(err, "invalid path prefix %q", args.PathPrefix)
+	}
 	workspace, err := ws.NewWorkspace(
 		lib.NewRealFS(localPath),
 		lib.NewRealFS(tmpDir),
 		ws.RemoteRepository(repositoryURI),
+		pathPrefix,
 	)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create workspace")
@@ -218,7 +225,12 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create temporary directory")
 	}
-	workspace, err := ws.NewWorkspace(lib.NewRealFS("."), lib.NewRealFS(tmpDir), ws.RemoteRepository(repositoryPath))
+	workspace, err := ws.NewWorkspace(
+		lib.NewRealFS("."),
+		lib.NewRealFS(tmpDir),
+		ws.RemoteRepository(repositoryPath),
+		lib.Path{},
+	)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create workspace")
 	}
@@ -638,7 +650,7 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return err
 	}
-	opts := &ws.LsOptions{RevisionId: revisionId, PathFilter: pathFilter}
+	opts := &ws.LsOptions{RevisionId: revisionId, PathFilter: pathFilter, PathPrefix: workspace.PathPrefix}
 	tmpFS, err := workspace.TempFS.MkSub("ls")
 	if err != nil {
 		return err //nolint:wrapcheck

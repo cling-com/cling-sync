@@ -178,6 +178,86 @@ func TestHappyPath(t *testing.T) {
 	}
 }
 
+func TestPathPrefix(t *testing.T) {
+	sut := NewSut(t)
+	assert := sut.assert
+
+	t.Log("Commit some files outside of the path prefix")
+	{
+		sut.Write("a.txt", "a")
+		sut.Mkdir("dir1")
+		sut.Write("dir1/b.txt", "b")
+		sut.ClingSync("merge", "--no-progress", "--message", "first commit")
+	}
+
+	t.Log("Attach the repository to a new workspace with a path prefix - we should not see any files")
+	{
+		sut.ClingSyncStdin(
+			passphrase,
+			"--passphrase-from-stdin",
+			"attach",
+			"--path-prefix",
+			"look/here/",
+			"../repository",
+			"../workspace2",
+		)
+		t.Chdir("../workspace2")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+		ls := sut.ClingSync("ls")
+		assert.Equal("", ls)
+	}
+
+	t.Log("Merge files from the workspace with a path prefix")
+	{
+		sut.Write("c.txt", "c")
+		sut.Mkdir("dir2")
+		sut.Write("dir2/d.txt", "d")
+		sut.ClingSync("merge", "--no-progress", "--message", "from prefix")
+		assert.Equal(td.Dedent(`
+			c.txt
+			dir2/
+			dir2/d.txt
+		`), td.Column(sut.Ls(), 4))
+	}
+
+	t.Log("Files have been merged to the right directory")
+	{
+		t.Chdir("../workspace")
+		sut.ClingSync("merge", "--no-progress")
+		ls := sut.ClingSync("ls")
+		assert.Equal(td.Dedent(`
+			a.txt
+			dir1/
+			dir1/b.txt
+			look/
+			look/here/
+			look/here/c.txt
+			look/here/dir2/
+			look/here/dir2/d.txt
+		`), td.Column(ls, 4))
+	}
+
+	t.Log("Run `ls` in workspace with path prefix")
+	{
+		t.Chdir("../workspace2")
+		ls := sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction")
+		assert.Equal(td.Dedent(`
+			c.txt
+			dir2/
+			dir2/d.txt
+		`), td.Column(ls, 4))
+	}
+
+	t.Log("Run `status` in workspace with path prefix")
+	{
+		sut.Write("new.txt", "new")
+		status := sut.ClingSync("status", "--no-progress", "--no-summary")
+		assert.Equal(td.Dedent(`
+			A new.txt
+		`), status)
+	}
+}
+
 func TestRepositoryOverHTTP(t *testing.T) {
 	sut := NewSut(t)
 	assert := sut.assert

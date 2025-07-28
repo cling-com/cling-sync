@@ -105,6 +105,40 @@ func TestStatus(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 	})
+
+	t.Run("Workspace with path prefix", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+
+		r := td.NewTestRepository(t, td.NewFS(t))
+		rootW := wstd.NewTestWorkspace(t, r.Repository)
+		// Create a second workspace tied to the same repository.
+		prefixW := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+
+		// Add first commit to the root workspace.
+		rootW.Write("a.txt", "a")
+		rootW.MkdirAll("look/here")
+		rootW.Write("look/here/b.txt", "b")
+		_, err := Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Merge into the prefixed workspace.
+		_, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Run `status` with no changes.
+		status, err := Status(prefixW.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{}, statusFilesString(status))
+
+		// Add a file and run `status`.
+		prefixW.Write("new.txt", "new")
+		status, err = Status(prefixW.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{
+			"A new.txt",
+		}, statusFilesString(status))
+	})
 }
 
 func statusFilesString(files []StatusFile) []string {

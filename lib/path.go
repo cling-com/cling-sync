@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -25,6 +26,9 @@ func NewPath(path string) (Path, error) {
 	if len(path) > 1 && path[1] == ':' && path[2] == '/' {
 		return Path{""}, Errorf("invalid path %q, must not contain volume name", path)
 	}
+	if path != "" && strings.HasSuffix(path, "/") {
+		return Path{""}, Errorf("invalid path %q, must not end with `/`", path)
+	}
 	if path != "" && filepath.Clean(path) != path {
 		return Path{""}, Errorf("invalid path %q, must not contain `.` or `..`", path)
 	}
@@ -40,11 +44,61 @@ func (p Path) Base() Path {
 }
 
 func (p Path) Dir() Path {
-	return Path{filepath.Dir(p.p)}
+	d := filepath.Dir(p.p)
+	if d == "." {
+		return Path{""}
+	}
+	return Path{d}
 }
 
 func (p Path) Len() int {
 	return len(p.p)
+}
+
+func (p Path) AsFilter() PathFilter {
+	if p.p == "" {
+		return nil
+	}
+	f, err := NewPathInclusionFilter([]string{p.String()})
+	if err != nil {
+		panic(fmt.Sprintf("failed to create path filter for %s", p))
+	}
+	return f
+}
+
+func (p Path) IsRelativeTo(base Path) bool {
+	if len(p.p) == len(base.p) {
+		return false
+	}
+	b := base.p
+	if !strings.HasSuffix(b, "/") {
+		b += "/"
+	}
+	return strings.HasPrefix(p.p, b)
+}
+
+// Trim the base path from the beginning of the path.
+// Return the trimmed path and a boolean indicating whether the path was trimmed.
+func (p Path) TrimBase(base Path) (Path, bool) {
+	if len(base.p) == 0 {
+		return p, true
+	}
+	if len(p.p) <= len(base.p) {
+		return p, false
+	}
+	b := base.p
+	if !strings.HasSuffix(b, "/") {
+		b += "/"
+	}
+	result := strings.TrimPrefix(p.p, b)
+	if len(result) == len(p.p) {
+		return p, false
+	}
+	return Path{result}, true
+}
+
+func (p Path) Join(other Path) Path {
+	return Path{filepath.Join(p.p, other.p)}
 }
 
 // A pattern that matches against a file path.

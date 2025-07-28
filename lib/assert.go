@@ -322,3 +322,13 @@ func (a Assert) compare(x, y any, compare func(x, y reflect.Value) bool, msg ...
 		a.tb.Fatalf("%sexpected %v (%T) > %v (%T)", details(msg), x, x, y, y)
 	}
 }
+
+func details(msg []any) string {
+	if len(msg) == 0 {
+		return ""
+	}
+	if len(msg) == 1 {
+		return fmt.Sprintf("%v: ", msg[0])
+	}
+	return fmt.Sprintf(msg[0].(string), msg[1:]...) + ": " //nolint:forcetypeassert
+}

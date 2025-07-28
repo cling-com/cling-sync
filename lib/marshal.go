@@ -15,6 +15,7 @@ import (
 // is really needed.
 type Toml map[string]map[string]string
 
+// Return `value, true` if the key exists, `"", false` otherwise.
 func (t Toml) GetValue(section string, key string) (string, bool) {
 	if kvs, ok := t[section]; ok {
 		if value, ok := kvs[key]; ok {

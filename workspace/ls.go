@@ -81,6 +81,7 @@ func (f *LsFile) Format(format *LsFormat) string {
 type LsOptions struct {
 	RevisionId lib.RevisionId
 	PathFilter lib.PathFilter
+	PathPrefix lib.Path
 }
 
 func Ls(repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, error) {
@@ -99,6 +100,11 @@ func Ls(repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, er
 			}
 			return nil, lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
+		path, ok := re.Path.TrimBase(opts.PathPrefix)
+		if !ok {
+			continue
+		}
+		re.Path = path
 		files = append(files, LsFile{re.Path, re.Metadata})
 	}
 	return files, nil

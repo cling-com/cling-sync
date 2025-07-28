@@ -8,6 +8,21 @@
 
 cling-sync is a _client-side encrypted_, _revisional_ archival storage system.
 
+The main goal is to provide a place where you can put all your data without worrying about
+losing it. Everything you put in once stays there forever.
+
+### Terminology
+
+- **Repository**: The place where all data is stored after it has been encrypted.
+
+- **Workspace**: The place where you can work on your data.
+
+- **Merge**: The process of applying all changes from the repository to the workspace and
+  vice versa.
+
+- **Revision**: A snapshot of the repository at a specific point in time, usually created by
+  a `merge` operation.
+
 ## OS Support
 
 Currently, the main focus is on supporting MacOS and Linux. It should work on Windows, but is not
@@ -32,7 +47,7 @@ See `./cling-sync --help` for more information.
 
 ### Example Workflow
 
-**Initialize a new repository attached to the current directory:**
+#### Initialize a new repository attached to the current directory
 
     cling-sync init /path/to/repository
 
@@ -42,14 +57,23 @@ to this directory.
 
 Examine `/path/to/repository/.cling/repository.txt` to learn how to backup the encryption keys.
 
-**Attach to an existing repository:**
+#### Attach to an existing repository
 
     cling-sync attach /path/to/repository /path/to/local/directory
 
 This will create a new workspace at `/path/to/local/directory` that is connected to the repository
 at `/path/to/repository`.
 
-**Save the encryption keys to the repository:**
+#### Attach to a path inside an existing repository
+
+    cling-sync attach --path-prefix my/path/prefix/ /path/to/repository /path/to/local/directory
+
+This will create a new workspace at `/path/to/local/directory` that is connected to the repository
+at `/path/to/repository` and will only show files that are inside the path prefix `my/path/prefix/`.
+
+All operations with the exception of `cp` will be limited to the path prefix.
+
+#### Save the encryption keys to the repository
 
     cling-sync security save-keys
 
@@ -58,7 +82,7 @@ Make sure that only you have access to this file.
 In the future, we will store the keys in the keyring of the user's OS. This is just a temporary
 solution to ease development and testing.
 
-**Merge the local workspace with the repository:**
+#### Merge the local workspace with the repository
 
     cling-sync merge
 
@@ -66,18 +90,18 @@ This will copy all new or modified files from the repository and delete all file
 the repository's latest revision. After this, changes from the local workspace are committed to the
 repository. If there are conflicts, the user is asked to resolve them.
 
-**Show the status of the workspace**
+#### Show the status of the workspace
 
     cling-sync status
 
-**Show the log of revisions**
+#### Show the log of revisions
 
     cling-sync log 'path/to/somewhere/**/*.txt' --status
 
 Show all revisions that contain a path that matches the pattern and show all paths that were added,
 updated, or deleted.
 
-**Serve the repository over HTTP:**
+#### Serve the repository over HTTP
 
     cling-sync serve --address 127.0.0.1:4242 /path/to/repository
 

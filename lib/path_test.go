@@ -65,6 +65,58 @@ func TestPath(t *testing.T) {
 		_, err = NewPath("a/../b")
 		assert.Error(err, "must not contain `.` or `..`")
 	})
+
+	t.Run("Path must not end with `/`", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		_, err := NewPath("a/b/")
+		assert.Error(err, "must not end with `/`")
+	})
+
+	t.Run("IsRelativeTo", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		assert.Equal(false, Path{"a/b"}.IsRelativeTo(Path{"a/b"}))
+		assert.Equal(true, Path{"a/b/c"}.IsRelativeTo(Path{"a/b"}))
+		assert.Equal(true, Path{"a/b/c"}.IsRelativeTo(Path{"a/b/"}))
+		assert.Equal(false, Path{"a/b/c"}.IsRelativeTo(Path{"a/bc"}))
+		assert.Equal(false, Path{"dir1/dir2/dir3"}.IsRelativeTo(Path{"dir1/dir"}))
+		assert.Equal(true, Path{"dir1/dir2/dir3"}.IsRelativeTo(Path{"dir1/dir2"}))
+	})
+
+	t.Run("TrimBase", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+
+		res, ok := Path{"a/b/c"}.TrimBase(Path{"a/b"})
+		assert.Equal(true, ok)
+		assert.Equal(Path{"c"}, res)
+
+		// If the base does not match, the original path is returned.
+		res, ok = Path{"a/b/c"}.TrimBase(Path{"a/b/d"})
+		assert.Equal(false, ok)
+		assert.Equal(Path{"a/b/c"}, res)
+
+		// Base is treated as a directory not just a string prefix.
+		res, ok = Path{"dir1/dir2/dir3"}.TrimBase(Path{"dir1/dir"})
+		assert.Equal(false, ok)
+		assert.Equal(Path{"dir1/dir2/dir3"}, res)
+
+		// Empty base returns the original path.
+		res, ok = Path{"a/b/c"}.TrimBase(Path{""})
+		assert.Equal(true, ok)
+		assert.Equal(Path{"a/b/c"}, res)
+	})
+
+	t.Run("Dir", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+
+		assert.Equal("a/b", Path{"a/b/c"}.Dir().String())
+		assert.Equal("a", Path{"a/b"}.Dir().String())
+		assert.Equal("", Path{"a"}.Dir().String())
+		assert.Equal("", Path{""}.Dir().String())
+	})
 }
 
 func TestPathPattern(t *testing.T) {

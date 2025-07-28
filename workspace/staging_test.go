@@ -41,7 +41,7 @@ func TestStaging(t *testing.T) {
 		}, r.RevisionInfos(remoteRev1))
 
 		// Create a staging.
-		staging, err := NewStaging(w.Workspace.FS, nil, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)

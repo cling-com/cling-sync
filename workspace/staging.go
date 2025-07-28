@@ -17,6 +17,7 @@ type StagingEntryMonitor interface {
 
 type Staging struct {
 	PathFilter lib.PathFilter
+	pathPrefix lib.Path
 	tempWriter *lib.RevisionTempWriter
 	temp       *lib.RevisionTemp
 	tmpFS      lib.FS
@@ -24,14 +25,17 @@ type Staging struct {
 
 // Build a `Staging` from the `src` directory.
 // `.cling` is always ignored.
+// If `pathPrefix` is not empty, it will be prepended to all paths *after* the
+// `pathFilter` is applied.
 func NewStaging(
 	src lib.FS,
+	pathPrefix lib.Path,
 	pathFilter lib.PathFilter,
 	tmp lib.FS,
 	mon StagingEntryMonitor,
 ) (*Staging, error) {
 	tempWriter := lib.NewRevisionTempWriter(tmp, lib.DefaultRevisionTempChunkSize)
-	staging := &Staging{pathFilter, tempWriter, nil, tmp}
+	staging := &Staging{pathFilter, pathPrefix, tempWriter, nil, tmp}
 	err := src.WalkDir(".", func(path_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -70,11 +74,13 @@ func NewStaging(
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get metadata for %s", path)
 		}
+		oldPath := path
+		path = pathPrefix.Join(path)
 		_, err = staging.add(path, &fileMetadata)
 		if err != nil {
-			return lib.WrapErrorf(err, "failed to add path %s to staging", path)
+			return lib.WrapErrorf(err, "failed to add path %s to staging (as %s)", oldPath, path)
 		}
-		mon.OnEnd(path, false, &fileMetadata)
+		mon.OnEnd(oldPath, false, &fileMetadata)
 		return nil
 	})
 	if err != nil {

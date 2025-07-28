@@ -311,6 +311,164 @@ func TestMerge(t *testing.T) {
 	// })
 }
 
+func TestMergeWithPathPrefix(t *testing.T) {
+	t.Parallel()
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		rootW := wstd.NewTestWorkspace(t, r.Repository)
+		// Create a second workspace tied to the same repository.
+		prefixW := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+
+		// Add first commit	to the workspace that sees the whole repository (rootW).
+		rootW.Write("a.txt", "a")
+		rootW.Mkdir("dir1")
+		rootW.Write("dir1/b.txt", "b")
+		rootW.MkdirAll("look/here")
+		_, err := Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal([]lib.TestFileInfo{
+			{"a.txt", 0o600, 1, "a"},
+			{"dir1", 0o700 | fs.ModeDir, 0, ""},
+			{"dir1/b.txt", 0o600, 1, "b"},
+			{"look", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here", 0o700 | fs.ModeDir, 0, ""},
+		}, r.RevisionSnapshotFileInfos(rootW.Head(), nil))
+
+		// Merging the commit into the prefixed workspace should not create any files.
+		_, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(0, len(prefixW.Ls(".")))
+		assert.Equal(rootW.Head(), prefixW.Head())
+
+		// Adding files to the prefixed workspace.
+		prefixW.Write("c.txt", "c")
+		prefixW.Mkdir("dir2")
+		prefixW.Write("dir2/d.txt", "d")
+		rev, err := Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(rev, prefixW.Head())
+		assert.Equal(rev, r.Head())
+		assert.Equal([]lib.TestFileInfo{
+			{"a.txt", 0o600, 1, "a"},
+			{"dir1", 0o700 | fs.ModeDir, 0, ""},
+			{"dir1/b.txt", 0o600, 1, "b"},
+			{"look", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here/c.txt", 0o600, 1, "c"},
+			{"look/here/dir2", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here/dir2/d.txt", 0o600, 1, "d"},
+		}, r.RevisionSnapshotFileInfos(rev, nil))
+	})
+
+	t.Run("PathPrefix is created if it does not exist", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		// Create a second workspace tied to the same repository.
+		prefixW := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+
+		// Merging the commit into the prefixed workspace should create the path prefix.
+		prefixW.Write("a.txt", "a")
+		rev, err := Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal([]lib.TestFileInfo{
+			{"look", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here/a.txt", 0o600, 1, "a"},
+		}, r.RevisionSnapshotFileInfos(rev, nil))
+	})
+
+	t.Run("Remote and local changes are merged (non-conflicting)", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		rootW := wstd.NewTestWorkspace(t, r.Repository)
+		// Create a second workspace tied to the same repository.
+		prefixW := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+
+		// Add first commit	to the workspace that sees the whole repository (rootW).
+		rootW.Write("a.txt", "a")
+		rootW.MkdirAll("look/here/dir1")
+		rootW.Write("look/here/b.txt", "b")
+		rootW.Write("look/here/dir1/b.txt", "b")
+		rootW.Write("look/here.txt", "here")
+		_, err := Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Merge into the prefixed workspace.
+		rev, err := Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(rev, prefixW.Head())
+		assert.Equal(rev, r.Head())
+		assert.Equal([]lib.TestFileInfo{
+			{"b.txt", 0o600, 1, "b"},
+			{"dir1", 0o700 | fs.ModeDir, 0, ""},
+			{"dir1/b.txt", 0o600, 1, "b"},
+		}, prefixW.Ls("."))
+
+		// Now add changes to the repository.
+		rootW.Write("a.txt", "aa")
+		rootW.Rm("look/here/b.txt")
+		rootW.Write("c.txt", "c")
+		_, err = Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Add changes to the prefixed workspace and merge.
+		prefixW.Write("a.txt", "this is a different file")
+		prefixW.Rm("dir1/b.txt")
+
+		rev, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(rev, prefixW.Head())
+		assert.Equal(rev, r.Head())
+		assert.Equal([]lib.TestFileInfo{
+			{"a.txt", 0o600, 2, "aa"},
+			{"c.txt", 0o600, 1, "c"},
+			{"look", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here.txt", 0o600, 4, "here"},
+			{"look/here", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here/a.txt", 0o600, 24, "this is a different file"},
+			{"look/here/b.txt", 0o600, 1, "b"},
+			{"look/here/dir1", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here/dir1/b.txt", 0o600, 1, "b"},
+		}, r.RevisionSnapshotFileInfos(rev, nil))
+	})
+
+	t.Run("Conflict (modified file)", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		wRoot := wstd.NewTestWorkspace(t, r.Repository)
+		wPrefix := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+
+		// Add first commit to the root workspace.
+		wRoot.Write("look/here/a.txt", "a")
+		_, err := Merge(wRoot.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Add conflicting `a.txt` in the prefixed workspace.
+		wPrefix.Write("a.txt", "aa")
+
+		// Merge first commit into the prefixed workspace.
+		_, err = Merge(wPrefix.Workspace, r.Repository, wstd.MergeOptions())
+		assert.Error(err, "MergeConflictsError")
+
+		conflicts, ok := err.(MergeConflictsError) //nolint:errorlint
+		assert.Equal(true, ok)
+		assert.Equal(1, len(conflicts))
+		assert.Equal("a.txt", conflicts[0].WorkspaceEntry.Path.String())
+		assert.Equal("look/here/a.txt", conflicts[0].RepositoryEntry.Path.String())
+		assert.Equal(lib.RevisionEntryAdd, conflicts[0].WorkspaceEntry.Type)
+		assert.Equal(lib.RevisionEntryAdd, conflicts[0].RepositoryEntry.Type)
+		assert.Equal(int64(2), conflicts[0].WorkspaceEntry.Metadata.Size)
+		assert.Equal(int64(1), conflicts[0].RepositoryEntry.Metadata.Size)
+
+		assert.Equal(true, wPrefix.Head().IsRoot(), "prefixed workspace head should not be forwarded")
+	})
+}
+
 func TestForceCommit(t *testing.T) {
 	t.Parallel()
 	t.Run("Happy path", func(t *testing.T) {
@@ -376,6 +534,53 @@ func TestForceCommit(t *testing.T) {
 		}
 		assert.Equal(expectedState, r.RevisionSnapshotFileInfos(commitRev, nil))
 		assert.Equal(expectedState, w2.Ls("."))
+	})
+
+	t.Run("Workspace with path prefix", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+
+		r := td.NewTestRepository(t, td.NewFS(t))
+		rootW := wstd.NewTestWorkspace(t, r.Repository)
+		// Create a second workspace tied to the same repository.
+		prefixW := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+
+		// Add first commit to the root workspace.
+		rootW.Write("a.txt", "a")
+		rootW.MkdirAll("look/here")
+		rootW.Write("look/here/b.txt", "b")
+		_, err := Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Merge into the prefixed workspace.
+		_, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Add conflicts inside and outside the path prefix.
+		rootW.Write("a.txt", "from root workspace")
+		rootW.Write("look/here/b.txt", "bb")
+		_, err = Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		prefixW.Write("b.txt", "from prefixed workspace")
+
+		// Merge should fail.
+		_, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.Error(err, "MergeConflictsError")
+
+		// But force commit should succeed.
+		commitRev, err := ForceCommit(prefixW.Workspace, r.Repository, &ForceCommitOptions{*wstd.MergeOptions()})
+		assert.NoError(err)
+		assert.Equal(r.Head(), commitRev)
+		assert.Equal(prefixW.Head(), commitRev)
+		assert.Equal([]lib.TestFileInfo{
+			{"a.txt", 0o600, 19, "from root workspace"},
+			{"look", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here/b.txt", 0o600, 23, "from prefixed workspace"},
+		}, r.RevisionSnapshotFileInfos(commitRev, nil))
+		assert.Equal([]lib.TestFileInfo{
+			{"b.txt", 0o600, 23, "from prefixed workspace"},
+		}, prefixW.Ls("."))
 	})
 }
 
