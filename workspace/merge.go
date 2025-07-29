@@ -144,7 +144,7 @@ func ForceCommit(ws *Workspace, repository *lib.Repository, opts *ForceCommitOpt
 	}
 	merger := &Merger{ws, tempFS, repository, make(map[string]fs.FileInfo)}
 	var remoteRevision *lib.RevisionTempCache
-	if ws.PathPrefix.Len() > 0 {
+	if !ws.PathPrefix.IsEmpty() {
 		// If the workspace has a path prefix, we have to build the remote changes
 		// to make sure that the path prefix exists in the repository.
 		curHead, err := repository.Head()
@@ -245,31 +245,13 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 		}
 		mon.OnEnd(entry)
 	}
-	if m.ws.PathPrefix.Len() > 0 {
-		// Make sure the path prefix exists in the repository after the commit.
-		p := m.ws.PathPrefix
-		stat, err := m.ws.FS.Stat(".")
-		if err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat current directory")
-		}
-		md := lib.NewFileMetadataFromFileInfo(stat, lib.Sha256{}, nil)
-		md.ModeAndPerm = 0o700 | lib.ModeDir
-		for p.Len() > 0 {
-			_, found, err := remoteRevision.Get(p, true)
-			if err != nil {
-				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get path %s from remote revision", p)
-			}
-			if !found {
-				entry, err := lib.NewRevisionEntry(p, lib.RevisionEntryAdd, &md)
-				if err != nil {
-					return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create revision entry for path %s", p)
-				}
-				if err := commit.Add(&entry); err != nil {
-					return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add path %s to commit", p)
-				}
-			}
-			p = p.Dir()
-		}
+	// Make sure the path prefix exists in the repository after the commit.
+	if err := commit.EnsureDirExists(m.ws.PathPrefix, remoteRevision); err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(
+			err,
+			"failed to ensure path %s exists in the repository",
+			m.ws.PathPrefix,
+		)
 	}
 	info := &lib.CommitInfo{Author: author, Message: message}
 	revisionId, err := commit.Commit(info)
@@ -707,15 +689,15 @@ func buildLocalChanges(
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create staging tmp dir")
 	}
-	wsRevisionStateDir, err := tempFS.MkSub("snapshot")
+	wsSnapshotTmpDir, err := tempFS.MkSub("snapshot")
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create snapshot tmp dir")
 	}
-	wsRevisionState, err := lib.NewRevisionSnapshot(repository, wsHead, wsRevisionStateDir)
+	wsRevisionSnapshot, err := lib.NewRevisionSnapshot(repository, wsHead, wsSnapshotTmpDir)
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	wsRevisionCache, err = lib.NewRevisionTempCache(&wsRevisionState.RevisionTemp, 10)
+	wsRevisionCache, err = lib.NewRevisionTempCache(wsRevisionSnapshot, 10)
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create revision temp cache")
 	}
@@ -723,15 +705,15 @@ func buildLocalChanges(
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to detect local changes")
 	}
-	stagingState, err := staging.Finalize()
+	finalStaging, err := staging.Finalize()
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
 	}
-	stagingCache, err = lib.NewRevisionTempCache(stagingState, 10)
+	stagingCache, err = lib.NewRevisionTempCache(finalStaging, 10)
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create staging cache")
 	}
-	localChanges, err := staging.MergeWithSnapshot(wsRevisionState)
+	localChanges, err := staging.MergeWithSnapshot(wsRevisionSnapshot)
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to merge staging and workspace snapshot")
 	}
@@ -748,15 +730,15 @@ func buildRemoteChanges(
 	repository *lib.Repository,
 	head lib.RevisionId,
 ) (remoteRevisionCache *lib.RevisionTempCache, err error) {
-	remoteRevisionTmp, err := tempFS.MkSub("repository-snapshot")
+	tmp, err := tempFS.MkSub("repository-snapshot")
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create repository snapshot tmp dir")
 	}
-	remoteRevisionState, err := lib.NewRevisionSnapshot(repository, head, remoteRevisionTmp)
+	remoteRevisionSnapshot, err := lib.NewRevisionSnapshot(repository, head, tmp)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create remote revision snapshot")
 	}
-	remoteRevisionCache, err = lib.NewRevisionTempCache(&remoteRevisionState.RevisionTemp, 10)
+	remoteRevisionCache, err = lib.NewRevisionTempCache(remoteRevisionSnapshot, 10)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create remote revision cache")
 	}

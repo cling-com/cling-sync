@@ -14,8 +14,9 @@ const DefaultRevisionTempChunkSize = 4 * 1024 * 1024
 
 // todo: encrypt the temporary files
 type RevisionTemp struct {
-	fs     FS
-	chunks int
+	RevisionId RevisionId
+	fs         FS
+	chunks     int
 }
 
 func (rt *RevisionTemp) Reader(pathFilter PathFilter) *RevisionTempReader {
@@ -117,6 +118,7 @@ func (rtr *RevisionTempReader) chunkFilename(index int) string {
 }
 
 type RevisionTempWriter struct {
+	RevisionId   RevisionId
 	fs           FS
 	chunk        []*RevisionEntry
 	chunkSize    int
@@ -125,8 +127,13 @@ type RevisionTempWriter struct {
 	fileExt      string
 }
 
-func NewRevisionTempWriter(fs FS, maxChunkSize int) *RevisionTempWriter {
-	return &RevisionTempWriter{fs: fs, maxChunkSize: maxChunkSize, fileExt: "raw"} //nolint:exhaustruct
+func NewRevisionTempWriter(revisionId RevisionId, fs FS, maxChunkSize int) *RevisionTempWriter {
+	return &RevisionTempWriter{ //nolint:exhaustruct
+		RevisionId:   revisionId,
+		fs:           fs,
+		maxChunkSize: maxChunkSize,
+		fileExt:      "raw",
+	}
 }
 
 func (rtw *RevisionTempWriter) Add(re *RevisionEntry) error {
@@ -147,7 +154,7 @@ func (rtw *RevisionTempWriter) Finalize() (*RevisionTemp, error) { //nolint:funl
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
 	// Create a new RevisionTempWriter to store the sorted chunks.
-	sorted := NewRevisionTempWriter(rtw.fs, rtw.maxChunkSize)
+	sorted := NewRevisionTempWriter(rtw.RevisionId, rtw.fs, rtw.maxChunkSize)
 	sorted.fileExt = "sorted"
 	// Open all chunks with a buffered reader.
 	readerFiles := make([]io.ReadCloser, rtw.chunks)
@@ -225,7 +232,7 @@ func (rtw *RevisionTempWriter) Finalize() (*RevisionTemp, error) { //nolint:funl
 			return nil, WrapErrorf(err, "failed to remove chunk file")
 		}
 	}
-	return &RevisionTemp{fs: sorted.fs, chunks: sorted.chunks}, nil
+	return &RevisionTemp{rtw.RevisionId, sorted.fs, sorted.chunks}, nil
 }
 
 func (rtw *RevisionTempWriter) chunkFilename(index int) string {

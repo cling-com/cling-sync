@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestFileMetadata(t *testing.T) {
@@ -227,6 +228,28 @@ func TestFileMetadata(t *testing.T) {
 		actual = *base
 		actual.BirthtimeNSec += 1
 		assert.Equal(true, base.IsEqualRestorableAttributes(&actual))
+	})
+
+	t.Run("NewEmptyDirFileMetadata", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		now := time.Now()
+		actual := NewEmptyDirFileMetadata(now)
+		assert.Equal(FileMetadata{
+			ModeAndPerm: 0o700 | ModeDir,
+			MTimeSec:    now.Unix(),
+			MTimeNSec:   int32(now.Nanosecond()), //nolint:gosec
+			Size:        0,
+			FileHash:    Sha256{},
+			BlockIds:    nil,
+
+			SymlinkTarget: "",
+
+			UID:           UIDUnset,
+			GID:           UIDUnset,
+			BirthtimeSec:  now.Unix(),
+			BirthtimeNSec: int32(now.Nanosecond()), //nolint:gosec
+		}, actual)
 	})
 }
 

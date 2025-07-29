@@ -205,6 +205,25 @@ func NewFileMetadataFromFileInfo(fileInfo fs.FileInfo, fileHash Sha256, blockIds
 	return md
 }
 
+// Create an empty `FileMetadata` that represents a directory created at the given time.
+func NewEmptyDirFileMetadata(mtime time.Time) FileMetadata {
+	return FileMetadata{
+		ModeAndPerm: 0o700 | ModeDir,
+		MTimeSec:    mtime.Unix(),
+		MTimeNSec:   int32(mtime.Nanosecond()), //nolint:gosec
+		Size:        0,
+		FileHash:    Sha256{},
+		BlockIds:    nil,
+
+		SymlinkTarget: "",
+
+		UID:           UIDUnset,
+		GID:           UIDUnset,
+		BirthtimeSec:  mtime.Unix(),
+		BirthtimeNSec: int32(mtime.Nanosecond()), //nolint:gosec
+	}
+}
+
 func (fm *FileMetadata) MTime() time.Time {
 	return time.Unix(fm.MTimeSec, int64(fm.MTimeNSec))
 }

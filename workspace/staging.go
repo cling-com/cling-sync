@@ -34,7 +34,7 @@ func NewStaging(
 	tmp lib.FS,
 	mon StagingEntryMonitor,
 ) (*Staging, error) {
-	tempWriter := lib.NewRevisionTempWriter(tmp, lib.DefaultRevisionTempChunkSize)
+	tempWriter := lib.NewRevisionTempWriter(lib.RevisionId{}, tmp, lib.DefaultRevisionTempChunkSize)
 	staging := &Staging{pathFilter, pathPrefix, tempWriter, nil, tmp}
 	err := src.WalkDir(".", func(path_ string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -103,7 +103,7 @@ func (s *Staging) Finalize() (*lib.RevisionTemp, error) {
 // Merge the staging snapshot with the revision snapshot.
 // The resulting `RevisionTemp` will contain all entries that transition from the
 // revision snapshot to the staging snapshot.
-func (s *Staging) MergeWithSnapshot(snapshot *lib.RevisionSnapshot) (*lib.RevisionTemp, error) { //nolint:funlen
+func (s *Staging) MergeWithSnapshot(snapshot *lib.RevisionTemp) (*lib.RevisionTemp, error) { //nolint:funlen
 	stgTemp, err := s.Finalize()
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
@@ -114,7 +114,7 @@ func (s *Staging) MergeWithSnapshot(snapshot *lib.RevisionSnapshot) (*lib.Revisi
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create commit directory")
 	}
-	finalWriter := lib.NewRevisionTempWriter(final, lib.MaxBlockDataSize)
+	finalWriter := lib.NewRevisionTempWriter(snapshot.RevisionId, final, lib.MaxBlockDataSize)
 	add := func(path lib.Path, typ lib.RevisionEntryType, md *lib.FileMetadata) error {
 		re, err := lib.NewRevisionEntry(path, typ, md)
 		if err != nil {

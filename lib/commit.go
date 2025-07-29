@@ -1,6 +1,8 @@
 package lib
 
 import (
+	"errors"
+	"io"
 	"time"
 )
 
@@ -11,6 +13,7 @@ type Commit struct {
 	repository   *Repository
 	tempWriter   *RevisionTempWriter
 	tmpFS        FS
+	ensureDirs   []RevisionEntry
 }
 
 func NewCommit(repository *Repository, tmpFS FS) (*Commit, error) {
@@ -18,8 +21,8 @@ func NewCommit(repository *Repository, tmpFS FS) (*Commit, error) {
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read head revision")
 	}
-	tempWriter := NewRevisionTempWriter(tmpFS, DefaultRevisionTempChunkSize)
-	return &Commit{head, repository, tempWriter, tmpFS}, nil
+	tempWriter := NewRevisionTempWriter(head, tmpFS, DefaultRevisionTempChunkSize)
+	return &Commit{head, repository, tempWriter, tmpFS, nil}, nil
 }
 
 func (c *Commit) Add(entry *RevisionEntry) error {
@@ -27,6 +30,59 @@ func (c *Commit) Add(entry *RevisionEntry) error {
 		return Errorf("commit is closed")
 	}
 	return c.tempWriter.Add(entry)
+}
+
+// Make sure that the directory `path` exists in the current head of the repository.
+// If some parent directory does not exist, it will be created with the given
+// `NewEmptyDirFileMetadata` metadata.
+func (c *Commit) EnsureDirExists(path Path, snapshotCache *RevisionTempCache) error {
+	if path.IsEmpty() {
+		return nil
+	}
+	if c.BaseRevision != snapshotCache.Source.RevisionId {
+		return Errorf(
+			"the commit commit's base revision %s does not match the snapshot revision %s",
+			c.BaseRevision,
+			snapshotCache.Source.RevisionId,
+		)
+	}
+	md := NewEmptyDirFileMetadata(time.Now())
+	p := path
+	for !p.IsEmpty() {
+		// Check whether we already have the directory.
+		for _, entry := range c.ensureDirs {
+			if entry.Path == p {
+				return nil
+			}
+		}
+		// Check whether it is a file.
+		existing, found, err := snapshotCache.Get(p, false)
+		if err != nil {
+			return WrapErrorf(err, "failed to get path %s from remote revision", p)
+		}
+		if found && !existing.Metadata.ModeAndPerm.IsDir() {
+			return Errorf(
+				"cannot ensure directory %s exists, because %s already exists and is not a directory",
+				path,
+				p,
+			)
+		}
+		// Check whether the directory already exists.
+		_, found, err = snapshotCache.Get(p, true)
+		if err != nil {
+			return WrapErrorf(err, "failed to get path %s from remote revision", p)
+		}
+		if found {
+			break
+		}
+		entry, err := NewRevisionEntry(p, RevisionEntryAdd, &md)
+		if err != nil {
+			return WrapErrorf(err, "failed to create revision entry for path %s", p)
+		}
+		c.ensureDirs = append(c.ensureDirs, entry)
+		p = p.Dir()
+	}
+	return nil
 }
 
 type CommitInfo struct {
@@ -40,6 +96,13 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	sorted, err := c.tempWriter.Finalize()
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to finalize temp writer")
+	}
+	if c.ensureDirs != nil {
+		defer sorted.Remove() //nolint:errcheck
+		sorted, err = c.appendEnsureDirs(sorted)
+		if err != nil {
+			return RevisionId{}, WrapErrorf(err, "failed to append ensured dirs")
+		}
 	}
 	defer sorted.Remove() //nolint:errcheck
 	if sorted.Chunks() == 0 {
@@ -72,4 +135,48 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 		return RevisionId{}, WrapErrorf(err, "failed to write revision")
 	}
 	return revisionId, nil
+}
+
+func (c *Commit) appendEnsureDirs(sorted *RevisionTemp) (*RevisionTemp, error) {
+	// We have to rewrite the whole commit because we have to check whether
+	// the directories we want to add already exist.
+	tmpFS, err := c.tmpFS.MkSub("ensuredirs")
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to create temporary directory")
+	}
+	tempWriter := NewRevisionTempWriter(sorted.RevisionId, tmpFS, DefaultRevisionTempChunkSize)
+	cache, err := NewRevisionTempCache(sorted, 10)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to create revision temp cache")
+	}
+	for _, entry := range c.ensureDirs {
+		_, found, err := cache.Get(entry.Path, true)
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to get path %s from remote revision", entry.Path)
+		}
+		if found {
+			continue
+		}
+		if err := tempWriter.Add(&entry); err != nil {
+			return nil, WrapErrorf(err, "failed to add path %s to commit", entry.Path)
+		}
+	}
+	r := sorted.Reader(nil)
+	for {
+		entry, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to read revision snapshot")
+		}
+		if err := tempWriter.Add(entry); err != nil {
+			return nil, WrapErrorf(err, "failed to add path %s to commit", entry.Path)
+		}
+	}
+	sorted, err = tempWriter.Finalize()
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to finalize temp writer")
+	}
+	return sorted, nil
 }

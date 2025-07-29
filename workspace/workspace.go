@@ -58,7 +58,7 @@ func NewWorkspace(
 			"repository": string(remoteRepository),
 		},
 	}
-	if pathPrefix.Len() > 0 {
+	if !pathPrefix.IsEmpty() {
 		toml["remote"]["path-prefix"] = pathPrefix.String() + "/"
 	}
 	headerComment := strings.Trim(`

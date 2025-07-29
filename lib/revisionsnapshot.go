@@ -10,15 +10,10 @@ import (
 	"slices"
 )
 
-type RevisionSnapshot struct {
-	RevisionTemp
-	RevisionId RevisionId
-}
-
-func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpFS FS) (*RevisionSnapshot, error) {
+func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS) (*RevisionTemp, error) {
 	// Build a list of all revisions.
 	revisions := make([]*Revision, 0)
-	r := revision
+	r := revisionId
 	for !r.IsRoot() {
 		revision, err := repository.ReadRevision(r)
 		if err != nil {
@@ -27,7 +22,7 @@ func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpFS FS) 
 		revisions = append(revisions, &revision)
 		r = revision.Parent
 	}
-	tempWriter := NewRevisionTempWriter(tmpFS, DefaultRevisionTempChunkSize)
+	tempWriter := NewRevisionTempWriter(revisionId, tmpFS, DefaultRevisionTempChunkSize)
 	if err := revisionNWayMerge(repository, revisions, tempWriter); err != nil {
 		return nil, WrapErrorf(err, "failed to revision n-way merge revisions")
 	}
@@ -37,7 +32,7 @@ func NewRevisionSnapshot(repository *Repository, revision RevisionId, tmpFS FS) 
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to finalize temporary file")
 	}
-	return &RevisionSnapshot{*temp, revision}, nil
+	return temp, nil
 }
 
 func revisionNWayMerge(

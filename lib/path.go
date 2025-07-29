@@ -55,6 +55,10 @@ func (p Path) Len() int {
 	return len(p.p)
 }
 
+func (p Path) IsEmpty() bool {
+	return p.p == ""
+}
+
 func (p Path) AsFilter() PathFilter {
 	if p.p == "" {
 		return nil
