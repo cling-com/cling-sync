@@ -75,19 +75,36 @@ run_project_cmd() {
 }
 
 build_tools() {
+    local expected_version="2.1.2"
+    
+    # Check if tools/golangci-lint exists and has the correct version.
     if [ -f tools/golangci-lint ]; then
-        return
+        local current_version=$(tools/golangci-lint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+        if [ "$current_version" = "$expected_version" ]; then
+            return
+        fi
     fi
-    echo ">>> Building golangci-lint"
-    local tmp_dir=$(mktemp -d)
-    cp tools/golangci-lint-*.tar.gz "$tmp_dir"
-    cd "$tmp_dir"
-    tar xzf golangci-lint-*.tar.gz
-    rm golangci-lint-*.tar.gz
-    cd golangci-lint-*
-    go build -o "$root/tools/golangci-lint" ./cmd/golangci-lint
-    cd "$root"
-    rm -rf "$tmp_dir"
+
+    echo ">>> Downloading golangci-lint v$expected_version"
+    local os arch
+    case "$(uname -s)" in
+        Darwin) os="darwin" ;;
+        Linux) os="linux" ;;
+        *) echo "Unsupported OS: $(uname -s)"; exit 1 ;;
+    esac
+    
+    case "$(uname -m)" in
+        x86_64) arch="amd64" ;;
+        arm64|aarch64) arch="arm64" ;;
+        *) echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
+    esac
+    
+    local filename="golangci-lint-${expected_version}-${os}-${arch}.tar.gz"
+    local url="https://github.com/golangci/golangci-lint/releases/download/v${expected_version}/${filename}"
+    
+    # Download and extract directly to tools/golangci-lint.
+    curl -SsL "$url" | tar xzO --wildcards '*/golangci-lint' > "$root/tools/golangci-lint"
+    chmod +x "$root/tools/golangci-lint"
 }
 
 cmd=$1
