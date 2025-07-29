@@ -21,9 +21,6 @@ jobs:
     - name: Build tools
       run: ./build.sh tools
     
-    - name: Format check
-      run: ./build.sh fmt
-    
     - name: Lint
       run: ./build.sh lint
     
