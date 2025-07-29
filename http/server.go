@@ -11,6 +11,7 @@ import (
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
+	size       int
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
@@ -22,7 +23,9 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	if rw.statusCode == 0 {
 		rw.statusCode = http.StatusOK // Default to 200 if WriteHeader wasn't called
 	}
-	return rw.ResponseWriter.Write(b) //nolint:wrapcheck
+	n, err := rw.ResponseWriter.Write(b)
+	rw.size += n
+	return n, err //nolint:wrapcheck
 }
 
 func RequestLogMiddleware(handler http.Handler) http.Handler {
@@ -30,7 +33,7 @@ func RequestLogMiddleware(handler http.Handler) http.Handler {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})) //nolint:exhaustruct
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t0 := time.Now()
-		wrapped := &responseWriter{w, 0}
+		wrapped := &responseWriter{w, 0, 0}
 		handler.ServeHTTP(wrapped, r)
 		log.Debug(
 			"HTTP request",
@@ -44,6 +47,10 @@ func RequestLogMiddleware(handler http.Handler) http.Handler {
 			r.RemoteAddr,
 			"duration",
 			time.Since(t0),
+			"request_size",
+			r.ContentLength,
+			"response_size",
+			wrapped.size,
 		)
 	})
 }
