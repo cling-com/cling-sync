@@ -8,14 +8,34 @@ import (
 	"time"
 )
 
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if rw.statusCode == 0 {
+		rw.statusCode = http.StatusOK // Default to 200 if WriteHeader wasn't called
+	}
+	return rw.ResponseWriter.Write(b) //nolint:wrapcheck
+}
+
 func RequestLogMiddleware(handler http.Handler) http.Handler {
 	// todo: Make the log format and level configurable
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})) //nolint:exhaustruct
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t0 := time.Now()
-		handler.ServeHTTP(w, r)
+		wrapped := &responseWriter{w, 0}
+		handler.ServeHTTP(wrapped, r)
 		log.Debug(
 			"HTTP request",
+			"status",
+			wrapped.statusCode,
 			"method",
 			r.Method,
 			"path",
