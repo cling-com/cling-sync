@@ -258,6 +258,95 @@ func TestPathPrefix(t *testing.T) {
 	}
 }
 
+func TestClingIgnoreAndGitIgnore(t *testing.T) {
+	sut := NewSut(t)
+	assert := sut.assert
+
+	t.Log("Merge empty repository and workspace (merge)")
+	{
+		sut.ClingSync("merge", "--no-progress")
+		assert.Equal("No revisions", head(sut.ClingSync("log", "--short")), "There should be no revision")
+	}
+
+	t.Log("Add some files including .clingignore and .gitignore files and merge (log, merge, status)")
+	{
+		sut.Write(".clingignore", "*.png")
+		sut.Write("a.txt", "a")
+		sut.Write("b.png", "b")
+		sut.Mkdir("dir1")
+		sut.Write("dir1/.gitignore", "dir2\n*.txt")
+		sut.Write("dir1/a.txt", "a")
+		sut.Write("dir1/b.png", "b")
+		sut.Write("dir1/c.md", "c")
+		sut.Mkdir("dir1/dir2")
+		sut.Write("dir1/dir2/a.md", "a")
+		sut.Mkdir("dir1/dir3")
+		sut.Write("dir1/dir3/a.txt", "a")
+		sut.Write("dir1/dir3/b.png", "b")
+		sut.Write("dir1/dir3/c.md", "c")
+		sut.ClingSync("merge", "--no-progress", "--message", "first commit")
+
+		log := sut.ClingSync("log", "--short")
+		assert.NotEqual("No revisions", log)
+		assert.Equal(1, td.Wc("-l", log), "A revision should have been created")
+		assert.Equal("No changes", sut.ClingSync("status"), "There should be no local changes")
+	}
+
+	t.Log("List files in repository (ls)")
+	{
+		ls := sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction")
+		assert.Equal(td.Dedent(`
+			.clingignore
+			a.txt
+			dir1/
+			dir1/.gitignore
+			dir1/c.md
+			dir1/dir3/
+			dir1/dir3/c.md
+		`), td.Column(ls, 4))
+	}
+
+	t.Log("Ignoring `dir3` should remove `dir3` from the new revision")
+	{
+		sut.Write(".clingignore", "*png\ndir1/dir3")
+		sut.Write("dir1/dir3/e.md", "e")
+		sut.ClingSync("merge", "--no-progress", "--message", "ignore dir3")
+		log := sut.ClingSync("log", "--short")
+		assert.Equal(2, td.Wc("-l", log), "A revision should have been created")
+
+		ls := sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction")
+		assert.Equal(td.Dedent(`
+			.clingignore
+			a.txt
+			dir1/
+			dir1/.gitignore
+			dir1/c.md
+		`), td.Column(ls, 4))
+	}
+
+	t.Log("All ignored files should still be present in the workspace")
+	{
+		sut.Ls()
+		assert.Equal(td.Dedent(`
+			.clingignore
+			a.txt
+			b.png
+			dir1/
+			dir1/.gitignore
+			dir1/a.txt
+			dir1/b.png
+			dir1/c.md
+			dir1/dir2/
+			dir1/dir2/a.md
+			dir1/dir3/
+			dir1/dir3/a.txt
+			dir1/dir3/b.png
+			dir1/dir3/c.md
+			dir1/dir3/e.md
+		`), td.Column(sut.Ls(), 4))
+	}
+}
+
 func TestRepositoryOverHTTP(t *testing.T) {
 	sut := NewSut(t)
 	assert := sut.assert

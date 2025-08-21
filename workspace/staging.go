@@ -36,7 +36,7 @@ func NewStaging(
 ) (*Staging, error) {
 	tempWriter := lib.NewRevisionTempWriter(lib.RevisionId{}, tmp, lib.DefaultRevisionTempChunkSize)
 	staging := &Staging{pathFilter, pathPrefix, tempWriter, nil, tmp}
-	err := src.WalkDir(".", func(path_ string, d fs.DirEntry, err error) error {
+	err := lib.WalkDirIgnore(src, ".", func(path_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

@@ -470,7 +470,7 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 	localChanges *lib.RevisionTempCache,
 ) error {
 	deleteDirs := make(map[string]bool)
-	err := m.ws.FS.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+	err := lib.WalkDirIgnore(m.ws.FS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to walk directory %s", path)
 		}

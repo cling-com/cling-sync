@@ -107,6 +107,38 @@ func TestLs(t *testing.T) {
 			{"b2.txt", 0o600, 2},
 		}, lsFiles(ls))
 	})
+
+	t.Run(".clingignore does not affect existing revisions", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		// Add a commit.
+		w.Write("a.txt", "a")
+		w.Write("b.txt", "b")
+		w.Write("c.md", "c")
+		rev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		ls, err := Ls(r.Repository, td.NewFS(t), &LsOptions{rev1, nil, lib.Path{}})
+		assert.NoError(err)
+		assert.Equal([]lsFileInfo{
+			{"a.txt", 0o600, 1},
+			{"b.txt", 0o600, 1},
+			{"c.md", 0o600, 1},
+		}, lsFiles(ls))
+
+		// Adding a .clingignore file should not affect existing revisions.
+		w.Write(".clingignore", "*.md")
+		ls, err = Ls(r.Repository, td.NewFS(t), &LsOptions{rev1, nil, lib.Path{}})
+		assert.NoError(err)
+		assert.Equal([]lsFileInfo{
+			{"a.txt", 0o600, 1},
+			{"b.txt", 0o600, 1},
+			{"c.md", 0o600, 1},
+		}, lsFiles(ls))
+	})
 }
 
 type lsFileInfo struct {

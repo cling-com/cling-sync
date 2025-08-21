@@ -111,6 +111,11 @@ This will start a HTTP server on port `4242` that serves the repository at `/pat
 
 This will attach the repository at `127.0.0.1:4242` to the workspace at `/path/to/workspace`.
 
+### Ignore files
+
+cling-sync respects `.gitignore` and `.clingignore` files. The syntax is the same as for 
+(git)[https://git-scm.com/docs/gitignore].
+
 ## Wasm Support
 
 Wasm support is a main focus of this project.

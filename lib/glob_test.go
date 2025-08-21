@@ -640,6 +640,11 @@ func TestWalkDirIgnore(t *testing.T) {
 			"lib/extra/lib/more/lib/extra/README.md",
 			"library/README.md")
 	})
+
+	t.Run("Exclude all and selectively include directories", func(t *testing.T) {
+		g.ignore(".gitignore", "/*", "!library")
+		g.walkDirIgnore("", "library/README.md", "library/info.go")
+	})
 }
 
 func TestGitWalkDirIgnore(t *testing.T) {
