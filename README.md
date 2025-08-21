@@ -113,8 +113,15 @@ This will attach the repository at `127.0.0.1:4242` to the workspace at `/path/t
 
 ### Ignore files
 
-cling-sync respects `.gitignore` and `.clingignore` files. The syntax is the same as for 
-(git)[https://git-scm.com/docs/gitignore].
+cling-sync respects `.gitignore` and `.clingignore` files. The syntax is the same as for
+[git](https://git-scm.com/docs/gitignore).
+
+> [!NOTE]
+> There is one difference between how Git and cling-sync handle ignore files. If you add
+> a pattern or path to a `.clingignore` or `.gitignore` file and merge it into the repository,
+> all matching files will be removed from the current revision.
+> **No files will be removed from the workspace.**
+> And as always, older revisions will still contain the files.
 
 ## Wasm Support
 
