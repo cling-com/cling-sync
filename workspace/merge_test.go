@@ -71,6 +71,10 @@ func TestMerge(t *testing.T) {
 			{"b/c.txt", 0o400, 2, "cc"},
 			{"b/d.txt", 0o600, 1, "d"},
 		}, w2.Ls("."))
+
+		// Merging again should not do anything.
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.ErrorIs(err, ErrUpToDate)
 	})
 
 	t.Run("Local non-conflicting changes (add, update, remove) are committed", func(t *testing.T) {
@@ -360,6 +364,16 @@ func TestMergeWithPathPrefix(t *testing.T) {
 			{"look/here/dir2", 0o700 | fs.ModeDir, 0, ""},
 			{"look/here/dir2/d.txt", 0o600, 1, "d"},
 		}, r.RevisionSnapshotFileInfos(rev, nil))
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"look/here/c.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("c")},
+			{"look/here/dir2", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, td.SHA256("")},
+			{"look/here/dir2/d.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("d")},
+		}, r.RevisionInfos(rev))
+
+		// Merging again should not do anything.
+		_, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.ErrorIs(err, ErrUpToDate)
+		assert.Equal(rev, prefixW.Head())
 	})
 
 	t.Run("PathPrefix is created if it does not exist", func(t *testing.T) {
@@ -430,9 +444,7 @@ func TestMergeWithPathPrefix(t *testing.T) {
 			{"look/here.txt", 0o600, 4, "here"},
 			{"look/here", 0o700 | fs.ModeDir, 0, ""},
 			{"look/here/a.txt", 0o600, 24, "this is a different file"},
-			{"look/here/b.txt", 0o600, 1, "b"},
 			{"look/here/dir1", 0o700 | fs.ModeDir, 0, ""},
-			{"look/here/dir1/b.txt", 0o600, 1, "b"},
 		}, r.RevisionSnapshotFileInfos(rev, nil))
 	})
 

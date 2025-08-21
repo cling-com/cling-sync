@@ -218,6 +218,10 @@ func TestPathPrefix(t *testing.T) {
 			dir2/
 			dir2/d.txt
 		`), td.Column(sut.Ls(), 4))
+		log := sut.ClingSync("log", "--short")
+		// Merging again should not do anything.
+		sut.ClingSync("merge", "--no-progress")
+		assert.Equal(log, sut.ClingSync("log", "--short"))
 	}
 
 	t.Log("Files have been merged to the right directory")

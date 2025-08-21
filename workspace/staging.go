@@ -108,7 +108,16 @@ func (s *Staging) MergeWithSnapshot(snapshot *lib.RevisionTemp) (*lib.RevisionTe
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
 	}
-	revReader := snapshot.Reader(s.PathFilter)
+	revFilter := s.PathFilter
+	if !s.pathPrefix.IsEmpty() {
+		include := s.pathPrefix.AsFilter()
+		if revFilter != nil {
+			revFilter = &lib.AllPathFilter{Filters: []lib.PathFilter{revFilter, include}}
+		} else {
+			revFilter = include
+		}
+	}
+	revReader := snapshot.Reader(revFilter)
 	stgReader := stgTemp.Reader(s.PathFilter)
 	final, err := s.tmpFS.MkSub("final")
 	if err != nil {

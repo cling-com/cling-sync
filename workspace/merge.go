@@ -214,8 +214,7 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		localPath := entry.Path
-		entry.Path = m.ws.PathPrefix.Join(entry.Path)
+		localPath, _ := entry.Path.TrimBase(m.ws.PathPrefix)
 		mon.OnStart(entry)
 		if entry.Type == lib.RevisionEntryDelete {
 			if err := commit.Add(entry); err != nil {
@@ -276,16 +275,16 @@ func (m *Merger) findConflicts(
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		remotePath := m.ws.PathPrefix.Join(localChange.Path)
+		path := localChange.Path
 		remoteChange, remoteChangeExists, err := remoteRevisionCache.Get(
-			remotePath,
+			path,
 			localChange.Metadata.ModeAndPerm.IsDir(),
 		)
 		if err != nil {
 			return nil, lib.WrapErrorf(
 				err,
 				"failed to get entry from repository snapshot cache for %s",
-				remotePath,
+				path,
 			)
 		}
 		if remoteChangeExists {
@@ -295,21 +294,19 @@ func (m *Merger) findConflicts(
 				//       We overwrite the attributes of the directory. Contained files are not affected.
 				continue
 			}
-			wsChange, wsChangeExists, err := wsRevisionCache.Get(
-				localChange.Path,
-				localChange.Metadata.ModeAndPerm.IsDir(),
-			)
+			wsChange, wsChangeExists, err := wsRevisionCache.Get(path, localChange.Metadata.ModeAndPerm.IsDir())
 			if err != nil {
 				return nil, lib.WrapErrorf(
 					err,
 					"failed to get entry from workspace snapshot cache for %s",
-					localChange.Path,
+					path,
 				)
 			}
 			if wsChangeExists && wsChange.Metadata.IsEqualRestorableAttributes(remoteChange.Metadata) {
 				// The file did not change between the workspace revision and the repository revision.
 				continue
 			}
+			localChange.Path, _ = localChange.Path.TrimBase(m.ws.PathPrefix)
 			conflicts = append(conflicts, MergeConflict{localChange, remoteChange})
 		}
 	}
@@ -416,11 +413,11 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		}
 		md := entry.Metadata
 		isDir := md.ModeAndPerm.IsDir()
-		stagingEntry, existsInStaging, err := staging.Get(localPath, isDir)
+		stagingEntry, existsInStaging, err := staging.Get(entry.Path, isDir)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}
-		_, isLocalChange, err := localChanges.Get(localPath, isDir)
+		_, isLocalChange, err := localChanges.Get(entry.Path, isDir)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}
@@ -488,16 +485,16 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 			// todo: handle symlinks
 			return nil
 		}
-		localPath, err := lib.NewPath(path)
+		repositoryPath_, err := lib.NewPath(path)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to create path from %s", path)
 		}
-		repositoryPath := m.ws.PathPrefix.Join(localPath)
-		stagingEntry, existsInStaging, err := staging.Get(localPath, d.IsDir())
+		repositoryPath := m.ws.PathPrefix.Join(repositoryPath_)
+		stagingEntry, existsInStaging, err := staging.Get(repositoryPath, d.IsDir())
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from staging cache for %s", path)
 		}
-		_, existsInLocalChanges, err := localChanges.Get(localPath, d.IsDir())
+		_, existsInLocalChanges, err := localChanges.Get(repositoryPath, d.IsDir())
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from local changes cache for %s", path)
 		}
@@ -701,7 +698,7 @@ func buildLocalChanges(
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create revision temp cache")
 	}
-	staging, err := NewStaging(ws.FS, lib.Path{}, nil, stagingTmpDir, mon)
+	staging, err := NewStaging(ws.FS, ws.PathPrefix, nil, stagingTmpDir, mon)
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to detect local changes")
 	}

@@ -63,7 +63,7 @@ func (p Path) AsFilter() PathFilter {
 	if p.p == "" {
 		return nil
 	}
-	f, err := NewPathInclusionFilter([]string{p.String()})
+	f, err := NewPathInclusionFilter([]string{p.String() + "/**"})
 	if err != nil {
 		panic(fmt.Sprintf("failed to create path filter for %s", p))
 	}
