@@ -535,6 +535,16 @@ func TestGitGlobMatch(t *testing.T) {
 	t.Setenv("GLOB_TEST_IMPL", "")
 }
 
+func TestGlobIgnorePatterns(t *testing.T) {
+	assert := NewAssert(t)
+	patterns := ExtendedGlobPatterns{
+		NewExtendedGlobPattern("*.md", ""),
+		NewExtendedGlobPattern("!README.md", ""),
+	}
+	assert.Equal(false, patterns.Match("README.md", false))
+	assert.Equal(true, patterns.Match("TODO.md", false))
+}
+
 func TestWalkDirIgnore(t *testing.T) {
 	var g globTester
 	dir := t.TempDir()

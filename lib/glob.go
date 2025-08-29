@@ -369,7 +369,7 @@ func GlobMatch(pattern GlobPattern, text []byte, isDir bool) bool { //nolint:fun
 	}
 }
 
-type GlobIgnorePattern struct {
+type ExtendedGlobPattern struct {
 	GlobPattern
 	// If a negation pattern is detected by the "!" prefix, this is set to true
 	// AND the leading "!" is removed from the pattern.
@@ -377,15 +377,28 @@ type GlobIgnorePattern struct {
 	BaseDir  string
 }
 
+func NewExtendedGlobPattern(pattern string, baseDir string) ExtendedGlobPattern {
+	if pattern == "" {
+		return ExtendedGlobPattern{GlobPattern: GlobPattern{}, IsNegate: false, BaseDir: baseDir}
+	}
+	isNegate := pattern[0] == '!'
+	if isNegate {
+		pattern = pattern[1:]
+	}
+	return ExtendedGlobPattern{PrepareGlobPattern(pattern), isNegate, baseDir}
+}
+
+type ExtendedGlobPatterns []ExtendedGlobPattern
+
 // Parse a `.gitignore` or `.clingignore` file.
-func ParseGlobIgnoreFile(dir string, patterns []string) []GlobIgnorePattern {
+func ParseGlobIgnoreFile(dir string, patterns []string) ExtendedGlobPatterns {
 	if dir == "." {
 		dir = ""
 	}
 	if dir != "" && !strings.HasSuffix(dir, "/") {
 		dir += "/"
 	}
-	ignorePatterns := []GlobIgnorePattern{}
+	ignorePatterns := []ExtendedGlobPattern{}
 	for _, pattern := range patterns {
 		if len(strings.TrimSpace(pattern)) == 0 {
 			continue
@@ -393,23 +406,34 @@ func ParseGlobIgnoreFile(dir string, patterns []string) []GlobIgnorePattern {
 		if pattern[0] == '#' {
 			continue
 		}
-		isNegate := pattern[0] == '!'
-		if isNegate {
-			pattern = pattern[1:]
-		}
-		ignorePatterns = append(ignorePatterns, GlobIgnorePattern{PrepareGlobPattern(pattern), isNegate, dir})
+		ignorePatterns = append(ignorePatterns, NewExtendedGlobPattern(pattern, dir))
 	}
 	return ignorePatterns
 }
 
-// Only match the pattern. You need to interpret `i.IsNegate` afterwards.
-func (i GlobIgnorePattern) Match(path string, isDir bool) bool {
-	return GlobMatch(i.GlobPattern, []byte(path), isDir)
+func (i ExtendedGlobPatterns) Match(path string, isDir bool) bool {
+	matched := false
+	for _, pattern := range i {
+		if !strings.HasPrefix(path, pattern.BaseDir) {
+			continue
+		}
+		relPath, err := filepath.Rel(pattern.BaseDir, path)
+		if err != nil {
+			continue
+		}
+		if relPath == "." {
+			continue
+		}
+		if GlobMatch(pattern.GlobPattern, []byte(relPath), isDir) {
+			matched = !pattern.IsNegate
+		}
+	}
+	return matched
 }
 
 // Same as `fs.WalkDir`, but will respect all `.gitignore` and `.clingignore` files along the way.
 func WalkDirIgnore(fs FS, dir string, f iofs.WalkDirFunc) error {
-	ignorePatterns := []GlobIgnorePattern{}
+	ignorePatterns := ExtendedGlobPatterns{}
 	return fs.WalkDir(dir, func(path string, d iofs.DirEntry, err error) error { //nolint:wrapcheck
 		if err != nil {
 			return err
@@ -429,22 +453,7 @@ func WalkDirIgnore(fs FS, dir string, f iofs.WalkDirFunc) error {
 				}
 			}
 		}
-		ignored := false
-		for _, ignorePattern := range ignorePatterns {
-			if !strings.HasPrefix(path, ignorePattern.BaseDir) {
-				continue
-			}
-			relPath, err := filepath.Rel(ignorePattern.BaseDir, path)
-			if err != nil {
-				continue
-			}
-			if relPath == "." {
-				continue
-			}
-			if ignorePattern.Match(relPath, d.IsDir()) {
-				ignored = !ignorePattern.IsNegate
-			}
-		}
+		ignored := ignorePatterns.Match(path, d.IsDir())
 		if ignored {
 			if d.IsDir() {
 				// No need to recurse. If a directory is ignored, none
