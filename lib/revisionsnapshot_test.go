@@ -136,8 +136,7 @@ func TestRevisionSnapshot(t *testing.T) {
 		)
 		assert.NoError(err)
 		assert.NoError(err)
-		filter, err := NewPathExclusionFilter([]string{"a/b"}, []string{})
-		assert.NoError(err)
+		filter := NewPathExclusionFilter([]string{"a/b"})
 		snapshot := readRevisionSnapshot(t, r.Repository, revId1, filter)
 		assert.Equal([]*RevisionEntry{
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),

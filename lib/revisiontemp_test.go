@@ -201,11 +201,10 @@ func TestRevisionTemp(t *testing.T) {
 			assert.NoError(err)
 		}
 
-		filtered, err := NewPathExclusionFilter([]string{"**/a.txt"}, []string{})
-		assert.NoError(err)
+		filter := NewPathExclusionFilter([]string{"**/a.txt"})
 		temp, err := sut.Finalize()
 		assert.NoError(err)
-		merged := readAllRevsisionTemp(t, temp, filtered)
+		merged := readAllRevsisionTemp(t, temp, filter)
 		assert.Equal(1, len(merged))
 		assert.Equal("b.txt", merged[0].Path.String())
 	})
@@ -221,11 +220,10 @@ func TestRevisionTemp(t *testing.T) {
 			assert.NoError(err)
 		}
 
-		filtered, err := NewPathExclusionFilter([]string{"**/*"}, []string{})
-		assert.NoError(err)
+		filter := NewPathExclusionFilter([]string{"**/*"})
 		temp, err := sut.Finalize()
 		assert.NoError(err)
-		merged := readAllRevsisionTemp(t, temp, filtered)
+		merged := readAllRevsisionTemp(t, temp, filter)
 		assert.Equal(0, len(merged))
 	})
 

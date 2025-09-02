@@ -63,7 +63,7 @@ func (rtr *RevisionTempReader) Read() (*RevisionEntry, error) {
 		}
 		re := rtr.current[rtr.currentIndex]
 		rtr.currentIndex++
-		if rtr.pathFilter == nil || rtr.pathFilter.Include(re.Path) {
+		if rtr.pathFilter == nil || rtr.pathFilter.Include(re.Path, re.Metadata.ModeAndPerm.IsDir()) {
 			return re, nil
 		}
 	}
@@ -88,7 +88,7 @@ func (rtr *RevisionTempReader) ReadChunk(i int) ([]*RevisionEntry, error) {
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to unmarshal revision entry from chunk file %d", i)
 		}
-		if rtr.pathFilter != nil && !rtr.pathFilter.Include(re.Path) {
+		if rtr.pathFilter != nil && !rtr.pathFilter.Include(re.Path, re.Metadata.ModeAndPerm.IsDir()) {
 			continue
 		}
 		entries = append(entries, re)

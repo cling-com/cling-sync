@@ -251,8 +251,8 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Verbose      bool
 		NoProgress   bool
 		Overwrite    bool
-		Exclude      []lib.PathPattern
-		Include      []lib.PathPattern
+		Exclude      lib.ExtendedGlobPatterns
+		Include      lib.ExtendedGlobPatterns
 	}{}
 	flags := flag.NewFlagSet("cp", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
@@ -262,17 +262,11 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Overwrite, "overwrite", false, "Overwrite existing files")
-	pathPatternFlag(
+	globPatternFlag(
 		flags,
 		"exclude",
 		"Exclude paths matching the given pattern (can be used multiple times).\nThe pattern syntax is the same as for the <pattern> argument.",
 		&args.Exclude,
-	)
-	pathPatternFlag(
-		flags,
-		"include",
-		"Override --exclude patterns and include paths matching the given pattern (can be used multiple times).\nThe pattern syntax is the same as for the <pattern> argument.",
-		&args.Include,
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s cp <pattern> <target>\n\n", appName)
@@ -281,7 +275,7 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		fmt.Fprint(os.Stderr, "  pattern\n")
 		fmt.Fprint(
 			os.Stderr,
-			"        Repository paths matching the given pattern are copied.\n"+pathPatternDescription("        "),
+			"        Repository paths matching the given pattern are copied.\n"+globPatternDescription("        "),
 		)
 		fmt.Fprint(os.Stderr, "\n  target\n")
 		fmt.Fprint(os.Stderr, "        The target directory where files are copied to.\n")
@@ -306,13 +300,9 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return err
 	}
-	pattern, err := lib.NewPathPattern(flags.Arg(0))
-	if err != nil {
-		return lib.WrapErrorf(err, "invalid pattern: %s", flags.Arg(0))
-	}
 	pathFilter := &lib.AllPathFilter{Filters: []lib.PathFilter{
-		&lib.PathInclusionFilter{Includes: []lib.PathPattern{pattern}},
-		&lib.PathExclusionFilter{Excludes: args.Exclude, Includes: args.Include},
+		lib.NewPathInclusionFilter([]string{flags.Arg(0)}),
+		&lib.PathExclusionFilter{args.Exclude},
 	}}
 	cpOnExists := ws.CpOnExistsAbort
 	if args.Overwrite {
@@ -474,8 +464,7 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Short      bool
 		Verbose    bool
 		NoProgress bool
-		Exclude    []lib.PathPattern
-		Include    []lib.PathPattern
+		Exclude    lib.ExtendedGlobPatterns
 		NoSummary  bool
 	}{}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
@@ -484,17 +473,11 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.NoSummary, "no-summary", false, "Do not show a summary at the end")
-	pathPatternFlag(
+	globPatternFlag(
 		flags,
 		"exclude",
 		"Exclude paths matching the given pattern (can be used multiple times).\nThe pattern syntax is the same as the [pattern] argument.",
 		&args.Exclude,
-	)
-	pathPatternFlag(
-		flags,
-		"include",
-		"Override --exclude patterns and include paths matching the given pattern (can be used multiple times).\nThe pattern syntax is the same as the [pattern] argument.",
-		&args.Include,
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s status [pattern]\n\n", appName)
@@ -503,7 +486,7 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		fmt.Fprint(os.Stderr, "  pattern (optional)\n")
 		fmt.Fprint(
 			os.Stderr,
-			"        Show status only for paths matching the given pattern.\n"+pathPatternDescription("        "),
+			"        Show status only for paths matching the given pattern.\n"+globPatternDescription("        "),
 		)
 		fmt.Fprint(os.Stderr, "\n\nFlags:\n")
 		flags.PrintDefaults()
@@ -517,22 +500,15 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	}
 	var pathFilter lib.PathFilter
 	if len(flags.Args()) == 1 {
-		p, err := lib.NewPathPattern(flags.Arg(0))
-		if err != nil {
-			return lib.WrapErrorf(err, "invalid pattern: %s", flags.Arg(0))
-		}
-		pathFilter = &lib.PathInclusionFilter{Includes: []lib.PathPattern{p}}
+		pathFilter = lib.NewPathInclusionFilter([]string{flags.Arg(0)})
 	}
 	if len(flags.Args()) > 1 {
 		return lib.Errorf("too many positional arguments")
 	}
-	if len(args.Exclude) == 0 && len(args.Include) > 0 {
-		return lib.Errorf("include patterns can only be used with exclude patterns")
-	}
 	if len(args.Exclude) > 0 {
-		exclusionFilter := &lib.PathExclusionFilter{Excludes: args.Exclude, Includes: args.Include}
+		exclusionFilter := &lib.PathExclusionFilter{args.Exclude}
 		if pathFilter != nil {
-			pathFilter = &lib.AllPathFilter{Filters: []lib.PathFilter{pathFilter, exclusionFilter}}
+			pathFilter = &lib.AllPathFilter{[]lib.PathFilter{pathFilter, exclusionFilter}}
 		} else {
 			pathFilter = exclusionFilter
 		}
@@ -627,13 +603,9 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		flags.Usage()
 		return nil
 	}
-	var pattern *lib.PathPattern
+	var pathFilter lib.PathFilter
 	if len(flags.Args()) == 1 {
-		p, err := lib.NewPathPattern(flags.Arg(0))
-		if err != nil {
-			return lib.WrapErrorf(err, "invalid pattern: %s", flags.Arg(0))
-		}
-		pattern = &p
+		pathFilter = lib.NewPathInclusionFilter([]string{flags.Arg(0)})
 	}
 	if len(flags.Args()) > 1 {
 		return lib.Errorf("too many positional arguments")
@@ -641,10 +613,6 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	repository, err := openRepository(workspace, passphraseFromStdin)
 	if err != nil {
 		return err
-	}
-	var pathFilter lib.PathFilter
-	if pattern != nil {
-		pathFilter = &lib.PathInclusionFilter{Includes: []lib.PathPattern{*pattern}}
 	}
 	revisionId, err := revisionId(repository, args.Revision)
 	if err != nil {
@@ -713,7 +681,7 @@ func LogCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		fmt.Fprint(os.Stderr, "\nArguments:\n")
 		fmt.Fprint(os.Stderr, "  pattern (optional)\n")
 		fmt.Fprint(os.Stderr, "        Show log only for paths matching the given pattern.\n")
-		fmt.Fprint(os.Stderr, pathPatternDescription("        "))
+		fmt.Fprint(os.Stderr, globPatternDescription("        "))
 		fmt.Fprint(os.Stderr, "\n\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -729,11 +697,7 @@ func LogCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	}
 	var pathFilter lib.PathFilter
 	if len(flags.Args()) == 1 {
-		p, err := lib.NewPathPattern(flags.Arg(0))
-		if err != nil {
-			return lib.WrapErrorf(err, "invalid pattern: %s", flags.Arg(0))
-		}
-		pathFilter = &lib.PathInclusionFilter{Includes: []lib.PathPattern{p}}
+		pathFilter = lib.NewPathInclusionFilter([]string{flags.Arg(0)})
 	}
 	repository, err := openRepository(workspace, passphraseFromStdin)
 	if err != nil {
@@ -1003,10 +967,10 @@ func openRepositoryStorage(workspace *ws.Workspace) (lib.Storage, error) { //nol
 	return storage, nil
 }
 
-func pathPatternDescription(indent string) string {
-	// todo: Add examples.
+func globPatternDescription(indent string) string {
+	// todo: Explain more and add examples
 	return indent + strings.ReplaceAll(strings.TrimSpace(`
-A pattern must match the full path or a directory within the path.
+Patterns follow the same syntax as the git-ignore files.
 Pattern syntax:
     **      matches any number of directories
     *       matches any number of characters in a single directory
@@ -1014,15 +978,12 @@ Pattern syntax:
 	`), "\n", "\n"+indent)
 }
 
-func pathPatternFlag(flags *flag.FlagSet, name string, usage string, value *[]lib.PathPattern) {
+func globPatternFlag(flags *flag.FlagSet, name string, usage string, value *lib.ExtendedGlobPatterns) {
 	flags.Func(
 		name,
 		usage,
 		func(pattern string) error {
-			p, err := lib.NewPathPattern(pattern)
-			if err != nil {
-				return lib.WrapErrorf(err, "invalid pattern: %s", pattern)
-			}
+			p := lib.NewExtendedGlobPattern(pattern, "")
 			*value = append(*value, p)
 			return nil
 		},

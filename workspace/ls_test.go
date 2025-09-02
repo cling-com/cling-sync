@@ -71,8 +71,7 @@ func TestLs(t *testing.T) {
 		rev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		filter, err := lib.NewPathInclusionFilter([]string{"c"})
-		assert.NoError(err)
+		filter := lib.NewPathInclusionFilter([]string{"c"})
 		ls, err := Ls(r.Repository, td.NewFS(t), &LsOptions{rev1, filter, lib.Path{}})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{

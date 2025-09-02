@@ -135,10 +135,8 @@ func TestCp(t *testing.T) {
 		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		pattern, err := lib.NewPathPattern("c/**/*")
-		assert.NoError(err)
-		pathFilter := &lib.PathInclusionFilter{Includes: []lib.PathPattern{pattern}}
-		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), pathFilter}, td.NewFS(t))
+		filter := lib.NewPathInclusionFilter([]string{"c/**/*"})
+		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), filter}, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"c", 0o700 | fs.ModeDir, 0, ""},

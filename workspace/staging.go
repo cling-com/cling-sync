@@ -62,7 +62,7 @@ func NewStaging(
 		// Even though files are filtered out in Staging.Add, we still
 		// want to eagerly exclude them to avoid unnecessary work (file hash).
 		// Especially, we want to skip directories if they are excluded.
-		if pathFilter != nil && !pathFilter.Include(path) {
+		if pathFilter != nil && !pathFilter.Include(path, d.IsDir()) {
 			mon.OnEnd(path, true, nil)
 			if d.IsDir() {
 				return filepath.SkipDir
@@ -229,7 +229,7 @@ func (s *Staging) add(path lib.Path, md *lib.FileMetadata) (bool, error) {
 	if s.tempWriter == nil {
 		return false, lib.Errorf("staging is closed")
 	}
-	if s.PathFilter != nil && !s.PathFilter.Include(path) {
+	if s.PathFilter != nil && !s.PathFilter.Include(path, md.ModeAndPerm.IsDir()) {
 		return false, nil
 	}
 	re, err := lib.NewRevisionEntry(path, lib.RevisionEntryAdd, md)

@@ -21,7 +21,7 @@ if [ $# -eq 0 ]; then
     echo "  precommit"
     echo "      Run all checks before committing. This is the same as running \`fmt\`, \`lint\`, and \`test\`."
     echo
-    echo "  test [project|integration]"
+    echo "  test [project|integration-bash]"
     echo "      Run tests. If no project is specified, run all tests including integration tests."
     echo 
     echo "  tools"

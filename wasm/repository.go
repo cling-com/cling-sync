@@ -110,11 +110,7 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any {
 		tmpFS := lib.NewMemoryFS(100_000_000)
 		var filter lib.PathFilter
 		if excludes != "" {
-			filter, err = lib.NewPathExclusionFilter(strings.Split(excludes, ","), nil)
-		}
-		if err != nil {
-			reject(js.ValueOf(err.Error()))
-			return
+			filter = lib.NewPathExclusionFilter(strings.Split(excludes, ","))
 		}
 		opts := &workspace.LsOptions{RevisionId: revisionId, PathFilter: filter}
 		files, err := workspace.Ls(repository, tmpFS, opts)
@@ -199,11 +195,7 @@ func (r *RepositoryAPI) ReadFile(this js.Value, args []js.Value) any {
 			reject(js.ValueOf(err.Error()))
 			return
 		}
-		filter, err := lib.NewPathInclusionFilter([]string{path})
-		if err != nil {
-			reject(js.ValueOf(err.Error()))
-			return
-		}
+		filter := lib.NewPathInclusionFilter([]string{path})
 		r := snapshot.Reader(filter)
 		file, err := r.Read()
 		if errors.Is(err, io.EOF) {
