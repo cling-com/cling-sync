@@ -750,11 +750,10 @@ func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		fmt.Fprint(os.Stderr, "Configure security settings.\n\n")
 		fmt.Fprint(os.Stderr, "Commands:\n")
 		fmt.Fprint(os.Stderr, "  save-keys\n")
-		fmt.Fprint(os.Stderr, "        Save the keys to the repository so that you don't need\n")
-		fmt.Fprint(os.Stderr, "        the passphrase to execute a command.\n")
-		fmt.Fprint(os.Stderr, "        Warning: Everyone with access to the `keys.txt` file can\n")
-		fmt.Fprint(os.Stderr, "        decrypt the whole repository.\n")
-		fmt.Fprint(os.Stderr, "        If you change the keys in the repository, all saved keys become invalid.\n")
+		fmt.Fprint(os.Stderr, "        Save the keys of the repository so that this client stays authenticated.\n")
+		fmt.Fprint(os.Stderr, "        The keys are encrypted with a random key that is securely stored in the\n")
+		fmt.Fprint(os.Stderr, "        system's keyring.\n")
+		fmt.Fprint(os.Stderr, "        If you change the keys of the repository, all saved keys become invalid.\n")
 		fmt.Fprint(os.Stderr, "  delete-keys\n")
 		fmt.Fprintf(os.Stderr, "        Delete the keys previously saved using `%s security save-keys`.\n", appName)
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
@@ -787,7 +786,35 @@ func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to decrypt repository keys")
 		}
-		if err := workspace.WriteRepositoryKeys(keys); err != nil {
+		encKey, err := lib.NewRawKey()
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to generate local encryption key")
+		}
+		encKeyStr := hex.EncodeToString(encKey[:])
+		encKeyCipher, err := lib.NewCipher(encKey)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to create cipher")
+		}
+		err = AddKeychainEntry("com.cling.sync", string(workspace.RemoteRepository), encKeyStr)
+		if errors.Is(err, ErrKeychainEntryAlreadyExists) {
+			// Use the existing key to encrypt the RepositoryKeys.
+			encKeyStr, err = GetKeychainEntry("com.cling.sync", string(workspace.RemoteRepository))
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to get encryption key from keychain")
+			}
+			encKeyBytes, err := hex.DecodeString(encKeyStr)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to decode encryption key from keychain")
+			}
+			encKeyCipher, err = lib.NewCipher(lib.RawKey(encKeyBytes))
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to create cipher")
+			}
+		}
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to add repository keys to keychain")
+		}
+		if err := workspace.WriteRepositoryKeys(keys, encKeyCipher); err != nil {
 			return lib.WrapErrorf(err, "failed to write repository keys")
 		}
 	case "delete-keys":
@@ -900,11 +927,23 @@ func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Rep
 	if err != nil {
 		return nil, err
 	}
-	keys, ok, err := workspace.ReadRepositoryKeys()
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to read repository keys from local storage")
-	}
-	if ok {
+	if workspace.HasRepositoryKeys() {
+		encKeyStr, err := GetKeychainEntry("com.cling.sync", string(workspace.RemoteRepository))
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to get encryption key from keychain")
+		}
+		encKey, err := hex.DecodeString(encKeyStr)
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to decode encryption key from keychain")
+		}
+		encKeyCipher, err := lib.NewCipher(lib.RawKey(encKey))
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to create cipher")
+		}
+		keys, err := workspace.ReadRepositoryKeys(encKeyCipher)
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to read repository keys from local storage")
+		}
 		repository, err := lib.OpenRepositoryWithKeys(storage, keys)
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to open repository with saved keys")

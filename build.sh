@@ -47,7 +47,7 @@ run_build() {
         case "$target" in
             cli)
                 echo ">>> Building CLI"
-                go build -o cling-sync ./cli
+                go build "$@" -o cling-sync ./cli
                 ;;
             *)
                 echo "Unknown target: $target"

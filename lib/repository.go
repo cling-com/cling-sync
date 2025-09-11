@@ -483,3 +483,31 @@ even print it out and keep it somewhere safe.
 `, "\n ")
 	return toml, headerComment
 }
+
+func MarshalRepositoryKeys(keys *RepositoryKeys, w io.Writer) error {
+	bw := NewBinaryWriter(w)
+	bw.Write(EncryptionVersion)
+	bw.Write(keys.KEK[:])
+	bw.Write(keys.BlockIdHmacKey[:])
+	return bw.Err
+}
+
+func UnmarshalRepositoryKeys(r io.Reader) (*RepositoryKeys, error) {
+	br := NewBinaryReader(r)
+	var version uint16
+	br.Read(&version)
+	if br.Err != nil {
+		return nil, WrapErrorf(br.Err, "failed to parse repository keys")
+	}
+	if version != EncryptionVersion {
+		return nil, Errorf("unsupported repository keys version %d, want %d", version, EncryptionVersion)
+	}
+	var kek RawKey
+	br.Read(&kek)
+	var blockIdHmacKey RawKey
+	br.Read(&blockIdHmacKey)
+	return &RepositoryKeys{
+		KEK:            kek,
+		BlockIdHmacKey: blockIdHmacKey,
+	}, nil
+}

@@ -2,8 +2,8 @@ package workspace
 
 import (
 	"bytes"
+	cryptoCipher "crypto/cipher"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -98,87 +98,59 @@ func (w *Workspace) Head() (lib.RevisionId, error) {
 	return ref, nil
 }
 
-func (w *Workspace) WriteRepositoryKeys(keys *lib.RepositoryKeys) error {
-	toml := lib.Toml{
-		"encryption": {
-			"version":       fmt.Sprintf("%d", lib.EncryptionVersion),
-			"kek":           lib.FormatRecoveryCode(keys.KEK[:]),
-			"block-id-hmac": lib.FormatRecoveryCode(keys.BlockIdHmacKey[:]),
-		},
-	}
-	headerComment := strings.Trim(`
-This file contains the encryption keys used to encrypt/decrypt the repository.
+var ErrRepositoryKeysNotFound = lib.Errorf("repository keys not found")
 
-WARNING: These are the raw keys, so anyone with access to this file can decrypt
-the whole repository or make changes to it.
+const repositoryKeysFileName = "keys.enc"
 
-IT IS SAVE TO DELETE THIS FILE. 
-If you do so, you either must provide your passphrase to every command or save the keys again.
-`, "\n ")
-	var sb bytes.Buffer
-	if err := lib.WriteToml(&sb, headerComment, toml); err != nil {
-		return lib.WrapErrorf(err, "failed to serialize repository keys to local storage")
+func (w *Workspace) WriteRepositoryKeys(keys *lib.RepositoryKeys, cipher cryptoCipher.AEAD) error {
+	marshalBuf := bytes.NewBuffer(nil)
+	if err := lib.MarshalRepositoryKeys(keys, marshalBuf); err != nil {
+		return lib.WrapErrorf(err, "failed to serialize repository keys")
 	}
-	if err := w.Storage.WriteControlFile(lib.ControlFileSectionSecurity, "keys.toml", sb.Bytes()); err != nil {
+	encBuf := make([]byte, lib.TotalCipherOverhead+marshalBuf.Len())
+	encrypted, err := lib.Encrypt(marshalBuf.Bytes(), cipher, []byte(repositoryKeysFileName), encBuf)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to encrypt repository keys")
+	}
+	if err := w.Storage.WriteControlFile(lib.ControlFileSectionSecurity, repositoryKeysFileName, encrypted); err != nil {
 		return lib.WrapErrorf(err, "failed to copy repository keys to local storage")
 	}
 	return nil
 }
 
-func (w *Workspace) ReadRepositoryKeys() (*lib.RepositoryKeys, bool, error) {
-	ok, err := w.Storage.HasControlFile(lib.ControlFileSectionSecurity, "keys.toml")
+func (w *Workspace) HasRepositoryKeys() bool {
+	ok, err := w.Storage.HasControlFile(lib.ControlFileSectionSecurity, repositoryKeysFileName)
 	if err != nil {
-		return nil, false, lib.WrapErrorf(err, "failed to check if repository keys exist")
+		return false
+	}
+	return ok
+}
+
+func (w *Workspace) ReadRepositoryKeys(cipher cryptoCipher.AEAD) (*lib.RepositoryKeys, error) {
+	ok, err := w.Storage.HasControlFile(lib.ControlFileSectionSecurity, repositoryKeysFileName)
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to check if repository keys exist")
 	}
 	if !ok {
-		return nil, false, nil
+		return nil, ErrRepositoryKeysNotFound
 	}
-	rawToml, err := w.Storage.ReadControlFile(lib.ControlFileSectionSecurity, "keys.toml")
+	encrypted, err := w.Storage.ReadControlFile(lib.ControlFileSectionSecurity, repositoryKeysFileName)
 	if err != nil {
-		return nil, false, lib.WrapErrorf(err, "failed to read repository keys")
+		return nil, lib.WrapErrorf(err, "failed to read repository keys")
 	}
-	toml, err := lib.ReadToml(bytes.NewReader(rawToml))
+	decrypted, err := lib.Decrypt(encrypted, cipher, []byte(repositoryKeysFileName), make([]byte, len(encrypted)))
 	if err != nil {
-		return nil, false, lib.WrapErrorf(err, "failed to parse repository keys")
+		return nil, lib.WrapErrorf(err, "failed to decrypt repository keys")
 	}
-	i, ok := toml.GetIntValue("encryption", "version")
-	if !ok {
-		return nil, false, lib.Errorf("missing or invalid key `encryption.version` in repository keys")
-	}
-	if i != int(lib.EncryptionVersion) {
-		return nil, false, lib.Errorf(
-			"unsupported repository keys version %d, want %d",
-			i,
-			lib.EncryptionVersion,
-		)
-	}
-	value, ok := toml.GetValue("encryption", "kek")
-	if !ok {
-		return nil, false, lib.Errorf("missing key `encryption.kek` in repository keys")
-	}
-	kek, err := lib.ParseRecoveryCode(value)
+	keys, err := lib.UnmarshalRepositoryKeys(bytes.NewReader(decrypted))
 	if err != nil {
-		return nil, false, lib.WrapErrorf(err, "invalid key `encryption.kek` in repository keys")
+		return nil, lib.WrapErrorf(err, "failed to parse repository keys")
 	}
-	value, ok = toml.GetValue("encryption", "block-id-hmac")
-	if !ok {
-		return nil, false, lib.Errorf("missing key `encryption.block-id-hmac` in repository keys")
-	}
-	blockIdHmacKey, err := lib.ParseRecoveryCode(value)
-	if err != nil {
-		return nil, false, lib.WrapErrorf(
-			err,
-			"invalid key `encryption.block-id-hmac` in repository keys",
-		)
-	}
-	return &lib.RepositoryKeys{
-		KEK:            lib.RawKey(kek),
-		BlockIdHmacKey: lib.RawKey(blockIdHmacKey),
-	}, true, nil
+	return keys, nil
 }
 
 func (w *Workspace) DeleteRepositoryKeys() error {
-	if err := w.Storage.DeleteControlFile(lib.ControlFileSectionSecurity, "keys.toml"); err != nil {
+	if err := w.Storage.DeleteControlFile(lib.ControlFileSectionSecurity, repositoryKeysFileName); err != nil {
 		return lib.WrapErrorf(err, "failed to delete local repository keys")
 	}
 	return nil

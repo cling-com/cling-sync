@@ -105,3 +105,95 @@ func TestWorkspaceNewAndOpen(t *testing.T) {
 		assert.NoError(err)
 	})
 }
+
+func TestReadWriteDeleteRepositoryKeys(t *testing.T) { //nolint:tparallel
+	assert := lib.NewAssert(t)
+	kek, err := lib.NewRawKey()
+	assert.NoError(err)
+	blockIdHmacKey, err := lib.NewRawKey()
+	assert.NoError(err)
+	keys := &lib.RepositoryKeys{
+		KEK:            kek,
+		BlockIdHmacKey: blockIdHmacKey,
+	}
+	encKey, err := lib.NewRawKey()
+	assert.NoError(err)
+	encKeyCipher, err := lib.NewCipher(encKey)
+	assert.NoError(err)
+
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		remote := "the/remote/repository1"
+
+		ws, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(remote), lib.Path{})
+		assert.NoError(err)
+
+		// Write keys.
+		err = ws.WriteRepositoryKeys(keys, encKeyCipher)
+		assert.NoError(err)
+
+		// Read keys.
+		readKeys, err := ws.ReadRepositoryKeys(encKeyCipher)
+		assert.NoError(err)
+		assert.Equal(keys, readKeys)
+
+		// Delete keys.
+		err = ws.DeleteRepositoryKeys()
+		assert.NoError(err)
+
+		// Try to read keys again.
+		_, err = ws.ReadRepositoryKeys(encKeyCipher)
+		assert.ErrorIs(err, ErrRepositoryKeysNotFound)
+	})
+
+	t.Run("If keychain entry already exists, use it", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		remote := "the/remote/repository2"
+
+		ws, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(remote), lib.Path{})
+		assert.NoError(err)
+
+		// Write keys.
+		err = ws.WriteRepositoryKeys(keys, encKeyCipher)
+		assert.NoError(err)
+
+		// Try to write keys for a second workspace tied to the same repository.
+		ws2, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(remote), lib.Path{})
+		assert.NoError(err)
+
+		// Write keys.
+		err = ws2.WriteRepositoryKeys(keys, encKeyCipher)
+		assert.NoError(err)
+
+		readKeys, err := ws2.ReadRepositoryKeys(encKeyCipher)
+		assert.NoError(err)
+		assert.Equal(keys, readKeys)
+
+		readKeys, err = ws.ReadRepositoryKeys(encKeyCipher)
+		assert.NoError(err)
+		assert.Equal(keys, readKeys)
+	})
+
+	t.Run("Tamper with the encrypted keys", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		remote := "the/remote/repository3"
+
+		ws, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(remote), lib.Path{})
+		assert.NoError(err)
+
+		// Write keys.
+		err = ws.WriteRepositoryKeys(keys, encKeyCipher)
+		assert.NoError(err)
+
+		// Manipulate key.
+		tamperedKey := lib.RawKey(append([]byte{}, encKey[:]...))
+		tamperedKey[0] ^= 0x01
+		tamperedCipher, err := lib.NewCipher(tamperedKey)
+		assert.NoError(err)
+		_, err = ws.ReadRepositoryKeys(tamperedCipher)
+		assert.Error(err, "message authentication failed")
+	})
+}

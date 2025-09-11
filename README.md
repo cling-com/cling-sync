@@ -77,10 +77,20 @@ All operations with the exception of `cp` will be limited to the path prefix.
 
     cling-sync security save-keys
 
-This will save the _unencrypted_ encryption keys to the repository in `.cling/workspace/security/keys.toml`.
-Make sure that only you have access to this file.
-In the future, we will store the keys in the keyring of the user's OS. This is just a temporary
-solution to ease development and testing.
+Store the encryption keys of the repository in `.cling/workspace/security/keys.enc`.
+
+The file is encrypted with a random key that is securely stored in the system's keyring.
+
+**Notes an MacOS:**
+
+You might need to unlock the keychain with 
+`security unlock-keychain ~/Library/Keychains/login.keychain-db`
+
+**Notes on Linux:**
+
+This feature uses `secret-tool` to store the random key in the system's keyring.
+You can unlock it (Gnome) with:
+`echo '\n' | gnome-keyring-daemon --unlock`
 
 #### Merge the local workspace with the repository
 

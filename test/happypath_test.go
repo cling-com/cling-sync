@@ -452,7 +452,11 @@ func NewSut(t *testing.T) *Sut {
 
 	// Build the `cling-sync` binary.
 	t.Log("Building `cling-sync` binary")
-	buildArgs := []string{"build", "-o", fmt.Sprintf("%s/cling-sync", tmpDir), "../cli"}
+	buildArgs := []string{"-o", fmt.Sprintf("%s/cling-sync", tmpDir), "../cli"}
+	if os.Getenv("CS_TEST_NO_MOCK") == "" {
+		buildArgs = append([]string{"-tags", "mock"}, buildArgs...)
+	}
+	buildArgs = append([]string{"build"}, buildArgs...)
 	t.Log(gray("    go " + strings.Join(buildArgs, " ")))
 	cmd := exec.Command("go", buildArgs...)
 	out, err := cmd.CombinedOutput()

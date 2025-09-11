@@ -36,7 +36,12 @@ setup() {
 
     log $cyan">>> Creating repository"
         cd ..
-        ./build.sh build cli >/dev/null
+        local build_args=""
+        if [ -z "${CS_TEST_NO_MOCK:-}" ]; then
+            echo "Building with mock support"
+            build_args="-tags mock"
+        fi
+        ./build.sh build cli $build_args >/dev/null
         cd test
         rm -rf work
 
