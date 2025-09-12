@@ -2,7 +2,8 @@
 package lib
 
 import (
-	"bufio"
+	"bytes"
+	cryptoCipher "crypto/cipher"
 	"errors"
 	"fmt"
 	"io"
@@ -12,15 +13,20 @@ import (
 
 const DefaultRevisionTempChunkSize = 4 * 1024 * 1024
 
-// todo: encrypt the temporary files
 type RevisionTemp struct {
 	RevisionId RevisionId
 	fs         FS
 	chunks     int
+	cipher     cryptoCipher.AEAD
 }
 
 func (rt *RevisionTemp) Reader(pathFilter PathFilter) *RevisionTempReader {
-	return &RevisionTempReader{fs: rt.fs, chunks: rt.chunks, pathFilter: pathFilter} //nolint:exhaustruct
+	return &RevisionTempReader{ //nolint:exhaustruct
+		fs:         rt.fs,
+		chunks:     rt.chunks,
+		pathFilter: pathFilter,
+		cipher:     rt.cipher,
+	}
 }
 
 func (rt *RevisionTemp) Chunks() int {
@@ -41,6 +47,7 @@ type RevisionTempReader struct {
 	chunkIndex   int
 	current      []*RevisionEntry
 	currentIndex int
+	cipher       cryptoCipher.AEAD
 }
 
 func (rtr *RevisionTempReader) Read() (*RevisionEntry, error) {
@@ -73,12 +80,11 @@ func (rtr *RevisionTempReader) ReadChunk(i int) ([]*RevisionEntry, error) {
 	if i < 0 || i >= rtr.chunks {
 		return nil, Errorf("chunk index out of range")
 	}
-	f, err := rtr.fs.OpenRead(rtr.chunkFilename(i))
+	data, err := rtr.ReadChunkRaw(i)
 	if err != nil {
-		return nil, WrapErrorf(err, "failed to open chunk file %d", i)
+		return nil, err
 	}
-	defer f.Close() //nolint:errcheck
-	r := bufio.NewReader(f)
+	r := bytes.NewReader(data)
 	entries := []*RevisionEntry{}
 	for {
 		re, err := UnmarshalRevisionEntry(r)
@@ -101,14 +107,13 @@ func (rtr *RevisionTempReader) ReadChunkRaw(i int) ([]byte, error) {
 	if i < 0 || i >= rtr.chunks {
 		return nil, Errorf("chunk index out of range")
 	}
-	f, err := rtr.fs.OpenRead(rtr.chunkFilename(i))
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to open chunk file %d", i)
-	}
-	defer f.Close() //nolint:errcheck
-	data, err := io.ReadAll(f)
+	encrypted, err := ReadFile(rtr.fs, rtr.chunkFilename(i))
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read chunk file %d", i)
+	}
+	data, err := Decrypt(encrypted, rtr.cipher, nil, make([]byte, len(encrypted)-TotalCipherOverhead))
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to decrypt chunk file %d", i)
 	}
 	return data, nil
 }
@@ -125,15 +130,25 @@ type RevisionTempWriter struct {
 	maxChunkSize int
 	chunks       int
 	fileExt      string
+	cipher       cryptoCipher.AEAD
 }
 
-func NewRevisionTempWriter(revisionId RevisionId, fs FS, maxChunkSize int) *RevisionTempWriter {
+func NewRevisionTempWriter(revisionId RevisionId, fs FS, maxChunkSize int) (*RevisionTempWriter, error) {
+	key, err := NewRawKey()
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to generate random key for encryption")
+	}
+	cipher, err := NewCipher(key)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to create a cipher from key for encryption")
+	}
 	return &RevisionTempWriter{ //nolint:exhaustruct
 		RevisionId:   revisionId,
 		fs:           fs,
 		maxChunkSize: maxChunkSize,
 		fileExt:      "raw",
-	}
+		cipher:       cipher,
+	}, nil
 }
 
 func (rtw *RevisionTempWriter) Add(re *RevisionEntry) error {
@@ -154,19 +169,22 @@ func (rtw *RevisionTempWriter) Finalize() (*RevisionTemp, error) { //nolint:funl
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
 	// Create a new RevisionTempWriter to store the sorted chunks.
-	sorted := NewRevisionTempWriter(rtw.RevisionId, rtw.fs, rtw.maxChunkSize)
+	sorted, err := NewRevisionTempWriter(rtw.RevisionId, rtw.fs, rtw.maxChunkSize)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to create new RevisionTempWriter")
+	}
 	sorted.fileExt = "sorted"
-	// Open all chunks with a buffered reader.
-	readerFiles := make([]io.ReadCloser, rtw.chunks)
 	readers := make([]io.Reader, rtw.chunks)
 	for i := range rtw.chunks {
-		f, err := rtw.fs.OpenRead(rtw.chunkFilename(i))
+		data, err := ReadFile(rtw.fs, rtw.chunkFilename(i))
 		if err != nil {
-			return nil, WrapErrorf(err, "failed to open chunk file")
+			return nil, WrapErrorf(err, "failed to read chunk file")
 		}
-		defer f.Close() //nolint:errcheck
-		readerFiles[i] = f
-		readers[i] = bufio.NewReader(f)
+		decrypted, err := Decrypt(data, rtw.cipher, nil, make([]byte, len(data)-TotalCipherOverhead))
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to decrypt chunk file")
+		}
+		readers[i] = bytes.NewReader(decrypted)
 	}
 	type entry struct {
 		value      *RevisionEntry
@@ -223,23 +241,20 @@ func (rtw *RevisionTempWriter) Finalize() (*RevisionTemp, error) { //nolint:funl
 	if err := sorted.rotateChunk(); err != nil {
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
-	// Close and delete all chunk files.
+	// Delete all chunk files.
 	for i := range rtw.chunks {
-		if err := readerFiles[i].Close(); err != nil {
-			return nil, WrapErrorf(err, "failed to close chunk file")
-		}
 		if err := rtw.fs.Remove(rtw.chunkFilename(i)); err != nil {
 			return nil, WrapErrorf(err, "failed to remove chunk file")
 		}
 	}
-	return &RevisionTemp{rtw.RevisionId, sorted.fs, sorted.chunks}, nil
+	return &RevisionTemp{rtw.RevisionId, sorted.fs, sorted.chunks, sorted.cipher}, nil
 }
 
 func (rtw *RevisionTempWriter) chunkFilename(index int) string {
 	return fmt.Sprintf("%d.%s", index, rtw.fileExt)
 }
 
-// Sort the current chunk and write it to disk.
+// Sort the current chunk, encrypt it, and write it to disk.
 func (rtw *RevisionTempWriter) rotateChunk() error {
 	if len(rtw.chunk) == 0 {
 		return nil
@@ -255,23 +270,23 @@ func (rtw *RevisionTempWriter) rotateChunk() error {
 	if err != nil {
 		return err
 	}
-	// todo: encrypt the data before writing to disk.
 	file, err := rtw.fs.OpenWrite(rtw.chunkFilename(rtw.chunks))
 	if err != nil {
 		return WrapErrorf(err, "failed to open chunk file")
 	}
 	defer file.Close() //nolint:errcheck
-	w := bufio.NewWriter(file)
+	buf := bytes.NewBuffer(nil)
 	for _, entry := range rtw.chunk {
-		if err := MarshalRevisionEntry(entry, w); err != nil {
+		if err := MarshalRevisionEntry(entry, buf); err != nil {
 			return WrapErrorf(err, "failed to write to chunk file")
 		}
 	}
-	if err := w.Flush(); err != nil {
-		return WrapErrorf(err, "failed to flush chunk file")
+	encrypted, err := Encrypt(buf.Bytes(), rtw.cipher, nil, make([]byte, len(buf.Bytes())+TotalCipherOverhead))
+	if err != nil {
+		return WrapErrorf(err, "failed to encrypt chunk")
 	}
-	if err := file.Close(); err != nil {
-		return WrapErrorf(err, "failed to close chunk file")
+	if err := WriteFile(rtw.fs, rtw.chunkFilename(rtw.chunks), encrypted); err != nil {
+		return WrapErrorf(err, "failed to write chunk file")
 	}
 	rtw.chunk = nil
 	rtw.chunkSize = 0
@@ -292,28 +307,32 @@ type RevisionTempCache struct {
 
 func NewRevisionTempCache(temp *RevisionTemp, maxChunksInCache int) (*RevisionTempCache, error) {
 	firstEntries := make([]*RevisionEntry, temp.Chunks())
+	cache := make([]map[string]*RevisionEntry, temp.Chunks())
+	chunksInCache := 0
 	reader := temp.Reader(nil)
 	for i := range temp.Chunks() {
-		f, err := reader.fs.OpenRead(reader.chunkFilename(i))
-		if err != nil {
-			return nil, WrapErrorf(err, "failed to open chunk file %d", i)
-		}
-		defer f.Close() //nolint:errcheck
-		first, err := UnmarshalRevisionEntry(f)
+		chunk, err := reader.ReadChunk(i)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read chunk file %d", i)
 		}
-		firstEntries[i] = first
+		firstEntries[i] = chunk[0]
+		if chunksInCache < maxChunksInCache {
+			c := make(map[string]*RevisionEntry)
+			cache[i] = c
+			for _, entry := range chunk {
+				c[entry.Path.String()] = entry
+			}
+		}
 	}
 	return &RevisionTempCache{
 		Source:           temp,
 		maxChunksInCache: maxChunksInCache,
 		reader:           reader,
-		cache:            make([]map[string]*RevisionEntry, temp.Chunks()),
+		cache:            cache,
 		firstEntries:     firstEntries,
 		lastAccessed:     make([]int64, temp.Chunks()),
 		CacheMisses:      0,
-		chunksInCache:    0,
+		chunksInCache:    chunksInCache,
 	}, nil
 }
 
