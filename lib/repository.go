@@ -210,9 +210,7 @@ func (r *Repository) WriteBlock(data []byte) (bool, BlockHeader, error) {
 			return false, BlockHeader{}, WrapErrorf(err, "failed to compress data")
 		}
 		compressionRatio := float64(len(compressed)) / float64(len(data))
-		// todo: document the compression ratio threshold.
 		if compressionRatio < 0.95 {
-			// todo: maybe give feedback to the user that compression is skipped.
 			header.Flags |= BlockFlagDeflate
 			data = compressed
 		}

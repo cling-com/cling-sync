@@ -15,7 +15,7 @@ losing it. Everything you put in once stays there forever.
 
 - **Repository**: The place where all data is stored after it has been encrypted.
 
-- **Workspace**: The place where you can work on your data.
+- **Workspace**: The local working copy of the repository files.
 
 - **Merge**: The process of applying all changes from the repository to the workspace and
   vice versa.
@@ -28,8 +28,8 @@ losing it. Everything you put in once stays there forever.
 Currently, the main focus is on supporting MacOS and Linux. It should work on Windows, but is not
 tested at the moment.
 
-The fact that `cling-sync` is written in plain Go (no CGO) and uses only the standard library
-with a few select `golang.org/x` dependencies should make it highly portable.
+The fact that everything but the CLI is written in plain Go (no CGO) and uses only the 
+standard library with a few select `golang.org/x` dependencies should make it highly portable.
 
 ## Usage
 
@@ -220,6 +220,14 @@ the middle of a file are detected and at some point, the algorithm will detect t
 blocks that were not changed.
 This also means that for files smaller than the average block size, deduplication is not effective.
 
+#### Compression
+
+A block may be compressed if it is at least 1KB in size and the first 1KB "looks" compressable,
+i.e. the entropy of the data is low enough. If the compression ratio of the whole block is below 5%,
+the block is stored uncompressed.
+
+The compression algorithm is [Deflate](https://en.wikipedia.org/wiki/DEFLATE) with level 6. 
+
 ## File Formats
 
 All integer types are written as little-endian, and all strings are UTF-8 encoded.
@@ -266,22 +274,3 @@ All integer types are written as little-endian, and all strings are UTF-8 encode
 ## Development
 
 This repository is self-contained and does not depend on any external tools or libraries.
-
-## Documentation To-do's
-
-- How deflate is used: https://www.rfc-editor.org/rfc/rfc1951.txt
-
-- Paths:
-
-  Path segments are encoded using a minimal escape scheme inspired by RFC 3986:
-
-  / is encoded as %2f
-
-  % is encoded as %25
-
-  All other characters are stored as-is. Escaping is only applied to path segments,
-  never across delimiters. This ensures paths remain UTF-8, readable, and safely splittable by /.
-
-  When restoring a file containing escaped characters, `%25` is converted back to `%` but
-  `%2f` is not converted back to `/`. This is to ensure that the path remains valid and
-  does not contain any invalid characters. The `%` character is a valid character in a path.

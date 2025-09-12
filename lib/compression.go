@@ -37,7 +37,6 @@ func IsCompressible(data []byte) bool {
 }
 
 // Compress data using the Deflate algorithm level 6.
-// todo: document the compression level.
 func Compress(data []byte) ([]byte, error) {
 	w := bytes.NewBuffer(nil)
 	z, err := zlib.NewWriterLevel(w, 6)
