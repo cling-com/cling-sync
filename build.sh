@@ -4,6 +4,9 @@
 set -eu
 root=$(cd $(dirname $0) && pwd)
 
+# Read .env file if it exists.
+[ -f "$root/.env" ] && . "$root/.env"
+
 if [ $# -eq 0 ]; then
     echo "Usage: $0 build|fmt|lint|test"
     echo
@@ -48,6 +51,10 @@ run_build() {
             cli)
                 echo ">>> Building CLI"
                 go build "$@" -o cling-sync ./cli
+                if [ "${CS_DARWIN_CODESIGN:-}" != "" ]; then
+                    echo ">>> Codesigning CLI"
+                    codesign --sign "${CS_DARWIN_CODESIGN}" --force --options runtime ./cling-sync
+                fi
                 ;;
             *)
                 echo "Unknown target: $target"
