@@ -307,6 +307,48 @@ func TestMerge(t *testing.T) {
 		assert.ErrorIs(err, lib.ErrHeadChanged)
 	})
 
+	t.Run("Chown", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		// out := td.NewTestFS(t, td.NewFS(t))
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Create a revision "by hand" that changes the ownership of `a.txt`.
+		snapshot := r.RevisionSnapshot(revId1, nil)
+		assert.Equal(1, len(snapshot))
+		entry := snapshot[0]
+		assert.Equal("a.txt", entry.Path.String())
+		assert.Equal(lib.ModeAndPerm(0o600), entry.Metadata.ModeAndPerm)
+
+		commit, err := lib.NewCommit(r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		entry.Type = lib.RevisionEntryUpdate
+		entry.Metadata.UID = 1234
+		entry.Metadata.GID = 5678
+		entry.Metadata.ModeAndPerm = 0o700
+		err = commit.Add(entry)
+		assert.NoError(err)
+		_, err = commit.Commit(td.CommitInfo())
+		assert.NoError(err)
+
+		// Merge the changes - this should fail because the GUID and/or UID should not exist.
+		opts := wstd.MergeOptions()
+		opts.Chown = true
+		_, err = Merge(w.Workspace, r.Repository, opts)
+		assert.Error(err, "failed to restore file owner 1234 and group 5678 for a.txt")
+
+		// Try a second time without `Chown`.
+		opts.Chown = false
+		_, err = Merge(w.Workspace, r.Repository, opts)
+		assert.NoError(err)
+		assert.Equal(fs.FileMode(0o700).Perm(), w.Stat("a.txt").Mode().Perm())
+	})
+
 	// todo: implement
 	// t.Run("MTime is restored", func(t *testing.T) {
 	// 	// Make sure that mtime is restored even for directories.

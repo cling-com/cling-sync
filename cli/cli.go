@@ -251,6 +251,7 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Verbose      bool
 		NoProgress   bool
 		Overwrite    bool
+		Chown        bool
 		Exclude      lib.ExtendedGlobPatterns
 		Include      lib.ExtendedGlobPatterns
 	}{}
@@ -261,6 +262,7 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	flags.BoolVar(&args.Chown, "chown", false, "Restore file ownership from the repository.")
 	flags.BoolVar(&args.Overwrite, "overwrite", false, "Overwrite existing files")
 	globPatternFlag(
 		flags,
@@ -317,6 +319,7 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		PathFilter: pathFilter,
 		Monitor:    mon,
 		RevisionId: revisionId,
+		Chown:      args.Chown,
 	}
 	tmpFS, err := workspace.TempFS.MkSub("cp")
 	if err != nil {
@@ -350,6 +353,7 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Help        bool
 		Message     string
 		Author      string
+		Chown       bool
 		Verbose     bool
 		AcceptLocal bool
 		NoProgress  bool
@@ -366,6 +370,7 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.AcceptLocal, "accept-local", false, "Ignore all conflicts and commit all local changes")
+	flags.BoolVar(&args.Chown, "chown", false, "Restore file ownership from the repository.")
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
 	flags.Usage = func() {
@@ -399,6 +404,7 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		StagingMonitor: stagingMonitor,
 		CpMonitor:      cpMonitor,
 		CommitMonitor:  commitMonitor,
+		Chown:          args.Chown,
 	}
 	var revisionId lib.RevisionId
 	if args.AcceptLocal {

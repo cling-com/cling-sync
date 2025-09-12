@@ -37,6 +37,7 @@ type CpOptions struct {
 	RevisionId lib.RevisionId
 	Monitor    CpMonitor
 	PathFilter lib.PathFilter
+	Chown      bool
 }
 
 func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.FS) error {
@@ -51,7 +52,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 	restoreDirFileModes := func() error {
 		for _, entry := range directories {
 			target := entry.Path.String()
-			if err := restoreFileMode(targetFS, target, entry.Metadata); err != nil {
+			if err := restoreFileMode(targetFS, target, entry.Metadata, opts.Chown); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", entry.Metadata.ModeAndPerm, target)
 			}
 		}
@@ -71,7 +72,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 		if err := restore(entry, repository, targetFS, target, mon); err != nil {
 			return lib.WrapErrorf(err, "failed to copy %s", target)
 		}
-		if err := restoreFileMode(targetFS, target, entry.Metadata); err != nil {
+		if err := restoreFileMode(targetFS, target, entry.Metadata, opts.Chown); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				mon.OnEnd(entry, target)
 				continue
@@ -181,14 +182,14 @@ func restore( //nolint:funlen
 	return nil
 }
 
-func restoreFileMode(fs lib.FS, path string, md *lib.FileMetadata) error {
+func restoreFileMode(fs lib.FS, path string, md *lib.FileMetadata, chown bool) error {
+	if md.HasUID() && md.HasGID() && chown {
+		if err := fs.Chown(path, int(md.UID), int(md.GID)); err != nil {
+			return lib.WrapErrorf(err, "failed to restore file owner %d and group %d for %s", md.UID, md.GID, path)
+		}
+	}
 	if err := fs.Chmod(path, (md.ModeAndPerm & lib.ModePerm).AsFileMode()); err != nil {
 		return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, path)
-	}
-	if md.HasUID() && md.HasGID() {
-		if err := fs.Chown(path, int(md.UID), int(md.GID)); err != nil {
-			return lib.WrapErrorf(err, "failed to restore file owner %d and group %d for %s", md.GID, md.UID, path)
-		}
 	}
 	mtime := time.Unix(md.MTimeSec, int64(md.MTimeNSec))
 	if err := fs.Chmtime(path, mtime); err != nil {

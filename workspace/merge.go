@@ -32,6 +32,7 @@ type MergeOptions struct {
 	CommitMonitor  CommitMonitor
 	Author         string
 	Message        string
+	Chown          bool
 	// todo: add a `MergeMonitor` that is called after each merge step.
 }
 
@@ -58,6 +59,7 @@ type Merger struct {
 	tempFS      lib.FS
 	repository  *lib.Repository
 	directories map[string]fs.FileInfo
+	opts        *MergeOptions
 }
 
 // Merge the changes from the repository into the workspace and vice versa.
@@ -88,7 +90,7 @@ func Merge(ws *Workspace, repository *lib.Repository, opts *MergeOptions) (lib.R
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
-	merger := Merger{ws, tempFS, repository, make(map[string]fs.FileInfo)}
+	merger := Merger{ws, tempFS, repository, make(map[string]fs.FileInfo), opts}
 	conflicts, err := merger.findConflicts(localChanges.Source, remoteRevision, wsRevision)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to find conflicts")
@@ -96,7 +98,7 @@ func Merge(ws *Workspace, repository *lib.Repository, opts *MergeOptions) (lib.R
 	if len(conflicts) > 0 {
 		return lib.RevisionId{}, conflicts
 	}
-	if err := merger.applyRemoteChanges(head, remoteRevision, staging, localChanges, opts.CpMonitor); err != nil {
+	if err := merger.applyRemoteChanges(head, remoteRevision, staging, localChanges); err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to apply remote changes")
 	}
 	if localChanges.Source.Chunks() > 0 {
@@ -142,7 +144,7 @@ func ForceCommit(ws *Workspace, repository *lib.Repository, opts *ForceCommitOpt
 	if localChanges.Source.Chunks() == 0 {
 		return lib.RevisionId{}, lib.ErrEmptyCommit
 	}
-	merger := &Merger{ws, tempFS, repository, make(map[string]fs.FileInfo)}
+	merger := &Merger{ws, tempFS, repository, make(map[string]fs.FileInfo), &opts.MergeOptions}
 	var remoteRevision *lib.RevisionTempCache
 	if !ws.PathPrefix.IsEmpty() {
 		// If the workspace has a path prefix, we have to build the remote changes
@@ -170,7 +172,7 @@ func ForceCommit(ws *Workspace, repository *lib.Repository, opts *ForceCommitOpt
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
-	if err := merger.applyRemoteChanges(newHead, remoteRevision, staging, localChanges, opts.CpMonitor); err != nil {
+	if err := merger.applyRemoteChanges(newHead, remoteRevision, staging, localChanges); err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to apply remote changes")
 	}
 	if err := lib.WriteRef(ws.Storage, "head", newHead); err != nil {
@@ -370,13 +372,12 @@ func (m *Merger) applyRemoteChanges(
 	remoteRevision *lib.RevisionTempCache,
 	staging *lib.RevisionTempCache,
 	localChanges *lib.RevisionTempCache,
-	cpMonitor CpMonitor,
 ) error {
 	defer m.restoreDirFileModes() //nolint:errcheck
 	if err := hasRemoteChanged(m.repository, head); err != nil {
 		return err
 	}
-	if err := m.copyRepositoryFiles(remoteRevision.Source, staging, localChanges, cpMonitor); err != nil {
+	if err := m.copyRepositoryFiles(remoteRevision.Source, staging, localChanges); err != nil {
 		return lib.WrapErrorf(err, "failed to copy remote files")
 	}
 	if err := m.deleteObsoleteWorkspaceFiles(remoteRevision, staging, localChanges); err != nil {
@@ -389,11 +390,10 @@ func (m *Merger) applyRemoteChanges(
 }
 
 // Copy all remote files that are not part of the local changes.
-func (m *Merger) copyRepositoryFiles( //nolint:funlen
+func (m *Merger) copyRepositoryFiles(
 	remoteRevision *lib.RevisionTemp,
 	staging *lib.RevisionTempCache,
 	localChanges *lib.RevisionTempCache,
-	mon CpMonitor,
 ) error {
 	r := remoteRevision.Reader(m.ws.PathPrefix.AsFilter())
 	for {
@@ -437,7 +437,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 				}
 			}
 			// Only update metadata.
-			if err := restoreFileMode(m.ws.FS, targetPath, md); err != nil {
+			if err := restoreFileMode(m.ws.FS, targetPath, md, m.opts.Chown); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, targetPath)
 			}
 			continue
@@ -446,12 +446,12 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		//       or if it is new
 		if !existsInStaging || md.FileHash != stagingEntry.Metadata.FileHash {
 			// Write the file.
-			if err := m.restoreFromRepository(entry, mon, targetPath); err != nil {
+			if err := m.restoreFromRepository(entry, m.opts.CpMonitor, targetPath); err != nil {
 				return lib.WrapErrorf(err, "failed to restore %s", targetPath)
 			}
 		}
 		if !existsInStaging || !md.IsEqualRestorableAttributes(stagingEntry.Metadata) {
-			if err := restoreFileMode(m.ws.FS, targetPath, md); err != nil {
+			if err := restoreFileMode(m.ws.FS, targetPath, md, m.opts.Chown); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, targetPath)
 			}
 		}

@@ -31,7 +31,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from rev1.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil}, td.NewFS(t))
+		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil, true}, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -43,7 +43,7 @@ func TestCp(t *testing.T) {
 		}, out.Ls("."))
 
 		// Trying to copy from rev2 should fail, because files already exist.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitor(), nil}, td.NewFS(t))
+		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitor(), nil, true}, td.NewFS(t))
 		assert.Error(err, "failed to copy")
 		assert.Error(err, "exists")
 	})
@@ -72,7 +72,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from rev1.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil}, td.NewFS(t))
+		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil, true}, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 3, "aaa"},
@@ -84,7 +84,7 @@ func TestCp(t *testing.T) {
 		}, out.Ls("."))
 
 		// Copy all from the rev2.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitorOverwrite(), nil}, td.NewFS(t))
+		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitorOverwrite(), nil, true}, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -95,6 +95,45 @@ func TestCp(t *testing.T) {
 			{"c/d", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d/2.txt", 0o600, 2, "cc"},
 		}, out.Ls("."))
+	})
+
+	t.Run("Chown", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		out := td.NewTestFS(t, td.NewFS(t))
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Create a revision "by hand" that changes the ownership of `a.txt`.
+		snapshot := r.RevisionSnapshot(revId1, nil)
+		assert.Equal(1, len(snapshot))
+		entry := snapshot[0]
+		assert.Equal("a.txt", entry.Path.String())
+		assert.Equal(lib.ModeAndPerm(0o600), entry.Metadata.ModeAndPerm)
+
+		commit, err := lib.NewCommit(r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		entry.Type = lib.RevisionEntryUpdate
+		entry.Metadata.UID = 1234
+		entry.Metadata.GID = 5678
+		entry.Metadata.ModeAndPerm = 0o700
+		err = commit.Add(entry)
+		assert.NoError(err)
+		revId2, err := commit.Commit(td.CommitInfo())
+		assert.NoError(err)
+
+		// Try to copy the file with `Chown` enabled.
+		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitorOverwrite(), nil, true}, td.NewFS(t))
+		assert.Error(err, "failed to restore file owner 1234 and group 5678 for a.txt")
+
+		// Try a second time without `Chown`.
+		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitorOverwrite(), nil, false}, td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal(fs.FileMode(0o700).Perm(), out.Stat("a.txt").Mode().Perm())
 	})
 
 	t.Run("Parent directory without rx permission should still be created", func(t *testing.T) {
@@ -112,7 +151,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		err = Cp(r.Repository, out, &CpOptions{revId1, wstd.CpMonitor(), nil}, td.NewFS(t))
+		err = Cp(r.Repository, out, &CpOptions{revId1, wstd.CpMonitor(), nil, true}, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"c", 0o500 | fs.ModeDir, 0, ""},
@@ -136,7 +175,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		filter := lib.NewPathInclusionFilter([]string{"c/**/*"})
-		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), filter}, td.NewFS(t))
+		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), filter, true}, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"c", 0o700 | fs.ModeDir, 0, ""},
@@ -181,7 +220,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil}, td.NewFS(t))
+		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil, true}, td.NewFS(t))
 		assert.NoError(err)
 
 		stat := w.Stat("a.txt")

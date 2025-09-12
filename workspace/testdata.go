@@ -57,7 +57,7 @@ func (wstd WorkspaceTestData) StatusOptions() *StatusOptions {
 }
 
 func (wstd WorkspaceTestData) MergeOptions() *MergeOptions {
-	return &MergeOptions{wstd.StagingMonitor(), wstd.CpMonitor(), wstd.CommitMonitor(), "author", "message"}
+	return &MergeOptions{wstd.StagingMonitor(), wstd.CpMonitor(), wstd.CommitMonitor(), "author", "message", true}
 }
 
 func (wstd WorkspaceTestData) LsOptions(revisionId lib.RevisionId) *LsOptions {
