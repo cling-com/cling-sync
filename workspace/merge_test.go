@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
@@ -76,6 +77,26 @@ func TestMerge(t *testing.T) {
 		// Merging again should not do anything.
 		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.ErrorIs(err, ErrUpToDate)
+	})
+
+	t.Run("Change metadata only", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		// Add first commit.
+		w.Write("a.txt", "a")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Add a second commit that changes the metadata only.
+		w.Chmod("a.txt", 0o700)
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal([]lib.TestFileInfo{
+			{"a.txt", 0o700, 1, "a"},
+		}, r.RevisionSnapshotFileInfos(w.Head(), nil))
 	})
 
 	t.Run("Local non-conflicting changes (add, update, remove) are committed", func(t *testing.T) {
@@ -413,6 +434,32 @@ func TestMerge(t *testing.T) {
 		assert.Equal(0, len(mon.OnExistsCalls))
 		assert.Equal(1, len(mon.OnEndCalls))
 		assert.Equal(0, len(mon.OnErrorCalls))
+	})
+
+	t.Run("Adding the same file in repository and workspace is ignored", func(t *testing.T) {
+		// This is the case if a merge is aborted, but files were already copied from the repository.
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		mtime := time.Now()
+		w.Write("a.txt", "a")
+		w.Touch("a.txt", mtime)
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Adding the same file with the same attributes should be ignored.
+		w2.Write("a.txt", "a")
+		w2.Touch("a.txt", mtime)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.ErrorIs(err, lib.ErrEmptyCommit)
+
+		// But having a different mtime should not be ignored.
+		w2.Touch("a.txt", time.Now())
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.Error(err, "MergeConflictsError")
 	})
 
 	// todo: implement

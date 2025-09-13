@@ -145,18 +145,13 @@ func ForceCommit(ws *Workspace, repository *lib.Repository, opts *ForceCommitOpt
 		return lib.RevisionId{}, lib.ErrEmptyCommit
 	}
 	merger := &Merger{ws, tempFS, repository, make(map[string]fs.FileInfo), &opts.MergeOptions}
-	var remoteRevision *lib.RevisionTempCache
-	if !ws.PathPrefix.IsEmpty() {
-		// If the workspace has a path prefix, we have to build the remote changes
-		// to make sure that the path prefix exists in the repository.
-		curHead, err := repository.Head()
-		if err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get repository head")
-		}
-		remoteRevision, err = buildRemoteChanges(tempFS, repository, curHead)
-		if err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
-		}
+	curHead, err := repository.Head()
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get repository head")
+	}
+	remoteRevision, err := buildRemoteChanges(tempFS, repository, curHead)
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
 	newHead, err := merger.commitLocalChanges(
 		localChanges.Source,
@@ -233,14 +228,42 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat %s", localPath)
 		}
-		md, err := AddFileToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon.OnAddBlock)
+		remoteEntry, existsInRemote, err := remoteRevision.Get(entry.Path, entry.Metadata.ModeAndPerm.IsDir())
 		if err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", localPath)
+			return lib.RevisionId{}, lib.WrapErrorf(
+				err,
+				"failed to get entry from repository snapshot cache for %s",
+				entry.Path,
+			)
+		}
+		var md *lib.FileMetadata
+		if existsInRemote {
+			if entry.Metadata.FileHash == remoteEntry.Metadata.FileHash {
+				if entry.Metadata.IsEqualRestorableAttributes(remoteEntry.Metadata, m.opts.Chown) {
+					// The file did not change at all, we can skip it completely.
+					mon.OnEnd(entry)
+					continue
+				}
+				// We only need to compute the file hash and not upload the file again.
+				computedMD, err := computeFileHash(m.ws.FS, localPath, stat)
+				if err != nil {
+					return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get metadata for %s", localPath)
+				}
+				md = &computedMD
+				md.BlockIds = remoteEntry.Metadata.BlockIds
+			}
+		}
+		if md == nil {
+			uploadedMD, err := AddFileToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon.OnAddBlock)
+			if err != nil {
+				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", localPath)
+			}
+			md = &uploadedMD
 		}
 		if md.FileHash != entry.Metadata.FileHash {
 			return lib.RevisionId{}, lib.Errorf("file %s was modified during merge - aborting merge", localPath)
 		}
-		entry.Metadata = &md
+		entry.Metadata = md
 		if err := commit.Add(entry); err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add revision entry to commit")
 		}
@@ -306,6 +329,9 @@ func (m *Merger) findConflicts(
 			}
 			if wsChangeExists && wsChange.Metadata.IsEqualRestorableAttributes(remoteChange.Metadata, m.opts.Chown) {
 				// The file did not change between the workspace revision and the repository revision.
+				continue
+			}
+			if localChange.Metadata.IsEqualRestorableAttributes(remoteChange.Metadata, m.opts.Chown) {
 				continue
 			}
 			localChange.Path, _ = localChange.Path.TrimBase(m.ws.PathPrefix)
