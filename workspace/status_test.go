@@ -139,6 +139,42 @@ func TestStatus(t *testing.T) {
 			"A new.txt",
 		}, statusFilesString(status))
 	})
+
+	t.Run("File ownership can be ignored", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		// out := td.NewTestFS(t, td.NewFS(t))
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		// We use a memory FS because with a real FS, we might not be able to change the ownership.
+		w2 := wstd.NewTestWorkspaceExtra(t, r.Repository, "", lib.NewMemoryFS(10000000))
+
+		w.Write("a.txt", "a")
+		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		w2revId1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(revId1, w2revId1)
+
+		// Change the ownership of `a.txt` in w2.
+		w2.Chown("a.txt", 1234, 5678)
+
+		// Status taking ownership into account.
+		opts := wstd.StatusOptions()
+		opts.Chown = true
+		status, err := Status(w2.Workspace, r.Repository, opts, td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{
+			"M a.txt",
+		}, statusFilesString(status))
+
+		// Status not taking ownership into account.
+		opts.Chown = false
+		status, err = Status(w2.Workspace, r.Repository, opts, td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{}, statusFilesString(status))
+	})
 }
 
 func statusFilesString(files []StatusFile) []string {

@@ -60,6 +60,7 @@ func (s StatusFiles) Summary() string {
 type StatusOptions struct {
 	PathFilter lib.PathFilter
 	Monitor    StagingEntryMonitor
+	Chown      bool
 }
 
 func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpFS lib.FS) (StatusFiles, error) {
@@ -83,7 +84,7 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}
-	revisionTemp, err := staging.MergeWithSnapshot(snapshot)
+	revisionTemp, err := staging.MergeWithSnapshot(snapshot, opts.Chown)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to merge staging and revision snapshot")
 	}

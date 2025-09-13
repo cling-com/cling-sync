@@ -75,7 +75,7 @@ func Merge(ws *Workspace, repository *lib.Repository, opts *MergeOptions) (lib.R
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get repository head")
 	}
-	staging, localChanges, wsRevision, err := buildLocalChanges(ws, tempFS, repository, opts.StagingMonitor)
+	staging, localChanges, wsRevision, err := buildLocalChanges(ws, tempFS, repository, opts)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build local changes")
 	}
@@ -137,7 +137,7 @@ func ForceCommit(ws *Workspace, repository *lib.Repository, opts *ForceCommitOpt
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create merge tmp dir")
 	}
 	defer tempFS.RemoveAll(".") //nolint:errcheck
-	staging, localChanges, _, err := buildLocalChanges(ws, tempFS, repository, opts.StagingMonitor)
+	staging, localChanges, _, err := buildLocalChanges(ws, tempFS, repository, &opts.MergeOptions)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build local changes")
 	}
@@ -304,7 +304,7 @@ func (m *Merger) findConflicts(
 					path,
 				)
 			}
-			if wsChangeExists && wsChange.Metadata.IsEqualRestorableAttributes(remoteChange.Metadata) {
+			if wsChangeExists && wsChange.Metadata.IsEqualRestorableAttributes(remoteChange.Metadata, m.opts.Chown) {
 				// The file did not change between the workspace revision and the repository revision.
 				continue
 			}
@@ -450,7 +450,7 @@ func (m *Merger) copyRepositoryFiles(
 				return lib.WrapErrorf(err, "failed to restore %s", targetPath)
 			}
 		}
-		if !existsInStaging || !md.IsEqualRestorableAttributes(stagingEntry.Metadata) {
+		if !existsInStaging || !md.IsEqualRestorableAttributes(stagingEntry.Metadata, m.opts.Chown) {
 			if err := restoreFileMode(m.ws.FS, targetPath, md, m.opts.Chown); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, targetPath)
 			}
@@ -501,7 +501,14 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 		if existsInStaging && existsInLocalChanges {
 			if !d.IsDir() &&
 				(stagingEntry.Metadata.MTime() != fileInfo.ModTime() || stagingEntry.Metadata.Size != fileInfo.Size()) {
-				return lib.Errorf("file %s was modified during merge - aborting merge", path)
+				return lib.Errorf(
+					"metadata of file %s was modified during merge (before: mtime=%s size=%d after: mtime=%s size=%d)- aborting merge",
+					path,
+					stagingEntry.Metadata.MTime(),
+					stagingEntry.Metadata.Size,
+					fileInfo.ModTime(),
+					fileInfo.Size(),
+				)
 			}
 			return nil
 		}
@@ -678,7 +685,7 @@ func buildLocalChanges(
 	ws *Workspace,
 	tempFS lib.FS,
 	repository *lib.Repository,
-	mon StagingEntryMonitor,
+	opts *MergeOptions,
 ) (stagingCache *lib.RevisionTempCache, localChangesCache *lib.RevisionTempCache, wsRevisionCache *lib.RevisionTempCache, err error) {
 	wsHead, err := ws.Head()
 	if err != nil {
@@ -700,7 +707,7 @@ func buildLocalChanges(
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create revision temp cache")
 	}
-	staging, err := NewStaging(ws.FS, ws.PathPrefix, nil, stagingTmpDir, mon)
+	staging, err := NewStaging(ws.FS, ws.PathPrefix, nil, stagingTmpDir, opts.StagingMonitor)
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to detect local changes")
 	}
@@ -712,7 +719,7 @@ func buildLocalChanges(
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to create staging cache")
 	}
-	localChanges, err := staging.MergeWithSnapshot(wsRevisionSnapshot)
+	localChanges, err := staging.MergeWithSnapshot(wsRevisionSnapshot, opts.Chown)
 	if err != nil {
 		return nil, nil, nil, lib.WrapErrorf(err, "failed to merge staging and workspace snapshot")
 	}

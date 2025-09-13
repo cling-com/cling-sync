@@ -106,7 +106,14 @@ func (s *Staging) Finalize() (*lib.RevisionTemp, error) {
 // Merge the staging snapshot with the revision snapshot.
 // The resulting `RevisionTemp` will contain all entries that transition from the
 // revision snapshot to the staging snapshot.
-func (s *Staging) MergeWithSnapshot(snapshot *lib.RevisionTemp) (*lib.RevisionTemp, error) { //nolint:funlen
+//
+// Parameters:
+//
+//	compareOwnership: If `true`, ownership of the file is compared.
+func (s *Staging) MergeWithSnapshot( //nolint:funlen
+	snapshot *lib.RevisionTemp,
+	compareOwnership bool,
+) (*lib.RevisionTemp, error) {
 	stgTemp, err := s.Finalize()
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
@@ -196,7 +203,7 @@ func (s *Staging) MergeWithSnapshot(snapshot *lib.RevisionTemp) (*lib.RevisionTe
 		}
 		c := lib.RevisionEntryPathCompare(stg, rev)
 		if c == 0 { //nolint:gocritic
-			if !stg.Metadata.IsEqualRestorableAttributes(rev.Metadata) {
+			if !stg.Metadata.IsEqualRestorableAttributes(rev.Metadata, compareOwnership) {
 				// Write an update.
 				if err := add(stg.Path, lib.RevisionEntryUpdate, stg.Metadata); err != nil {
 					return nil, err

@@ -258,15 +258,14 @@ func (fm *FileMetadata) MarshalledSize() int {
 // Compare all attributes that can be restored like `ModeAndPerm`, `Size`, `FileHash` etc.
 // Fields like `BirthtimeSec` and `BirthtimeNSec` are not compared because they cannot be restored.
 // The `BlockIds` are not compared because they should be the same if the `FileHash` is the same.
-func (fm *FileMetadata) IsEqualRestorableAttributes(other *FileMetadata) bool {
+func (fm *FileMetadata) IsEqualRestorableAttributes(other *FileMetadata, includeOwnership bool) bool {
 	return fm.ModeAndPerm == other.ModeAndPerm &&
 		fm.MTimeSec == other.MTimeSec &&
 		fm.MTimeNSec == other.MTimeNSec &&
 		fm.Size == other.Size &&
 		fm.FileHash == other.FileHash &&
 		fm.SymlinkTarget == other.SymlinkTarget &&
-		fm.UID == other.UID &&
-		fm.GID == other.GID
+		(!includeOwnership || (fm.UID == other.UID && fm.GID == other.GID))
 }
 
 func MarshalFileMetadata(f *FileMetadata, w io.Writer) error {

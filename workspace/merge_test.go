@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"io/fs"
+	"syscall"
 	"testing"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -307,33 +308,26 @@ func TestMerge(t *testing.T) {
 		assert.ErrorIs(err, lib.ErrHeadChanged)
 	})
 
-	t.Run("Chown", func(t *testing.T) {
+	t.Run("File ownership can be ignored when detecting local changes", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		// out := td.NewTestFS(t, td.NewFS(t))
 		r := td.NewTestRepository(t, td.NewFS(t))
 		w := wstd.NewTestWorkspace(t, r.Repository)
+		// We use a memory FS because with a real FS, we might not be able to change the ownership.
+		w2 := wstd.NewTestWorkspaceExtra(t, r.Repository, "", lib.NewMemoryFS(10000000))
 
 		w.Write("a.txt", "a")
 		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		// Create a revision "by hand" that changes the ownership of `a.txt`.
-		snapshot := r.RevisionSnapshot(revId1, nil)
-		assert.Equal(1, len(snapshot))
-		entry := snapshot[0]
-		assert.Equal("a.txt", entry.Path.String())
-		assert.Equal(lib.ModeAndPerm(0o600), entry.Metadata.ModeAndPerm)
+		w2revId1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(revId1, w2revId1)
 
-		commit, err := lib.NewCommit(r.Repository, td.NewFS(t))
-		assert.NoError(err)
-		entry.Type = lib.RevisionEntryUpdate
-		entry.Metadata.UID = 1234
-		entry.Metadata.GID = 5678
-		entry.Metadata.ModeAndPerm = 0o700
-		err = commit.Add(entry)
-		assert.NoError(err)
-		_, err = commit.Commit(td.CommitInfo())
+		// Change the ownership of `a.txt` in w2.
+		w2.Chown("a.txt", 1234, 5678)
+		w2.Chmod("a.txt", 0o700)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Merge the changes - this should fail because the GUID and/or UID should not exist.
@@ -349,7 +343,48 @@ func TestMerge(t *testing.T) {
 		assert.Equal(fs.FileMode(0o700).Perm(), w.Stat("a.txt").Mode().Perm())
 	})
 
-	t.Run("Test CpMonitor", func(t *testing.T) {
+	t.Run("File ownership can be ignored when detecting conflicts", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		// We use a memory FS because with a real FS, we might not be able to change the ownership.
+		w := wstd.NewTestWorkspaceExtra(t, r.Repository, "", lib.NewMemoryFS(10000000))
+		w2 := wstd.NewTestWorkspaceExtra(t, r.Repository, "", lib.NewMemoryFS(10000000))
+
+		w.Write("a.txt", "a")
+		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		w2revId1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(revId1, w2revId1)
+
+		// Change the ownership of `a.txt` in `w2` and merge.
+		w2.Chown("a.txt", 1234, 5678)
+		w2revId2, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Change the ownership of `a.txt` in `w`.
+		w.Chown("a.txt", 8765, 4321)
+
+		// Merge should fail if we take ownership into account.
+		opts := wstd.MergeOptions()
+		opts.Chown = true
+		_, err = Merge(w.Workspace, r.Repository, opts)
+		assert.Error(err, "MergeConflictsError")
+
+		// Merge should succeed if we ignore ownership.
+		opts.Chown = false
+		revId1, err = Merge(w.Workspace, r.Repository, opts)
+		assert.NoError(err)
+		assert.Equal(revId1, w2revId2)
+		// The ownership should not have been changed.
+		stat := w2.Stat("a.txt")
+		assert.Equal(uint32(1234), stat.Sys().(*syscall.Stat_t).Uid) //nolint:forcetypeassert
+		assert.Equal(uint32(5678), stat.Sys().(*syscall.Stat_t).Gid) //nolint:forcetypeassert
+	})
+
+	t.Run("CpMonitor", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))

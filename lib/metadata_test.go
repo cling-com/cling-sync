@@ -182,52 +182,54 @@ func TestFileMetadata(t *testing.T) {
 		)
 
 		actual := *base
-		assert.Equal(true, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(true, base.IsEqualRestorableAttributes(&actual, true))
 
 		actual = *base
 		actual.BlockIds = append(actual.BlockIds, td.BlockId("3"))
-		assert.Equal(true, base.IsEqualRestorableAttributes(&actual), "BlockIds are ignored")
+		assert.Equal(true, base.IsEqualRestorableAttributes(&actual, true), "BlockIds are ignored")
 
 		actual = *base
 		actual.ModeAndPerm += 1
-		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual, true))
 
 		actual = *base
 		actual.MTimeSec += 1
-		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual, true))
 
 		actual = *base
 		actual.MTimeNSec += 1
-		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual, true))
 
 		actual = *base
 		actual.Size += 1
-		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual, true))
 
 		actual = *base
 		actual.FileHash[0] += 1
-		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual, true))
 
 		actual = *base
 		actual.SymlinkTarget += "_modified"
-		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual, true))
 
 		actual = *base
 		actual.UID += 1
-		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual, true))
+		assert.Equal(true, base.IsEqualRestorableAttributes(&actual, false))
 
 		actual = *base
 		actual.GID += 1
-		assert.Equal(false, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(false, base.IsEqualRestorableAttributes(&actual, true))
+		assert.Equal(true, base.IsEqualRestorableAttributes(&actual, false))
 
 		// Birthtime is ignored because it is not restorable (on most systems).
 		actual = *base
 		actual.BirthtimeSec += 1
-		assert.Equal(true, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(true, base.IsEqualRestorableAttributes(&actual, true))
 
 		actual = *base
 		actual.BirthtimeNSec += 1
-		assert.Equal(true, base.IsEqualRestorableAttributes(&actual))
+		assert.Equal(true, base.IsEqualRestorableAttributes(&actual, true))
 	})
 
 	t.Run("NewEmptyDirFileMetadata", func(t *testing.T) {

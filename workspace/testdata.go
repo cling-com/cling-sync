@@ -27,8 +27,17 @@ func (wstd WorkspaceTestData) NewTestWorkspaceWithPathPrefix(
 	pathPrefix string,
 ) *TestWorkspace {
 	tb.Helper()
+	return wstd.NewTestWorkspaceExtra(tb, repository, pathPrefix, td.NewFS(tb))
+}
+
+func (wstd WorkspaceTestData) NewTestWorkspaceExtra(
+	tb testing.TB,
+	repository *lib.Repository,
+	pathPrefix string,
+	fs lib.FS,
+) *TestWorkspace {
+	tb.Helper()
 	assert := lib.NewAssert(tb)
-	fs := td.NewFS(tb)
 	prefix, err := ValidatePathPrefix(pathPrefix)
 	assert.NoError(err)
 	workspace, err := NewWorkspace(fs, td.NewFS(tb), RemoteRepository("test"), prefix)
@@ -53,7 +62,7 @@ func (wstd WorkspaceTestData) CommitMonitor() *TestCommitMonitor {
 }
 
 func (wstd WorkspaceTestData) StatusOptions() *StatusOptions {
-	return &StatusOptions{nil, wstd.StagingMonitor()}
+	return &StatusOptions{nil, wstd.StagingMonitor(), true}
 }
 
 func (wstd WorkspaceTestData) MergeOptions() *MergeOptions {

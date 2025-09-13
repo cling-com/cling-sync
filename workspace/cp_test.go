@@ -103,27 +103,21 @@ func TestCp(t *testing.T) {
 		out := td.NewTestFS(t, td.NewFS(t))
 		r := td.NewTestRepository(t, td.NewFS(t))
 		w := wstd.NewTestWorkspace(t, r.Repository)
+		// We use a memory FS because with a real FS, we might not be able to change the ownership.
+		w2 := wstd.NewTestWorkspaceExtra(t, r.Repository, "", lib.NewMemoryFS(10000000))
 
 		w.Write("a.txt", "a")
 		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		// Create a revision "by hand" that changes the ownership of `a.txt`.
-		snapshot := r.RevisionSnapshot(revId1, nil)
-		assert.Equal(1, len(snapshot))
-		entry := snapshot[0]
-		assert.Equal("a.txt", entry.Path.String())
-		assert.Equal(lib.ModeAndPerm(0o600), entry.Metadata.ModeAndPerm)
+		w2revId1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(revId1, w2revId1)
 
-		commit, err := lib.NewCommit(r.Repository, td.NewFS(t))
-		assert.NoError(err)
-		entry.Type = lib.RevisionEntryUpdate
-		entry.Metadata.UID = 1234
-		entry.Metadata.GID = 5678
-		entry.Metadata.ModeAndPerm = 0o700
-		err = commit.Add(entry)
-		assert.NoError(err)
-		revId2, err := commit.Commit(td.CommitInfo())
+		// Change the ownership of `a.txt` in w2.
+		w2.Chown("a.txt", 1234, 5678)
+		w2.Chmod("a.txt", 0o700)
+		revId2, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Try to copy the file with `Chown` enabled.

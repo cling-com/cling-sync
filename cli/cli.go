@@ -472,12 +472,14 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		NoProgress bool
 		Exclude    lib.ExtendedGlobPatterns
 		NoSummary  bool
+		Chown      bool
 	}{}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Only show the number of added, updated, and deleted files")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	flags.BoolVar(&args.Chown, "chown", false, "Respect file ownership changes from the repository.")
 	flags.BoolVar(&args.NoSummary, "no-summary", false, "Do not show a summary at the end")
 	globPatternFlag(
 		flags,
@@ -528,7 +530,7 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		return err //nolint:wrapcheck
 	}
 	mon := NewStagingMonitor(args.Verbose, args.NoProgress)
-	opts := &ws.StatusOptions{PathFilter: pathFilter, Monitor: mon}
+	opts := &ws.StatusOptions{PathFilter: pathFilter, Monitor: mon, Chown: args.Chown}
 	result, err := ws.Status(workspace, repository, opts, tmpFS)
 	mon.Close()
 	if err != nil {
