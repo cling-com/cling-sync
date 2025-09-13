@@ -27,7 +27,7 @@ type Staging struct {
 // `.cling` is always ignored.
 // If `pathPrefix` is not empty, it will be prepended to all paths *after* the
 // `pathFilter` is applied.
-func NewStaging(
+func NewStaging( //nolint:funlen
 	src lib.FS,
 	pathPrefix lib.Path,
 	pathFilter lib.PathFilter,
@@ -44,6 +44,10 @@ func NewStaging(
 			return err
 		}
 		if path_ == "." {
+			return nil
+		}
+		if lib.IsAtomicWriteTempFile(path_) {
+			_ = src.Remove(path_)
 			return nil
 		}
 		path, err := lib.NewPath(path_)

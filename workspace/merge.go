@@ -601,7 +601,8 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 		}
 		return lib.WrapErrorf(err, "failed to create parent directory %s", target)
 	}
-	f, err := m.ws.FS.OpenWrite(target)
+	tmpPath := lib.AtomicWriteTempFilename(target)
+	f, err := m.ws.FS.OpenWrite(tmpPath)
 	if err != nil {
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 			mon.OnEnd(entry, target)
@@ -634,6 +635,14 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 			return nil
 		}
 		return lib.WrapErrorf(err, "failed to close file %s", target)
+	}
+	if err := m.ws.FS.Rename(tmpPath, target); err != nil {
+		_ = m.ws.FS.Remove(tmpPath)
+		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
+			mon.OnEnd(entry, target)
+			return nil
+		}
+		return lib.WrapErrorf(err, "failed to rename %s to %s", tmpPath, target)
 	}
 	if err := m.ws.FS.Chmod(target, md.ModeAndPerm.AsFileMode()); err != nil {
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {

@@ -460,10 +460,21 @@ func WriteFile(fs FS, name string, data []byte) error {
 	return err
 }
 
+func AtomicWriteTempFilename(name string) string {
+	return filepath.Join(
+		filepath.Dir(name),
+		".cling_sync_tmp_"+filepath.Base(name)+"."+strconv.FormatInt(time.Now().UnixNano(), 16),
+	)
+}
+
+func IsAtomicWriteTempFile(name string) bool {
+	return strings.HasPrefix(filepath.Base(name), ".cling_sync_tmp_")
+}
+
 // Write the data to a temporary file, set the permissions, and rename it to the target file.
 // In case of an error, the temporary file is deleted.
 func AtomicWriteFile(fs FS, name string, perm fs.FileMode, data ...[]byte) error {
-	tmpPath := name + ".tmp." + strconv.FormatInt(time.Now().UnixNano(), 16)
+	tmpPath := AtomicWriteTempFilename(name)
 	f, err := fs.OpenWrite(tmpPath)
 	if err != nil {
 		return err
