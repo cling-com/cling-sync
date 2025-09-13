@@ -374,7 +374,7 @@ func checkConsistency(t *testing.T, newSut func() FS) {
 		assert.NoError(err)
 		stat, err := sut.Stat("a.txt")
 		assert.NoError(err)
-		assert.Equal(mtime.Unix(), stat.ModTime().Unix())
+		assert.Equal(mtime.UnixNano(), stat.ModTime().UnixNano())
 	})
 
 	t.Run("Chmtime should fail if the file does not exist", func(t *testing.T) {
@@ -543,6 +543,76 @@ func checkConsistency(t *testing.T, newSut func() FS) {
 		})
 		assert.NoError(err)
 		assert.Equal([]string{"a/b/c", "a/b/c/d.txt", "a/b/c/e.txt"}, actual)
+		// Walk the root directory.
+		actual = []string{}
+		err = sut.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+			assert.NoError(err)
+			actual = append(actual, path)
+			return nil
+		})
+		assert.NoError(err)
+		assert.Equal([]string{".", "a", "a/b", "a/b/c", "a/b/c/d.txt", "a/b/c/e.txt", "a/b/f.txt"}, actual)
+	})
+
+	t.Run("WalkDir an empty directory", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+		actual := []string{}
+		err := sut.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+			assert.NoError(err)
+			actual = append(actual, path)
+			return nil
+		})
+		assert.NoError(err)
+		assert.Equal([]string{"."}, actual)
+	})
+
+	t.Run("WalkDir with SkipDir everything", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+		writeFile(t, sut, "a.txt", "a")
+		// In an earlier version, MemoryFS.WalkDir would just return the last error regardless
+		// if it was a `SkipDir` error or not.
+		err := sut.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+			return filepath.SkipDir
+		})
+		assert.NoError(err)
+	})
+
+	t.Run("WalkDir with SkipDir some directory", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+		assert.NoError(sut.MkdirAll("dir1"))
+		assert.NoError(sut.MkdirAll("dir1b"))
+		writeFile(t, sut, "dir1/a.txt", "a")
+		writeFile(t, sut, "dir1/b.txt", "a")
+		writeFile(t, sut, "dir1a.txt", "a")
+		writeFile(t, sut, "dir1b/a.txt", "a")
+		actual := []string{}
+		err := sut.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+			if path == "dir1" && d.IsDir() {
+				return filepath.SkipDir
+			}
+			assert.NoError(err)
+			actual = append(actual, path)
+			return nil
+		})
+		assert.NoError(err)
+		assert.Equal([]string{".", "dir1a.txt", "dir1b", "dir1b/a.txt"}, actual)
+	})
+
+	t.Run("WalkDir with last error", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+		writeFile(t, sut, "a.txt", "a")
+		err := sut.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+			return Errorf("Boom")
+		})
+		assert.Error(err, "Boom")
 	})
 
 	t.Run("WalkDir on a MkSub", func(t *testing.T) {

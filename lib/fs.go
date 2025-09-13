@@ -3,6 +3,7 @@ package lib
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -77,12 +78,13 @@ func (r errorReader) Read(p []byte) (n int, err error) {
 }
 
 type MemoryFileInfo struct {
-	name    string
-	mode    fs.FileMode
-	gid     uint32
-	uid     uint32
-	modTime time.Time
-	content bytes.Buffer
+	name        string
+	mode        fs.FileMode
+	gid         uint32
+	uid         uint32
+	modTimeSec  int64
+	modTimeNSec int32
+	content     bytes.Buffer
 }
 
 func (f *MemoryFileInfo) Name() string {
@@ -98,7 +100,7 @@ func (f *MemoryFileInfo) Mode() fs.FileMode {
 }
 
 func (f *MemoryFileInfo) ModTime() time.Time {
-	return f.modTime
+	return time.Unix(f.modTimeSec, int64(f.modTimeNSec))
 }
 
 func (f *MemoryFileInfo) IsDir() bool {
@@ -129,7 +131,7 @@ type MemoryFS struct {
 
 func NewMemoryFS(maxMemory int64) *MemoryFS {
 	f := &MemoryFS{make(map[string]*MemoryFileInfo), maxMemory, 0}
-	f.files["."] = &MemoryFileInfo{".", 0o700 | os.ModeDir, 1000, 1001, time.Now(), bytes.Buffer{}}
+	f.create(".", 0o700|os.ModeDir)
 	return f
 }
 
@@ -137,8 +139,7 @@ func (f *MemoryFS) OpenWrite(name string) (io.WriteCloser, error) {
 	if file, ok := f.files[name]; ok && file.mode.IsDir() {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.EISDIR}
 	}
-	file := &MemoryFileInfo{name, 0o600, 1000, 1001, time.Now(), bytes.Buffer{}}
-	f.files[name] = file
+	file := f.create(name, 0o600)
 	return &memoryFileWriter{&file.content, f, false}, nil
 }
 
@@ -176,7 +177,8 @@ func (f *MemoryFS) Chmtime(name string, mtime time.Time) error {
 	if !ok {
 		return fs.ErrNotExist
 	}
-	file.modTime = mtime
+	file.modTimeSec = mtime.Unix()
+	file.modTimeNSec = int32(mtime.Nanosecond()) //nolint:gosec
 	return nil
 }
 
@@ -222,7 +224,7 @@ func (f *MemoryFS) Mkdir(path string) error {
 		return fs.ErrExist
 	}
 	for {
-		f.files[path] = &MemoryFileInfo{path, 0o700 | os.ModeDir, 1000, 1001, time.Now(), bytes.Buffer{}}
+		f.create(path, 0o700|os.ModeDir)
 		path = filepath.Dir(path)
 		if path == "." {
 			break
@@ -231,7 +233,7 @@ func (f *MemoryFS) Mkdir(path string) error {
 			return fs.ErrNotExist
 		}
 	}
-	f.files[path] = &MemoryFileInfo{path, 0o700 | os.ModeDir, 1000, 1001, time.Now(), bytes.Buffer{}}
+	f.create(path, 0o700|os.ModeDir)
 	return nil
 }
 
@@ -241,7 +243,7 @@ func (f *MemoryFS) MkdirAll(path string) error {
 			file.mode |= 0o700
 			return nil
 		}
-		f.files[path] = &MemoryFileInfo{path, 0o700 | os.ModeDir, 1000, 1001, time.Now(), bytes.Buffer{}}
+		f.create(path, 0o700|os.ModeDir)
 		path = filepath.Dir(path)
 	}
 	return nil
@@ -306,7 +308,7 @@ func (f *MemoryFS) MkSub(path string) (FS, error) {
 	if _, ok := f.files[path]; ok {
 		return nil, fs.ErrExist
 	}
-	f.files[path] = &MemoryFileInfo{path, 0o700 | os.ModeDir, 1000, 1001, time.Now(), bytes.Buffer{}}
+	f.create(path, 0o700|os.ModeDir)
 	return &subMemoryFS{f, path}, nil
 }
 
@@ -322,10 +324,20 @@ func (f *MemoryFS) WalkDir(path string, fn fs.WalkDirFunc) error {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	skipDir := ""
 	for _, name := range names {
 		d := f.files[name]
+		if skipDir != "" {
+			if strings.HasPrefix(name, skipDir) {
+				continue
+			}
+		}
 		if err := fn(name, d, nil); err != nil {
-			return err
+			if errors.Is(err, fs.SkipDir) {
+				skipDir = name + "/"
+			} else {
+				return err
+			}
 		}
 	}
 	return nil
@@ -496,4 +508,19 @@ func AtomicWriteFile(fs FS, name string, perm fs.FileMode, data ...[]byte) error
 		return err
 	}
 	return nil
+}
+
+func (f *MemoryFS) create(path string, mode fs.FileMode) *MemoryFileInfo {
+	mtime := time.Now()
+	file := &MemoryFileInfo{
+		path,
+		mode,
+		1000,
+		1001,
+		mtime.Unix(),
+		int32(mtime.Nanosecond()), //nolint:gosec
+		bytes.Buffer{},
+	}
+	f.files[path] = file
+	return file
 }
