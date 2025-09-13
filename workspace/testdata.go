@@ -37,11 +37,11 @@ func (wstd WorkspaceTestData) NewTestWorkspaceWithPathPrefix(
 }
 
 func (wstd WorkspaceTestData) CpMonitor() *TestCpMonitor {
-	return &TestCpMonitor{CpOnExistsAbort}
+	return NewTestCpMonitor(CpOnExistsAbort)
 }
 
 func (wstd WorkspaceTestData) CpMonitorOverwrite() *TestCpMonitor {
-	return &TestCpMonitor{CpOnExistsOverwrite}
+	return NewTestCpMonitor(CpOnExistsOverwrite)
 }
 
 func (wstd WorkspaceTestData) StagingMonitor() *TestStagingMonitor {
@@ -65,23 +65,37 @@ func (wstd WorkspaceTestData) LsOptions(revisionId lib.RevisionId) *LsOptions {
 }
 
 type TestCpMonitor struct {
-	Exists CpOnExists
+	Exists        CpOnExists
+	OnStartCalls  []*lib.RevisionEntry
+	OnWriteCalls  []*lib.RevisionEntry
+	OnExistsCalls []*lib.RevisionEntry
+	OnEndCalls    []*lib.RevisionEntry
+	OnErrorCalls  []*lib.RevisionEntry
+}
+
+func NewTestCpMonitor(exists CpOnExists) *TestCpMonitor {
+	return &TestCpMonitor{Exists: exists} //nolint:exhaustruct
 }
 
 func (m *TestCpMonitor) OnStart(entry *lib.RevisionEntry, targetPath string) {
+	m.OnStartCalls = append(m.OnStartCalls, entry)
 }
 
 func (m *TestCpMonitor) OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte) {
+	m.OnWriteCalls = append(m.OnWriteCalls, entry)
 }
 
 func (m *TestCpMonitor) OnEnd(entry *lib.RevisionEntry, targetPath string) {
+	m.OnEndCalls = append(m.OnEndCalls, entry)
 }
 
 func (m *TestCpMonitor) OnError(entry *lib.RevisionEntry, targetPath string, err error) CpOnError {
+	m.OnErrorCalls = append(m.OnErrorCalls, entry)
 	return CpOnErrorAbort
 }
 
 func (m *TestCpMonitor) OnExists(entry *lib.RevisionEntry, targetPath string) CpOnExists {
+	m.OnExistsCalls = append(m.OnExistsCalls, entry)
 	return m.Exists
 }
 

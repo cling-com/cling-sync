@@ -548,7 +548,8 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 	return nil
 }
 
-func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, target string) error {
+func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, target string) error { //nolint:funlen
+	mon.OnStart(entry, target)
 	md := entry.Metadata
 	if md.ModeAndPerm.IsDir() {
 		if err := m.ws.FS.MkdirAll(target); err != nil {
@@ -608,6 +609,7 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 		}
 		return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, target)
 	}
+	mon.OnEnd(entry, target)
 	return nil
 }
 

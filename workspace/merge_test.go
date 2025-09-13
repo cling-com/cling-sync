@@ -349,6 +349,37 @@ func TestMerge(t *testing.T) {
 		assert.Equal(fs.FileMode(0o700).Perm(), w.Stat("a.txt").Mode().Perm())
 	})
 
+	t.Run("Test CpMonitor", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		// Create a commit with only local changes. We don't expect any calls to the CpMonitor.
+		w.Write("a.txt", "a")
+		mon := wstd.CpMonitor()
+		opts := wstd.MergeOptions()
+		opts.CpMonitor = mon
+		_, err := Merge(w.Workspace, r.Repository, opts)
+		assert.NoError(err)
+		assert.Equal(0, len(mon.OnStartCalls))
+		assert.Equal(0, len(mon.OnWriteCalls))
+		assert.Equal(0, len(mon.OnExistsCalls))
+		assert.Equal(0, len(mon.OnEndCalls))
+		assert.Equal(0, len(mon.OnErrorCalls))
+
+		// Create a second workspace and merge. This should trigger the CpMonitor.
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+		_, err = Merge(w2.Workspace, r.Repository, opts)
+		assert.NoError(err)
+
+		assert.Equal(1, len(mon.OnStartCalls))
+		assert.Equal(1, len(mon.OnWriteCalls))
+		assert.Equal(0, len(mon.OnExistsCalls))
+		assert.Equal(1, len(mon.OnEndCalls))
+		assert.Equal(0, len(mon.OnErrorCalls))
+	})
+
 	// todo: implement
 	// t.Run("MTime is restored", func(t *testing.T) {
 	// 	// Make sure that mtime is restored even for directories.
