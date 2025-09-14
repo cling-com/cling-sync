@@ -196,7 +196,7 @@ func (r *RepositoryAPI) ReadFile(this js.Value, args []js.Value) any {
 			return
 		}
 		filter := lib.NewPathInclusionFilter([]string{path})
-		r := snapshot.Reader(filter)
+		r := snapshot.Reader(lib.RevisionEntryPathFilter(filter))
 		file, err := r.Read()
 		if errors.Is(err, io.EOF) {
 			reject(js.ValueOf(fmt.Sprintf("file not found: %s", path)))

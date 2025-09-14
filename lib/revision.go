@@ -92,36 +92,15 @@ func UnmarshalRevision(r io.Reader) (*Revision, error) {
 }
 
 // Compare two revision entries by their full path.
-//
-// The sorting order is:
-//   - directory
-//   - files inside the directory
-//   - sub-directory
-//   - files inside the sub-directory
-//   - ...
-//
-// Example:
-//   - a.txt
-//   - z.txt
-//   - sub/
-//   - sub/a.txt
-//   - sub/z.txt
-//   - sub/sub/
-//   - sub/sub/a.txt
-//   - sub/sub/z.txt
 func RevisionEntryPathCompare(a, b *RevisionEntry) int {
-	key := func(e *RevisionEntry) string {
-		p := strings.ReplaceAll(e.Path.String(), "/", "/1")
-		if e.Metadata.ModeAndPerm.IsDir() {
-			return p
-		}
-		lastSlash := strings.LastIndex(p, "/")
-		if lastSlash == -1 || lastSlash == len(p)-1 {
-			return "0" + p
-		}
-		return p[:lastSlash] + "/0" + p[lastSlash+2:]
-	}
-	return strings.Compare(key(a), key(b))
+	return strings.Compare(
+		PathCompareString(a.Path, a.Metadata.ModeAndPerm.IsDir()),
+		PathCompareString(b.Path, b.Metadata.ModeAndPerm.IsDir()),
+	)
+}
+
+func RevisionEntryPathCompareString(e *RevisionEntry) string {
+	return PathCompareString(e.Path, e.Metadata.ModeAndPerm.IsDir())
 }
 
 type RevisionEntry struct {
@@ -134,9 +113,9 @@ func NewRevisionEntry(path Path, typ RevisionEntryType, md *FileMetadata) (Revis
 	return RevisionEntry{Path: path, Type: typ, Metadata: md}, nil
 }
 
-func (se *RevisionEntry) MarshalledSize() int {
-	return se.Path.Len() + 2 + 1 + // Path + len(Path) + Type
-		se.Metadata.MarshalledSize()
+func MarshalledSize(r *RevisionEntry) int {
+	return r.Path.Len() + 2 + 1 + // Path + len(Path) + Type
+		r.Metadata.MarshalledSize()
 }
 
 func MarshalRevisionEntry(r *RevisionEntry, w io.Writer) error {
@@ -219,4 +198,28 @@ func (rr *RevisionReader) Read() (*RevisionEntry, error) {
 		return nil, WrapErrorf(err, "failed to unmarshal revision entry")
 	}
 	return re, nil
+}
+
+func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) (*TempWriter[RevisionEntry], error) {
+	return NewTempWriter(
+		RevisionEntryPathCompare,
+		MarshalRevisionEntry,
+		MarshalledSize,
+		UnmarshalRevisionEntry,
+		fs,
+		maxChunkSize,
+	)
+}
+
+func NewRevisionEntryTempCache(temp *Temp[RevisionEntry], maxChunksInCache int) (*TempCache[RevisionEntry], error) {
+	return NewTempCache(temp, RevisionEntryPathCompareString, maxChunksInCache)
+}
+
+func RevisionEntryPathFilter(pathFilter PathFilter) func(e *RevisionEntry) bool {
+	if pathFilter == nil {
+		return nil
+	}
+	return func(e *RevisionEntry) bool {
+		return pathFilter.Include(e.Path, e.Metadata.ModeAndPerm.IsDir())
+	}
 }

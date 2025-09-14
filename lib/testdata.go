@@ -416,7 +416,7 @@ func (r *TestRepository) RevisionSnapshot(revisionId RevisionId, pathFilter Path
 	snapshot, err := NewRevisionSnapshot(r.Repository, revisionId, tmpFS)
 	r.assert.NoError(err)
 	defer snapshot.Remove() //nolint:errcheck
-	reader := snapshot.Reader(pathFilter)
+	reader := snapshot.Reader(RevisionEntryPathFilter(pathFilter))
 	entries := []*RevisionEntry{}
 	for {
 		entry, err := reader.Read()
@@ -480,7 +480,7 @@ func (r *TestRepository) RevisionInfos(revisionId RevisionId) []TestRevisionEntr
 	return r.RevisionEntryReaderInfos(NewRevisionReader(r.Repository, &revision))
 }
 
-func (r *TestRepository) RevisionTempInfos(temp *RevisionTemp) []TestRevisionEntryInfo {
+func (r *TestRepository) RevisionTempInfos(temp *Temp[RevisionEntry]) []TestRevisionEntryInfo {
 	r.t.Helper()
 	return r.RevisionEntryReaderInfos(temp.Reader(nil))
 }

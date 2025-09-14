@@ -90,7 +90,7 @@ func Ls(repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, er
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
 	defer snapshot.Remove() //nolint:errcheck
-	reader := snapshot.Reader(opts.PathFilter)
+	reader := snapshot.Reader(lib.RevisionEntryPathFilter(opts.PathFilter))
 	files := []LsFile{}
 	for {
 		re, err := reader.Read()

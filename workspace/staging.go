@@ -18,8 +18,8 @@ type StagingEntryMonitor interface {
 type Staging struct {
 	PathFilter lib.PathFilter
 	pathPrefix lib.Path
-	tempWriter *lib.RevisionTempWriter
-	temp       *lib.RevisionTemp
+	tempWriter *lib.TempWriter[lib.RevisionEntry]
+	temp       *lib.Temp[lib.RevisionEntry]
 	tmpFS      lib.FS
 }
 
@@ -34,7 +34,7 @@ func NewStaging( //nolint:funlen
 	tmp lib.FS,
 	mon StagingEntryMonitor,
 ) (*Staging, error) {
-	tempWriter, err := lib.NewRevisionTempWriter(lib.RevisionId{}, tmp, lib.DefaultRevisionTempChunkSize)
+	tempWriter, err := lib.NewRevisionEntryTempWriter(tmp, lib.DefaultTempChunkSize)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create new RevisionTempWriter")
 	}
@@ -96,7 +96,7 @@ func NewStaging( //nolint:funlen
 	return staging, nil
 }
 
-func (s *Staging) Finalize() (*lib.RevisionTemp, error) {
+func (s *Staging) Finalize() (*lib.Temp[lib.RevisionEntry], error) {
 	if s.temp == nil {
 		t, err := s.tempWriter.Finalize()
 		if err != nil {
@@ -115,9 +115,9 @@ func (s *Staging) Finalize() (*lib.RevisionTemp, error) {
 //
 //	compareOwnership: If `true`, ownership of the file is compared.
 func (s *Staging) MergeWithSnapshot( //nolint:funlen
-	snapshot *lib.RevisionTemp,
+	snapshot *lib.Temp[lib.RevisionEntry],
 	compareOwnership bool,
-) (*lib.RevisionTemp, error) {
+) (*lib.Temp[lib.RevisionEntry], error) {
 	stgTemp, err := s.Finalize()
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
@@ -131,13 +131,13 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			revFilter = include
 		}
 	}
-	revReader := snapshot.Reader(revFilter)
-	stgReader := stgTemp.Reader(s.PathFilter)
+	revReader := snapshot.Reader(lib.RevisionEntryPathFilter(revFilter))
+	stgReader := stgTemp.Reader(lib.RevisionEntryPathFilter(s.PathFilter))
 	final, err := s.tmpFS.MkSub("final")
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create commit directory")
 	}
-	finalWriter, err := lib.NewRevisionTempWriter(snapshot.RevisionId, final, lib.MaxBlockDataSize)
+	finalWriter, err := lib.NewRevisionEntryTempWriter(final, lib.MaxBlockDataSize)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create new RevisionTempWriter")
 	}

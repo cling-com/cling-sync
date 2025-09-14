@@ -11,7 +11,7 @@ var ErrEmptyCommit = Errorf("empty commit")
 type Commit struct {
 	BaseRevision RevisionId
 	repository   *Repository
-	tempWriter   *RevisionTempWriter
+	tempWriter   *TempWriter[RevisionEntry]
 	tmpFS        FS
 	ensureDirs   []RevisionEntry
 }
@@ -21,7 +21,7 @@ func NewCommit(repository *Repository, tmpFS FS) (*Commit, error) {
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read head revision")
 	}
-	tempWriter, err := NewRevisionTempWriter(head, tmpFS, DefaultRevisionTempChunkSize)
+	tempWriter, err := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create new RevisionTempWriter")
 	}
@@ -38,15 +38,19 @@ func (c *Commit) Add(entry *RevisionEntry) error {
 // Make sure that the directory `path` exists in the current head of the repository.
 // If some parent directory does not exist, it will be created with the given
 // `NewEmptyDirFileMetadata` metadata.
-func (c *Commit) EnsureDirExists(path Path, snapshotCache *RevisionTempCache) error {
+func (c *Commit) EnsureDirExists(
+	path Path,
+	snapshotCache *TempCache[RevisionEntry],
+	snapshotRevisionId RevisionId,
+) error {
 	if path.IsEmpty() {
 		return nil
 	}
-	if c.BaseRevision != snapshotCache.Source.RevisionId {
+	if c.BaseRevision != snapshotRevisionId {
 		return Errorf(
-			"the commit commit's base revision %s does not match the snapshot revision %s",
+			"the commit's base revision %s does not match the snapshot revision %s",
 			c.BaseRevision,
-			snapshotCache.Source.RevisionId,
+			snapshotRevisionId,
 		)
 	}
 	md := NewEmptyDirFileMetadata(time.Now())
@@ -59,7 +63,7 @@ func (c *Commit) EnsureDirExists(path Path, snapshotCache *RevisionTempCache) er
 			}
 		}
 		// Check whether it is a file.
-		existing, found, err := snapshotCache.Get(p, false)
+		existing, found, err := snapshotCache.Get(PathCompareString(p, false))
 		if err != nil {
 			return WrapErrorf(err, "failed to get path %s from remote revision", p)
 		}
@@ -71,7 +75,7 @@ func (c *Commit) EnsureDirExists(path Path, snapshotCache *RevisionTempCache) er
 			)
 		}
 		// Check whether the directory already exists.
-		_, found, err = snapshotCache.Get(p, true)
+		_, found, err = snapshotCache.Get(PathCompareString(p, true))
 		if err != nil {
 			return WrapErrorf(err, "failed to get path %s from remote revision", p)
 		}
@@ -100,14 +104,13 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to finalize temp writer")
 	}
+	defer sorted.Remove() //nolint:errcheck
 	if c.ensureDirs != nil {
-		defer sorted.Remove() //nolint:errcheck
 		sorted, err = c.appendEnsureDirs(sorted)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to append ensured dirs")
 		}
 	}
-	defer sorted.Remove() //nolint:errcheck
 	if sorted.Chunks() == 0 {
 		return RevisionId{}, ErrEmptyCommit
 	}
@@ -140,23 +143,23 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	return revisionId, nil
 }
 
-func (c *Commit) appendEnsureDirs(sorted *RevisionTemp) (*RevisionTemp, error) {
+func (c *Commit) appendEnsureDirs(sorted *Temp[RevisionEntry]) (*Temp[RevisionEntry], error) {
 	// We have to rewrite the whole commit because we have to check whether
 	// the directories we want to add already exist.
 	tmpFS, err := c.tmpFS.MkSub("ensuredirs")
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create temporary directory")
 	}
-	tempWriter, err := NewRevisionTempWriter(sorted.RevisionId, tmpFS, DefaultRevisionTempChunkSize)
+	tempWriter, err := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create new RevisionTempWriter")
 	}
-	cache, err := NewRevisionTempCache(sorted, 10)
+	cache, err := NewRevisionEntryTempCache(sorted, 10)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create revision temp cache")
 	}
 	for _, entry := range c.ensureDirs {
-		_, found, err := cache.Get(entry.Path, true)
+		_, found, err := cache.Get(PathCompareString(entry.Path, true))
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to get path %s from remote revision", entry.Path)
 		}

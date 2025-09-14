@@ -10,7 +10,7 @@ import (
 	"slices"
 )
 
-func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS) (*RevisionTemp, error) {
+func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS) (*Temp[RevisionEntry], error) {
 	// Build a list of all revisions.
 	revisions := make([]*Revision, 0)
 	r := revisionId
@@ -22,7 +22,7 @@ func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS
 		revisions = append(revisions, &revision)
 		r = revision.Parent
 	}
-	tempWriter, err := NewRevisionTempWriter(revisionId, tmpFS, DefaultRevisionTempChunkSize)
+	tempWriter, err := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create new RevisionTempWriter")
 	}
@@ -41,7 +41,7 @@ func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS
 func revisionNWayMerge(
 	repository *Repository,
 	revisions []*Revision,
-	tempWriter *RevisionTempWriter,
+	tempWriter *TempWriter[RevisionEntry],
 ) error {
 	readers := make([]*RevisionReader, len(revisions))
 	heap := []*RevisionEntry{}

@@ -34,13 +34,13 @@ func TestRevisionEntry(t *testing.T) {
 		sut := td.RevisionEntry("a.txt", RevisionEntryAdd)
 		err := MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
-		assert.Equal(sut.MarshalledSize(), buf.Len())
+		assert.Equal(MarshalledSize(sut), buf.Len())
 
 		sut = td.RevisionEntry("a.txt", RevisionEntryDelete)
 		buf.Reset()
 		err = MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
-		assert.Equal(sut.MarshalledSize(), buf.Len())
+		assert.Equal(MarshalledSize(sut), buf.Len())
 	})
 
 	t.Run("RevisionPathCompare", func(t *testing.T) {
@@ -110,5 +110,58 @@ func TestRevision(t *testing.T) {
 		read, err := UnmarshalRevision(&buf)
 		assert.NoError(err)
 		assert.Equal(sut, read)
+	})
+}
+
+func TestRevisionEntryTemp(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Sort order is files, directories, and subdirectories", func(t *testing.T) {
+		// This basically makes sure that we always use `RevisionEntryPathCompare`.
+		t.Parallel()
+		assert := NewAssert(t)
+		fs := td.NewFS(t)
+		// Use a small chunk size to force rotation.
+		sut, err := NewRevisionEntryTempWriter(fs, 700)
+		assert.NoError(err)
+
+		add := func(path string, mode ModeAndPerm) {
+			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})
+			assert.NoError(err)
+		}
+
+		add("sub", ModeDir)
+		add("sub/sub", ModeDir)
+		add(".a.txt", 0)
+		add("a.txt", 0)
+		add("z.txt", 0)
+		add("sub/.a.txt", 0)
+		add("sub/a.txt", 0)
+		add("sub/z.txt", 0)
+		add("sub/sub/.a.txt", 0)
+		add("sub/sub/a.txt", 0)
+		add("sub/sub/z.txt", 0)
+
+		temp, err := sut.Finalize()
+		assert.NoError(err)
+		assert.Equal(3, sut.chunks, "should be multiple chunks")
+		merged := readAllRevsisionTemp(t, temp, nil)
+		actualPaths := make([]string, len(merged))
+		for i, entry := range merged {
+			actualPaths[i] = entry.Path.String()
+		}
+		assert.Equal([]string{
+			".a.txt",
+			"a.txt",
+			"z.txt",
+			"sub",
+			"sub/.a.txt",
+			"sub/a.txt",
+			"sub/z.txt",
+			"sub/sub",
+			"sub/sub/.a.txt",
+			"sub/sub/a.txt",
+			"sub/sub/z.txt",
+		}, actualPaths)
 	})
 }

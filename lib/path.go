@@ -157,3 +157,33 @@ func (cpf *AllPathFilter) Include(p Path, isDir bool) bool {
 	}
 	return true
 }
+
+// Create a string that can be used to sort two paths.
+//
+// The sorting order is:
+//   - directory
+//   - files inside the directory
+//   - sub-directory
+//   - files inside the sub-directory
+//   - ...
+//
+// Example:
+//   - a.txt
+//   - z.txt
+//   - sub/
+//   - sub/a.txt
+//   - sub/z.txt
+//   - sub/sub/
+//   - sub/sub/a.txt
+//   - sub/sub/z.txt
+func PathCompareString(path Path, isDir bool) string {
+	p := strings.ReplaceAll(path.String(), "/", "/1")
+	if isDir {
+		return p
+	}
+	lastSlash := strings.LastIndex(p, "/")
+	if lastSlash == -1 || lastSlash == len(p)-1 {
+		return "0" + p
+	}
+	return p[:lastSlash] + "/0" + p[lastSlash+2:]
+}

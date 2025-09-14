@@ -207,7 +207,7 @@ func readRevisionSnapshot(
 	snapshot, err := NewRevisionSnapshot(repo, revisionId, td.NewFS(t))
 	assert.NoError(err)
 	defer snapshot.Remove() //nolint:errcheck
-	reader := snapshot.Reader(pathFilter)
+	reader := snapshot.Reader(RevisionEntryPathFilter(pathFilter))
 	assert.NoError(err)
 	entries := []*RevisionEntry{}
 	for {

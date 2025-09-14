@@ -46,7 +46,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
 	defer snapshot.Remove() //nolint:errcheck
-	reader := snapshot.Reader(opts.PathFilter)
+	reader := snapshot.Reader(lib.RevisionEntryPathFilter(opts.PathFilter))
 	mon := opts.Monitor
 	directories := []*lib.RevisionEntry{}
 	restoreDirFileModes := func() error {
