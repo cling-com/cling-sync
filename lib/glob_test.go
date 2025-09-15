@@ -418,7 +418,7 @@ func TestGlobMatch(t *testing.T) {
 
 	t.Run("Matches are case sensitive", func(t *testing.T) {
 		g.yes("README.md", "README.md")
-		g.non("README.md", "readme.md")
+		g.non("readme.md", "README.md")
 	})
 
 	t.Run("Unicode character handling", func(t *testing.T) {
