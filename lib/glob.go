@@ -117,7 +117,7 @@ func GlobMatch(pattern GlobPattern, text []byte, isDir bool) bool { //nolint:fun
 				for t < tend && text[t] != '/' {
 					t += 1
 				}
-				if t == tend {
+				if t >= tend {
 					// No more path components.
 					return false
 				}

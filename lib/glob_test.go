@@ -54,7 +54,6 @@ var paths = []string{ //nolint:gochecknoglobals
 }
 
 func TestPrepareGlobPattern(t *testing.T) {
-	t.Skip("Skipping because it takes too long")
 	assert := NewAssert(t)
 	assert.Equal("", string(PrepareGlobPattern((" "))))
 
@@ -73,7 +72,6 @@ func TestPrepareGlobPattern(t *testing.T) {
 }
 
 func TestGlobMatch(t *testing.T) {
-	t.Skip("Skipping because it takes too long")
 	var g globTester
 	dir := t.TempDir()
 	if os.Getenv("GLOB_TEST_IMPL") == "git" {
@@ -670,7 +668,6 @@ func TestGitWalkDirIgnore(t *testing.T) {
 }
 
 func TestGlobMatchFuzz(t *testing.T) {
-	t.Skip("Skipping because it takes too long")
 	t.Run("Previous findings", func(t *testing.T) {
 		// Backtracking the ** looped forever because we were past the end of the text.
 		_ = GlobMatch(PrepareGlobPattern("a**/a"), []byte("a"), false)
