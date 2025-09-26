@@ -21,10 +21,7 @@ func NewCommit(repository *Repository, tmpFS FS) (*Commit, error) {
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read head revision")
 	}
-	tempWriter, err := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to create new RevisionTempWriter")
-	}
+	tempWriter := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
 	return &Commit{head, repository, tempWriter, tmpFS, nil}, nil
 }
 
@@ -150,10 +147,7 @@ func (c *Commit) appendEnsureDirs(sorted *Temp[RevisionEntry]) (*Temp[RevisionEn
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create temporary directory")
 	}
-	tempWriter, err := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to create new RevisionTempWriter")
-	}
+	tempWriter := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
 	cache, err := NewRevisionEntryTempCache(sorted, 10)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create revision temp cache")

@@ -2,8 +2,8 @@
 package lib
 
 import (
+	"bufio"
 	"bytes"
-	cryptoCipher "crypto/cipher"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +17,6 @@ const DefaultTempChunkSize = 4 * 1024 * 1024
 type Temp[T any] struct {
 	fs        FS
 	chunks    int
-	cipher    cryptoCipher.AEAD
 	unmarshal func(r io.Reader) (*T, error)
 }
 
@@ -33,7 +32,6 @@ func (t *Temp[T]) Reader(filter func(*T) bool) *TempReader[T] {
 		current:      nil,
 		currentIndex: 0,
 		filter:       filter,
-		cipher:       t.cipher,
 		unmarshal:    t.unmarshal,
 	}
 }
@@ -51,7 +49,6 @@ type TempReader[T any] struct {
 	chunkIndex   int
 	current      []*T
 	currentIndex int
-	cipher       cryptoCipher.AEAD
 	filter       func(*T) bool
 	unmarshal    func(r io.Reader) (*T, error)
 }
@@ -113,13 +110,9 @@ func (tr *TempReader[T]) ReadChunkRaw(i int) ([]byte, error) {
 	if i < 0 || i >= tr.chunks {
 		return nil, Errorf("chunk index out of range")
 	}
-	encrypted, err := ReadFile(tr.fs, tr.chunkFilename(i))
+	data, err := ReadFile(tr.fs, tr.chunkFilename(i))
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read chunk file %d", i)
-	}
-	data, err := Decrypt(encrypted, tr.cipher, nil, make([]byte, len(encrypted)-TotalCipherOverhead))
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to decrypt chunk file %d", i)
 	}
 	return data, nil
 }
@@ -134,7 +127,6 @@ type TempWriter[T any] struct {
 	chunkSize      int
 	maxChunkSize   int
 	chunks         int
-	cipher         cryptoCipher.AEAD
 	fileExt        string
 	compare        func(a, b *T) int
 	marshal        func(t *T, w io.Writer) error
@@ -152,16 +144,8 @@ func NewTempWriter[T any](
 	unmarshal func(r io.Reader) (*T, error),
 	fs FS,
 	maxChunkSize int,
-) (*TempWriter[T], error) {
-	key, err := NewRawKey()
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to generate random key for encryption")
-	}
-	cipher, err := NewCipher(key)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to create a cipher from key for encryption")
-	}
-	return &TempWriter[T]{fs, nil, 0, maxChunkSize, 0, cipher, "raw", compare, marshal, marshalledSize, unmarshal}, nil
+) *TempWriter[T] {
+	return &TempWriter[T]{fs, nil, 0, maxChunkSize, 0, "raw", compare, marshal, marshalledSize, unmarshal}
 }
 
 func (tw *TempWriter[T]) Add(t *T) error {
@@ -182,22 +166,19 @@ func (tw *TempWriter[T]) Finalize() (*Temp[T], error) { //nolint:funlen
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
 	// Create a new RevisionTempWriter to store the sorted chunks.
-	sorted, err := NewTempWriter(tw.compare, tw.marshal, tw.marshalledSize, tw.unmarshal, tw.fs, tw.maxChunkSize)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to create new TempWriter")
-	}
+	sorted := NewTempWriter(tw.compare, tw.marshal, tw.marshalledSize, tw.unmarshal, tw.fs, tw.maxChunkSize)
 	sorted.fileExt = "sorted"
+	// Open all chunks with a buffered reader.
+	readerFiles := make([]io.ReadCloser, tw.chunks)
 	readers := make([]io.Reader, tw.chunks)
 	for i := range tw.chunks {
-		data, err := ReadFile(tw.fs, tw.chunkFilename(i))
+		f, err := tw.fs.OpenRead(tw.chunkFilename(i))
 		if err != nil {
-			return nil, WrapErrorf(err, "failed to read chunk file")
+			return nil, WrapErrorf(err, "failed to open chunk file")
 		}
-		decrypted, err := Decrypt(data, tw.cipher, nil, make([]byte, len(data)-TotalCipherOverhead))
-		if err != nil {
-			return nil, WrapErrorf(err, "failed to decrypt chunk file")
-		}
-		readers[i] = bytes.NewReader(decrypted)
+		defer f.Close() //nolint:errcheck
+		readerFiles[i] = f
+		readers[i] = bufio.NewReader(f)
 	}
 	type entry struct {
 		value      *T
@@ -249,11 +230,14 @@ func (tw *TempWriter[T]) Finalize() (*Temp[T], error) { //nolint:funlen
 	}
 	// Delete all chunk files.
 	for i := range tw.chunks {
+		if err := readerFiles[i].Close(); err != nil {
+			return nil, WrapErrorf(err, "failed to close chunk file")
+		}
 		if err := tw.fs.Remove(tw.chunkFilename(i)); err != nil {
 			return nil, WrapErrorf(err, "failed to remove chunk file")
 		}
 	}
-	return &Temp[T]{sorted.fs, sorted.chunks, sorted.cipher, sorted.unmarshal}, nil
+	return &Temp[T]{sorted.fs, sorted.chunks, sorted.unmarshal}, nil
 }
 
 // Sort the current chunk, encrypt it, and write it to disk.
@@ -283,11 +267,7 @@ func (tw *TempWriter[T]) rotateChunk() error {
 			return WrapErrorf(err, "failed to write to chunk file")
 		}
 	}
-	encrypted, err := Encrypt(buf.Bytes(), tw.cipher, nil, make([]byte, len(buf.Bytes())+TotalCipherOverhead))
-	if err != nil {
-		return WrapErrorf(err, "failed to encrypt chunk")
-	}
-	if err := WriteFile(tw.fs, tw.chunkFilename(tw.chunks), encrypted); err != nil {
+	if err := WriteFile(tw.fs, tw.chunkFilename(tw.chunks), buf.Bytes()); err != nil {
 		return WrapErrorf(err, "failed to write chunk file")
 	}
 	tw.chunk = nil
@@ -318,18 +298,16 @@ func NewTempCache[T any](temp *Temp[T], cacheKey func(*T) string, maxChunksInCac
 	chunksInCache := 0
 	reader := temp.Reader(nil)
 	for i := range temp.Chunks() {
-		chunk, err := reader.ReadChunk(i)
+		f, err := reader.fs.OpenRead(reader.chunkFilename(i))
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to open chunk file %d", i)
+		}
+		defer f.Close() //nolint:errcheck
+		first, err := temp.unmarshal(f)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read chunk file %d", i)
 		}
-		firstEntries[i] = cacheKey(chunk[0])
-		if chunksInCache < maxChunksInCache {
-			c := make(map[string]*T)
-			cache[i] = c
-			for _, entry := range chunk {
-				c[cacheKey(entry)] = entry
-			}
-		}
+		firstEntries[i] = cacheKey(first)
 	}
 	return &TempCache[T]{
 		Source:           temp,

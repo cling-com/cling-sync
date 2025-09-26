@@ -4,7 +4,6 @@ package lib
 
 import (
 	"bytes"
-	"crypto/cipher"
 	"crypto/sha256"
 	"errors"
 	"io"
@@ -117,18 +116,6 @@ func (td TestData) SHA256(content string) Sha256 {
 		return Sha256{}
 	}
 	return CalculateSha256([]byte(content))
-}
-
-func (td TestData) NewCipher() cipher.AEAD {
-	key, err := NewRawKey()
-	if err != nil {
-		panic(err)
-	}
-	cipher, err := NewCipher(key)
-	if err != nil {
-		panic(err)
-	}
-	return cipher
 }
 
 func (td TestData) NewTestFS(tb testing.TB, fs FS) *TestFS {

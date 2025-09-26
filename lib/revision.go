@@ -200,7 +200,7 @@ func (rr *RevisionReader) Read() (*RevisionEntry, error) {
 	return re, nil
 }
 
-func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) (*TempWriter[RevisionEntry], error) {
+func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) *TempWriter[RevisionEntry] {
 	return NewTempWriter(
 		RevisionEntryPathCompare,
 		MarshalRevisionEntry,

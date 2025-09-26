@@ -122,8 +122,7 @@ func TestRevisionEntryTemp(t *testing.T) {
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
 		// Use a small chunk size to force rotation.
-		sut, err := NewRevisionEntryTempWriter(fs, 700)
-		assert.NoError(err)
+		sut := NewRevisionEntryTempWriter(fs, 700)
 
 		add := func(path string, mode ModeAndPerm) {
 			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})

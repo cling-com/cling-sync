@@ -27,19 +27,16 @@ type Staging struct {
 // `.cling` is always ignored.
 // If `pathPrefix` is not empty, it will be prepended to all paths *after* the
 // `pathFilter` is applied.
-func NewStaging( //nolint:funlen
+func NewStaging(
 	src lib.FS,
 	pathPrefix lib.Path,
 	pathFilter lib.PathFilter,
 	tmp lib.FS,
 	mon StagingEntryMonitor,
 ) (*Staging, error) {
-	tempWriter, err := lib.NewRevisionEntryTempWriter(tmp, lib.DefaultTempChunkSize)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to create new RevisionTempWriter")
-	}
+	tempWriter := lib.NewRevisionEntryTempWriter(tmp, lib.DefaultTempChunkSize)
 	staging := &Staging{pathFilter, pathPrefix, tempWriter, nil, tmp}
-	err = lib.WalkDirIgnore(src, ".", func(path_ string, d fs.DirEntry, err error) error {
+	err := lib.WalkDirIgnore(src, ".", func(path_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -137,10 +134,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create commit directory")
 	}
-	finalWriter, err := lib.NewRevisionEntryTempWriter(final, lib.MaxBlockDataSize)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to create new RevisionTempWriter")
-	}
+	finalWriter := lib.NewRevisionEntryTempWriter(final, lib.MaxBlockDataSize)
 	add := func(path lib.Path, typ lib.RevisionEntryType, md *lib.FileMetadata) error {
 		re, err := lib.NewRevisionEntry(path, typ, md)
 		if err != nil {
