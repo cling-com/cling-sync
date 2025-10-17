@@ -844,6 +844,8 @@ func ServeCmd(argv []string) error {
 		Address      string
 		LogRequests  bool
 		CORSAllowAll bool
+		ReadTimeout  time.Duration
+		WriteTimeout time.Duration
 		Help         bool
 	}{}
 	flags := flag.NewFlagSet("serve", flag.ExitOnError)
@@ -851,6 +853,8 @@ func ServeCmd(argv []string) error {
 	flags.BoolVar(&args.LogRequests, "log-requests", false, "Log all requests")
 	flags.BoolVar(&args.CORSAllowAll, "cors-allow-all", false, "Allow all origins to access the repository (dangerous)")
 	flags.StringVar(&args.Address, "address", "0.0.0.0:4242", "Address to listen on")
+	flags.DurationVar(&args.ReadTimeout, "read-timeout", 10*time.Second, "Timeout for reading a response")
+	flags.DurationVar(&args.WriteTimeout, "write-timeout", 10*time.Second, "Timeout for writing a response")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s serve <repository-path>\n\n", appName)
 		fmt.Fprint(os.Stderr, "Serve a repository over HTTP.\n")
@@ -891,8 +895,8 @@ func ServeCmd(argv []string) error {
 	server := &http.Server{ //nolint:exhaustruct
 		Addr:         args.Address,
 		Handler:      handler,
-		ReadTimeout:  10 * time.Second, // todo: Make this configurable
-		WriteTimeout: 10 * time.Second, // todo: Make this configurable
+		ReadTimeout:  args.ReadTimeout,
+		WriteTimeout: args.WriteTimeout,
 	}
 	fmt.Printf("Serving %s at http://%s\n", repositoryPath, args.Address)
 	if err := server.ListenAndServe(); err != nil {
