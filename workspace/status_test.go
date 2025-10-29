@@ -61,6 +61,54 @@ func TestStatus(t *testing.T) {
 		}, statusFilesString(status))
 	})
 
+	t.Run("Status always runs against the workspace head", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+
+		// Commit, workspace should be "clean".
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		status, err := Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal(0, len(status))
+
+		// Create a second workspace tied to the same repository.
+		// Status should be clean, because the workspace points to the initial (empty) revision.
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+		status, err = Status(w2.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal(0, len(status))
+
+		// Merge repository into the second workspace.
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		status, err = Status(w2.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal(0, len(status))
+
+		// Add a commit in the first workspace.
+		w.Write("b.txt", "b")
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal(0, len(status))
+
+		// Add a file in the second workspace.
+		// The status should reflect the change in the second workspace relative to the workspace
+		// head and not the repository head.
+		w2.Write("c.txt", "c")
+		status, err = Status(w2.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{
+			"A c.txt",
+		}, statusFilesString(status))
+	})
+
 	t.Run("Removing a directory", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)

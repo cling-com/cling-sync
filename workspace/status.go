@@ -65,7 +65,7 @@ type StatusOptions struct {
 }
 
 func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpFS lib.FS) (StatusFiles, error) {
-	head, err := repository.Head()
+	head, err := ws.Head()
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get head")
 	}
