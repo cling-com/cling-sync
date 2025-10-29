@@ -68,7 +68,7 @@ func TestTemp(t *testing.T) {
 
 		// First, try with a chunk size that *exactly* fits 3 entries.
 		entry := td.RevisionEntry("1.txt", RevisionEntryAdd)
-		sut := NewRevisionEntryTempWriter(fs, MarshalledSize(entry)*3)
+		sut := NewRevisionEntryTempWriter(fs, RevisionEntryMarshalledSize(entry)*3)
 		for i := range 3 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryAdd))
 			assert.NoError(err)
@@ -79,7 +79,7 @@ func TestTemp(t *testing.T) {
 		assert.Equal(1, sut.chunks, "chunk should have been rotated")
 
 		// Now, try with a chunk size that is on byte smaller than 3 entries.
-		sut = NewRevisionEntryTempWriter(fs, MarshalledSize(entry)*3-1)
+		sut = NewRevisionEntryTempWriter(fs, RevisionEntryMarshalledSize(entry)*3-1)
 		for i := range 2 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryAdd))
 			assert.NoError(err)

@@ -58,9 +58,10 @@ func (s StatusFiles) Summary() string {
 }
 
 type StatusOptions struct {
-	PathFilter lib.PathFilter
-	Monitor    StagingEntryMonitor
-	Chown      bool
+	PathFilter      lib.PathFilter
+	Monitor         StagingEntryMonitor
+	Chown           bool
+	UseStagingCache bool
 }
 
 func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpFS lib.FS) (StatusFiles, error) {
@@ -80,7 +81,7 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	staging, err := NewStaging(ws.FS, ws.PathPrefix, opts.PathFilter, stagingTmpFS, opts.Monitor)
+	staging, err := NewStaging(ws.FS, ws.PathPrefix, opts.PathFilter, opts.UseStagingCache, stagingTmpFS, opts.Monitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}

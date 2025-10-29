@@ -34,13 +34,13 @@ func TestRevisionEntry(t *testing.T) {
 		sut := td.RevisionEntry("a.txt", RevisionEntryAdd)
 		err := MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
-		assert.Equal(MarshalledSize(sut), buf.Len())
+		assert.Equal(RevisionEntryMarshalledSize(sut), buf.Len())
 
 		sut = td.RevisionEntry("a.txt", RevisionEntryDelete)
 		buf.Reset()
 		err = MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
-		assert.Equal(MarshalledSize(sut), buf.Len())
+		assert.Equal(RevisionEntryMarshalledSize(sut), buf.Len())
 	})
 
 	t.Run("RevisionPathCompare", func(t *testing.T) {

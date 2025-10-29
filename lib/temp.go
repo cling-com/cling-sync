@@ -20,6 +20,14 @@ type Temp[T any] struct {
 	unmarshal func(r io.Reader) (*T, error)
 }
 
+func OpenTemp[T any](fs FS, unmarshal func(r io.Reader) (*T, error)) (*Temp[T], error) {
+	chunks, err := fs.ReadDir(".")
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to read temp files")
+	}
+	return &Temp[T]{fs, len(chunks), unmarshal}, nil
+}
+
 func (t *Temp[T]) Chunks() int {
 	return t.chunks
 }

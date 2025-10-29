@@ -113,7 +113,7 @@ func NewRevisionEntry(path Path, typ RevisionEntryType, md *FileMetadata) (Revis
 	return RevisionEntry{Path: path, Type: typ, Metadata: md}, nil
 }
 
-func MarshalledSize(r *RevisionEntry) int {
+func RevisionEntryMarshalledSize(r *RevisionEntry) int {
 	return r.Path.Len() + 2 + 1 + // Path + len(Path) + Type
 		r.Metadata.MarshalledSize()
 }
@@ -204,7 +204,7 @@ func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) *TempWriter[RevisionEnt
 	return NewTempWriter(
 		RevisionEntryPathCompare,
 		MarshalRevisionEntry,
-		MarshalledSize,
+		RevisionEntryMarshalledSize,
 		UnmarshalRevisionEntry,
 		fs,
 		maxChunkSize,

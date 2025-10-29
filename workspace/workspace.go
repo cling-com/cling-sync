@@ -9,6 +9,8 @@ import (
 	"github.com/flunderpero/cling-sync/lib"
 )
 
+const workspaceDir = ".cling/workspace"
+
 type RemoteRepository string
 
 type Workspace struct {

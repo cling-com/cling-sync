@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"io/fs"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestStaging(t *testing.T) {
 		}, r.RevisionInfos(remoteRev1))
 
 		// Create a staging.
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -87,7 +88,7 @@ func TestStaging(t *testing.T) {
 		w.Write("dir1/dir3/b.png", "b")
 		w.Write("dir1/dir3/c.md", "c")
 
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -100,5 +101,132 @@ func TestStaging(t *testing.T) {
 			{"dir1/dir3", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
 			{"dir1/dir3/c.md", lib.RevisionEntryAdd, 0o600, td.SHA256("c")},
 		}, r.RevisionTempInfos(finalized))
+	})
+}
+
+func TestStagingCache(t *testing.T) {
+	t.Parallel()
+	t.Run("Marshal and Unmarshal StagingCacheEntry", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		var buf bytes.Buffer
+		sut := StagingCacheEntry{
+			Path:      td.Path("a.txt"),
+			Metadata:  td.FileMetadata(0o600),
+			CTimeSec:  123,
+			CTimeNSec: 456,
+			Inode:     789,
+			Size:      1234,
+		}
+		err := MarshalStagingCacheEntry(&sut, &buf)
+		assert.NoError(err)
+		read, err := UnmarshalStagingCacheEntry(&buf)
+		assert.NoError(err)
+		assert.Equal(sut, *read)
+	})
+
+	t.Run("TempWriter and TempCache", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		fs := td.NewFS(t)
+		tempWriter := NewStagingCacheWriter(fs, lib.MaxBlockDataSize)
+		a := StagingCacheEntry{
+			Path:      td.Path("a.txt"),
+			Metadata:  td.FileMetadata(0o600),
+			CTimeSec:  123,
+			CTimeNSec: 456,
+			Size:      789,
+			Inode:     987654,
+		}
+		b := StagingCacheEntry{
+			Path:      td.Path("b.txt"),
+			Metadata:  td.FileMetadata(0o700),
+			CTimeSec:  234,
+			CTimeNSec: 567,
+			Size:      890,
+			Inode:     876543,
+		}
+		assert.NoError(tempWriter.Add(&a))
+		assert.NoError(tempWriter.Add(&b))
+		_, err := tempWriter.Finalize()
+		assert.NoError(err)
+		cache, err := OpenStagingCache(fs, 2)
+		assert.NoError(err)
+
+		entry, ok, err := cache.Get(lib.PathCompareString(a.Path, a.Metadata.ModeAndPerm.IsDir()))
+		assert.NoError(err)
+		assert.Equal(true, ok)
+		assert.Equal(a, *entry)
+
+		entry, ok, err = cache.Get(lib.PathCompareString(b.Path, b.Metadata.ModeAndPerm.IsDir()))
+		assert.NoError(err)
+		assert.Equal(true, ok)
+		assert.Equal(b, *entry)
+	})
+
+	t.Run("Existing cache is used and new cache is created", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("b.txt", "b")
+		w.Write("dir/a.txt", "a")
+
+		// Create the cache with an entry for `a.txt`.
+		cacheFS, err := w.Workspace.FS.MkSub(".cling/workspace/cache/staging")
+		assert.NoError(err)
+		tempWriter := NewStagingCacheWriter(cacheFS, lib.MaxBlockDataSize)
+		fileInfo, err := w.Workspace.FS.Stat("dir/a.txt")
+		assert.NoError(err)
+		amd := td.FileMetadata(0o777)
+		amd.FileHash = td.SHA256("from_cache")
+		a, err := NewStagingCacheEntry(td.Path("dir/a.txt"), fileInfo, amd)
+		assert.NoError(err)
+		assert.NoError(tempWriter.Add(a))
+		_, err = tempWriter.Finalize()
+		assert.NoError(err)
+
+		// Create a staging that should use the cache.
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, true, w.TempFS, wstd.StagingMonitor())
+		assert.NoError(err)
+		finalized, err := staging.Finalize()
+		assert.NoError(err)
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"b.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("b")},
+			{"dir", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"dir/a.txt", lib.RevisionEntryAdd, 0o777, td.SHA256("from_cache")},
+		}, r.RevisionTempInfos(finalized))
+
+		// The previous run should have retained the cache entry for `a.txt`. So we should see the
+		// same result.
+		staging, err = NewStaging(w.Workspace.FS, lib.Path{}, nil, true, w.TempFS, wstd.StagingMonitor())
+		assert.NoError(err)
+		finalized, err = staging.Finalize()
+		assert.NoError(err)
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"b.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("b")},
+			{"dir", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"dir/a.txt", lib.RevisionEntryAdd, 0o777, td.SHA256("from_cache")},
+		}, r.RevisionTempInfos(finalized))
+
+		// Not using the cache should ignore our fake cache entry and rebuild the cache correctly.
+		// Note: The cache will be re-created even if `useCache` is false.
+		staging, err = NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
+		assert.NoError(err)
+		finalized, err = staging.Finalize()
+		assert.NoError(err)
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"b.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("b")},
+			{"dir", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"dir/a.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("a")},
+		}, r.RevisionTempInfos(finalized))
+		cache, err := OpenStagingCache(cacheFS, 2)
+		assert.NoError(err)
+		entry, ok, err := cache.Get(lib.PathCompareString(td.Path("dir/a.txt"), false))
+		assert.NoError(err)
+		assert.Equal(true, ok)
+		assert.Equal(lib.ModeAndPerm(0o600), entry.Metadata.ModeAndPerm)
+		assert.Equal(td.SHA256("a"), entry.Metadata.FileHash)
 	})
 }

@@ -21,7 +21,10 @@ import (
 	"golang.org/x/term"
 )
 
-const appName = "cling-sync"
+const (
+	appName                 = "cling-sync"
+	fastScanFlagDescription = "Speed up scanning by skipping file hash comparisons.\nFile changes are detected by trusting file metadata (size, ctime, inode).\nWARNING: May miss some changes, especially on network or FUSE file-systems.\nWhen in doubt, run without this flag for thorough verification."
+)
 
 func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
@@ -357,6 +360,7 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Verbose     bool
 		AcceptLocal bool
 		NoProgress  bool
+		FastScan    bool
 	}{}
 	defaultAuthor := "<anonymous>"
 	whoami, err := user.Current()
@@ -371,6 +375,7 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.AcceptLocal, "accept-local", false, "Ignore all conflicts and commit all local changes")
 	flags.BoolVar(&args.Chown, "chown", false, "Restore file ownership from the repository.")
+	flags.BoolVar(&args.FastScan, "fast-scan", false, fastScanFlagDescription)
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
 	flags.Usage = func() {
@@ -399,12 +404,13 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	cpMonitor := NewCpMonitor(ws.CpOnExistsAbort, args.Verbose, false, args.NoProgress)
 	commitMonitor := NewCommitMonitor(args.Verbose, args.NoProgress)
 	opts := &ws.MergeOptions{
-		Author:         args.Author,
-		Message:        args.Message,
-		StagingMonitor: stagingMonitor,
-		CpMonitor:      cpMonitor,
-		CommitMonitor:  commitMonitor,
-		Chown:          args.Chown,
+		Author:          args.Author,
+		Message:         args.Message,
+		StagingMonitor:  stagingMonitor,
+		CpMonitor:       cpMonitor,
+		CommitMonitor:   commitMonitor,
+		Chown:           args.Chown,
+		UseStagingCache: args.FastScan,
 	}
 	var revisionId lib.RevisionId
 	if args.AcceptLocal {
@@ -473,6 +479,7 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Exclude    lib.ExtendedGlobPatterns
 		NoSummary  bool
 		Chown      bool
+		FastScan   bool
 	}{}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
@@ -480,6 +487,7 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Chown, "chown", false, "Respect file ownership changes from the repository.")
+	flags.BoolVar(&args.FastScan, "fast-scan", false, fastScanFlagDescription)
 	flags.BoolVar(&args.NoSummary, "no-summary", false, "Do not show a summary at the end")
 	globPatternFlag(
 		flags,
@@ -530,7 +538,7 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		return err //nolint:wrapcheck
 	}
 	mon := NewStagingMonitor(args.Verbose, args.NoProgress)
-	opts := &ws.StatusOptions{PathFilter: pathFilter, Monitor: mon, Chown: args.Chown}
+	opts := &ws.StatusOptions{PathFilter: pathFilter, Monitor: mon, Chown: args.Chown, UseStagingCache: args.FastScan}
 	result, err := ws.Status(workspace, repository, opts, tmpFS)
 	mon.Close()
 	if err != nil {

@@ -27,12 +27,13 @@ type CommitMonitor interface {
 }
 
 type MergeOptions struct {
-	StagingMonitor StagingEntryMonitor
-	CpMonitor      CpMonitor
-	CommitMonitor  CommitMonitor
-	Author         string
-	Message        string
-	Chown          bool
+	StagingMonitor  StagingEntryMonitor
+	CpMonitor       CpMonitor
+	CommitMonitor   CommitMonitor
+	Author          string
+	Message         string
+	Chown           bool
+	UseStagingCache bool
 	// todo: add a `MergeMonitor` that is called after each merge step.
 }
 
@@ -747,7 +748,7 @@ func buildLocalChanges(
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create revision temp cache")
 	}
-	staging, err := NewStaging(ws.FS, ws.PathPrefix, nil, stagingTmpDir, opts.StagingMonitor)
+	staging, err := NewStaging(ws.FS, ws.PathPrefix, nil, opts.UseStagingCache, stagingTmpDir, opts.StagingMonitor)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to detect local changes")
 	}

@@ -499,6 +499,22 @@ func checkConsistency(t *testing.T, newSut func() FS) {
 		assert.ErrorIs(err, fs.ErrNotExist)
 	})
 
+	t.Run("Sub", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		_, err := sut.Sub("a")
+		assert.ErrorIs(err, fs.ErrNotExist)
+
+		assert.NoError(sut.Mkdir("a"))
+		sub, err := sut.Sub("a")
+		assert.NoError(err)
+		stat, err := sub.Stat(".")
+		assert.NoError(err)
+		assert.Equal(true, stat.IsDir())
+	})
+
 	t.Run("MkSub", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

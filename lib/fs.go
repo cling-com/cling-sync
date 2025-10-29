@@ -39,8 +39,10 @@ type FS interface {
 	Remove(name string) error
 	RemoveAll(path string) error
 	Rename(oldpath, newpath string) error
-	// Create a sub directory and return a `FS` for it.
+	// Create a sub directory and return a `FS` for it. Return `fs.ErrExist` if the directory already exists.
 	MkSub(path string) (FS, error)
+	// Return a `FS` for the sub directory. Return `fs.ErrNotExist` if the directory does not exist.
+	Sub(path string) (FS, error)
 	// `fn` is called with a path relative to the root of the FS.
 	WalkDir(path string, fn fs.WalkDirFunc) error
 	String() string
@@ -293,7 +295,7 @@ func (f *MemoryFS) Rename(oldpath, newpath string) error {
 	newFile, ok := f.files[newpath]
 	if ok {
 		if newFile.mode.IsDir() {
-			return fs.ErrInvalid
+			return fs.ErrExist
 		}
 		f.usedMemory -= int64(newFile.content.Len())
 	}
@@ -302,6 +304,13 @@ func (f *MemoryFS) Rename(oldpath, newpath string) error {
 	oldFile.name = newpath
 	f.files[newpath] = oldFile
 	return nil
+}
+
+func (f *MemoryFS) Sub(path string) (FS, error) {
+	if _, ok := f.files[path]; !ok {
+		return nil, fs.ErrNotExist
+	}
+	return &subMemoryFS{f, path}, nil
 }
 
 func (f *MemoryFS) MkSub(path string) (FS, error) {
@@ -416,6 +425,10 @@ func (f *subMemoryFS) Rename(oldpath, newpath string) error {
 
 func (f *subMemoryFS) MkSub(path string) (FS, error) {
 	return f.parent.MkSub(filepath.Join(f.path, path))
+}
+
+func (f *subMemoryFS) Sub(path string) (FS, error) {
+	return f.parent.Sub(filepath.Join(f.path, path))
 }
 
 func (f *subMemoryFS) WalkDir(path string, fn fs.WalkDirFunc) error {

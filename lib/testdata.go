@@ -58,6 +58,10 @@ func (td TestData) RevisionId(suffix string) RevisionId {
 	return RevisionId(td.SHA256(suffix))
 }
 
+func (td TestData) Path(p string) Path {
+	return Path{p}
+}
+
 func (td TestData) FileMetadata(mode ModeAndPerm) *FileMetadata {
 	return &FileMetadata{
 		ModeAndPerm:   mode,

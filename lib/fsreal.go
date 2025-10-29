@@ -4,6 +4,7 @@
 package lib
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -69,6 +70,17 @@ func (f *RealFS) RemoveAll(path string) error {
 
 func (f *RealFS) Rename(oldpath, newpath string) error {
 	return os.Rename(filepath.Join(f.BasePath, oldpath), filepath.Join(f.BasePath, newpath))
+}
+
+func (f *RealFS) Sub(path string) (FS, error) {
+	_, err := os.Stat(filepath.Join(f.BasePath, path))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fs.ErrNotExist
+	}
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to stat directory %s", path)
+	}
+	return &RealFS{BasePath: filepath.Join(f.BasePath, path)}, nil
 }
 
 func (f *RealFS) MkSub(path string) (FS, error) {
