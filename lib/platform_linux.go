@@ -27,7 +27,7 @@ func EnhancedStat(fileInfo fs.FileInfo) (*EnhancedStat_t, error) {
 	}
 	return &EnhancedStat_t{
 		CTimeSec:  stat.Ctim.Sec,
-		CTimeNSec: int32(stat.Ctim.Nsec),
+		CTimeNSec: int32(stat.Ctim.Nsec), //nolint:gosec
 		Inode:     stat.Ino,
 	}, nil
 }
