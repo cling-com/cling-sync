@@ -21,8 +21,15 @@ jobs:
     - name: Build tools
       run: ./build.sh tools
     
-    - name: Lint
+    - name: Lint (Linux)
       run: ./build.sh lint
+      env:
+        GOOS: linux
+
+    - name: Lint (Darwin)
+      run: ./build.sh lint
+      env:
+        GOOS: darwin
     
     - name: Build
       run: ./build.sh build
