@@ -79,6 +79,37 @@ func TestMerge(t *testing.T) {
 		assert.ErrorIs(err, ErrUpToDate)
 	})
 
+	t.Run("Nested directories are deleted depth-first", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		// Add first commit with a nested directory.
+		w.Write("dir1/a.txt", "a")
+		w.Write("dir1/dir2/b.txt", "b")
+		w.Write("dir1/dir2/dir3/c.txt", "c")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Merge into the second workspace.
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Delete everything in the first workspace.
+		w.Rm("dir1")
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Merge into the second workspace again.
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// The second workspace should be empty.
+		assert.Equal([]lib.TestFileInfo{}, w2.Ls("."))
+	})
+
 	t.Run("Change metadata only", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)

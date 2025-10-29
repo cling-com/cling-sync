@@ -576,7 +576,14 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to walk directory %s", m.ws.FS)
 	}
+	// Delete directories depth-first.
+	dirs := make([]string, 0, len(deleteDirs))
 	for path := range deleteDirs {
+		dirs = append(dirs, path)
+	}
+	slices.Sort(dirs)
+	slices.Reverse(dirs)
+	for _, path := range dirs {
 		if err := m.makeDirsWritable(path); err != nil {
 			return lib.WrapErrorf(err, "failed to make directories writable for %s", path)
 		}
