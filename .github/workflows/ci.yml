@@ -29,8 +29,8 @@ jobs:
     
     - name: Test
       run: |
-        groupadd testgroup && \
-        usermod -a -G testgroup \$(whoami) && \
+        groupadd testgroup
+        usermod -a -G testgroup $(whoami)
         ./build.sh test
     
     - name: Bash integration tests
