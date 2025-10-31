@@ -28,7 +28,10 @@ jobs:
       run: ./build.sh build
     
     - name: Test
-      run: ./build.sh test
+      run: |
+        groupadd testgroup && \
+        usermod -a -G testgroup \$(whoami) && \
+        ./build.sh test
     
     - name: Bash integration tests
       run: ./build.sh test integration-bash

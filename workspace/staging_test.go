@@ -57,7 +57,7 @@ func TestStaging(t *testing.T) {
 		// Merge the staging with a snapshot of the remote revision.
 		snapshot, err := lib.NewRevisionSnapshot(r.Repository, remoteRev1, td.NewFS(t))
 		assert.NoError(err)
-		merged, err := staging.MergeWithSnapshot(snapshot, true)
+		merged, err := staging.MergeWithSnapshot(snapshot, lib.RestorableMetadataAll)
 		assert.NoError(err)
 		assert.Equal([]lib.TestRevisionEntryInfo{
 			{"a.txt", lib.RevisionEntryUpdate, 0o600, td.SHA256("a")},

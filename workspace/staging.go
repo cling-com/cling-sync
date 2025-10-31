@@ -132,7 +132,7 @@ func (s *Staging) Finalize() (*lib.Temp[lib.RevisionEntry], error) {
 //	compareOwnership: If `true`, ownership of the file is compared.
 func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	snapshot *lib.Temp[lib.RevisionEntry],
-	compareOwnership bool,
+	restorableMetadataFlag lib.RestorableMetadataFlag,
 ) (*lib.Temp[lib.RevisionEntry], error) {
 	stgTemp, err := s.Finalize()
 	if err != nil {
@@ -220,7 +220,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 		}
 		c := lib.RevisionEntryPathCompare(stg, rev)
 		if c == 0 { //nolint:gocritic
-			if !stg.Metadata.IsEqualRestorableAttributes(rev.Metadata, compareOwnership) {
+			if !stg.Metadata.IsEqualRestorableAttributes(rev.Metadata, restorableMetadataFlag) {
 				// Write an update.
 				if err := add(stg.Path, lib.RevisionEntryUpdate, stg.Metadata); err != nil {
 					return nil, err

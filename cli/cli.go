@@ -319,10 +319,13 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		return err
 	}
 	opts := &ws.CpOptions{
-		PathFilter: pathFilter,
-		Monitor:    mon,
-		RevisionId: revisionId,
-		Chown:      args.Chown,
+		PathFilter:             pathFilter,
+		Monitor:                mon,
+		RevisionId:             revisionId,
+		RestorableMetadataFlag: lib.RestorableMetadataAll,
+	}
+	if !args.Chown {
+		opts.RestorableMetadataFlag ^= lib.RestorableMetadataOwnership
 	}
 	tmpFS, err := workspace.TempFS.MkSub("cp")
 	if err != nil {
@@ -357,6 +360,8 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Message     string
 		Author      string
 		Chown       bool
+		Chtime      bool
+		Chmod       bool
 		Verbose     bool
 		AcceptLocal bool
 		NoProgress  bool
@@ -374,7 +379,9 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.AcceptLocal, "accept-local", false, "Ignore all conflicts and commit all local changes")
-	flags.BoolVar(&args.Chown, "chown", false, "Restore file ownership from the repository.")
+	flags.BoolVar(&args.Chown, "chown", false, "Include file ownership changes")
+	flags.BoolVar(&args.Chmod, "chmod", false, "Include file mode changes")
+	flags.BoolVar(&args.Chtime, "chtime", false, "Include file time changes")
 	flags.BoolVar(&args.FastScan, "fast-scan", false, fastScanFlagDescription)
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", defaultMessage, "Commit message")
@@ -403,14 +410,24 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	stagingMonitor := NewStagingMonitor(args.Verbose, args.NoProgress)
 	cpMonitor := NewCpMonitor(ws.CpOnExistsAbort, args.Verbose, false, args.NoProgress)
 	commitMonitor := NewCommitMonitor(args.Verbose, args.NoProgress)
+	restorableMetadataFlag := lib.RestorableMetadataAll
+	if !args.Chown {
+		restorableMetadataFlag ^= lib.RestorableMetadataOwnership
+	}
+	if !args.Chtime {
+		restorableMetadataFlag ^= lib.RestorableMetadataMTime
+	}
+	if !args.Chmod {
+		restorableMetadataFlag ^= lib.RestorableMetadataMode
+	}
 	opts := &ws.MergeOptions{
-		Author:          args.Author,
-		Message:         args.Message,
-		StagingMonitor:  stagingMonitor,
-		CpMonitor:       cpMonitor,
-		CommitMonitor:   commitMonitor,
-		Chown:           args.Chown,
-		UseStagingCache: args.FastScan,
+		Author:                 args.Author,
+		Message:                args.Message,
+		StagingMonitor:         stagingMonitor,
+		CpMonitor:              cpMonitor,
+		CommitMonitor:          commitMonitor,
+		RestorableMetadataFlag: restorableMetadataFlag,
+		UseStagingCache:        args.FastScan,
 	}
 	var revisionId lib.RevisionId
 	if args.AcceptLocal {
@@ -479,6 +496,8 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Exclude    lib.ExtendedGlobPatterns
 		NoSummary  bool
 		Chown      bool
+		Chmod      bool
+		Chtime     bool
 		FastScan   bool
 	}{}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
@@ -486,7 +505,9 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.Short, "short", false, "Only show the number of added, updated, and deleted files")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
-	flags.BoolVar(&args.Chown, "chown", false, "Respect file ownership changes from the repository.")
+	flags.BoolVar(&args.Chown, "chown", false, "Include file ownership changes")
+	flags.BoolVar(&args.Chmod, "chmod", false, "Include file mode changes")
+	flags.BoolVar(&args.Chtime, "chtime", false, "Include file time changes")
 	flags.BoolVar(&args.FastScan, "fast-scan", false, fastScanFlagDescription)
 	flags.BoolVar(&args.NoSummary, "no-summary", false, "Do not show a summary at the end")
 	globPatternFlag(
@@ -538,7 +559,22 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		return err //nolint:wrapcheck
 	}
 	mon := NewStagingMonitor(args.Verbose, args.NoProgress)
-	opts := &ws.StatusOptions{PathFilter: pathFilter, Monitor: mon, Chown: args.Chown, UseStagingCache: args.FastScan}
+	restorableMetadataFlag := lib.RestorableMetadataAll
+	if !args.Chown {
+		restorableMetadataFlag ^= lib.RestorableMetadataOwnership
+	}
+	if !args.Chtime {
+		restorableMetadataFlag ^= lib.RestorableMetadataMTime
+	}
+	if !args.Chmod {
+		restorableMetadataFlag ^= lib.RestorableMetadataMode
+	}
+	opts := &ws.StatusOptions{
+		PathFilter:             pathFilter,
+		Monitor:                mon,
+		RestorableMetadataFlag: restorableMetadataFlag,
+		UseStagingCache:        args.FastScan,
+	}
 	result, err := ws.Status(workspace, repository, opts, tmpFS)
 	mon.Close()
 	if err != nil {

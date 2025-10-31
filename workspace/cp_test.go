@@ -31,7 +31,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from rev1.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil, true}, td.NewFS(t))
+		err = Cp(r.Repository, out.FS, wstd.CpOptions(revId1), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -43,7 +43,7 @@ func TestCp(t *testing.T) {
 		}, out.Ls("."))
 
 		// Trying to copy from rev2 should fail, because files already exist.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitor(), nil, true}, td.NewFS(t))
+		err = Cp(r.Repository, out.FS, wstd.CpOptions(revId2), td.NewFS(t))
 		assert.Error(err, "failed to copy")
 		assert.Error(err, "exists")
 	})
@@ -72,7 +72,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from rev1.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil, true}, td.NewFS(t))
+		err = Cp(r.Repository, out.FS, wstd.CpOptions(revId1), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 3, "aaa"},
@@ -83,8 +83,10 @@ func TestCp(t *testing.T) {
 			{"c/d/2.txt", 0o600, 2, "cc"},
 		}, out.Ls("."))
 
-		// Copy all from the rev2.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitorOverwrite(), nil, true}, td.NewFS(t))
+		// Copy all from the rev2 with overwrite.
+		opts := wstd.CpOptions(revId2)
+		opts.Monitor = wstd.CpMonitorOverwrite()
+		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -121,11 +123,14 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Try to copy the file with `Chown` enabled.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitorOverwrite(), nil, true}, td.NewFS(t))
+		opts := wstd.CpOptions(revId2)
+		opts.Monitor = wstd.CpMonitorOverwrite()
+		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
 		assert.Error(err, "failed to restore file owner 1234 and group 5678 for a.txt")
 
 		// Try a second time without `Chown`.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId2, wstd.CpMonitorOverwrite(), nil, false}, td.NewFS(t))
+		opts.RestorableMetadataFlag ^= lib.RestorableMetadataOwnership
+		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(fs.FileMode(0o700).Perm(), out.Stat("a.txt").Mode().Perm())
 	})
@@ -145,7 +150,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		err = Cp(r.Repository, out, &CpOptions{revId1, wstd.CpMonitor(), nil, true}, td.NewFS(t))
+		err = Cp(r.Repository, out, wstd.CpOptions(revId1), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"c", 0o500 | fs.ModeDir, 0, ""},
@@ -169,7 +174,9 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		filter := lib.NewPathInclusionFilter([]string{"c/**/*"})
-		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), filter, true}, td.NewFS(t))
+		opts := wstd.CpOptions(revId1)
+		opts.PathFilter = filter
+		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"c", 0o700 | fs.ModeDir, 0, ""},
@@ -214,7 +221,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		err = Cp(r.Repository, out.FS, &CpOptions{revId1, wstd.CpMonitor(), nil, true}, td.NewFS(t))
+		err = Cp(r.Repository, out.FS, wstd.CpOptions(revId1), td.NewFS(t))
 		assert.NoError(err)
 
 		stat := w.Stat("a.txt")

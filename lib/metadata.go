@@ -255,17 +255,29 @@ func (fm *FileMetadata) MarshalledSize() int {
 		4 // BirthtimeNSec
 }
 
+type RestorableMetadataFlag uint8
+
+const (
+	// This includes `ModePerm`, `ModeSetUID`, `ModeSetGID`, `ModeSticky` but
+	// not `ModeDir` or `ModeSymlink`, because the latter indicates a fundamental change.
+	RestorableMetadataMode      RestorableMetadataFlag = 1
+	RestorableMetadataMTime     RestorableMetadataFlag = 2
+	RestorableMetadataOwnership RestorableMetadataFlag = 4
+	RestorableMetadataAll       RestorableMetadataFlag = RestorableMetadataMode | RestorableMetadataMTime | RestorableMetadataOwnership
+	restorableMetadataModeMask                         = ModePerm | ModeSticky | ModeSetUID | ModeSetGID
+)
+
 // Compare all attributes that can be restored like `ModeAndPerm`, `Size`, `FileHash` etc.
 // Fields like `BirthtimeSec` and `BirthtimeNSec` are not compared because they cannot be restored.
 // The `BlockIds` are not compared because they should be the same if the `FileHash` is the same.
-func (fm *FileMetadata) IsEqualRestorableAttributes(other *FileMetadata, includeOwnership bool) bool {
-	return fm.ModeAndPerm == other.ModeAndPerm &&
-		fm.MTimeSec == other.MTimeSec &&
-		fm.MTimeNSec == other.MTimeNSec &&
+func (fm *FileMetadata) IsEqualRestorableAttributes(other *FileMetadata, flags RestorableMetadataFlag) bool {
+	return fm.ModeAndPerm&^restorableMetadataModeMask == other.ModeAndPerm&^restorableMetadataModeMask &&
 		fm.Size == other.Size &&
 		fm.FileHash == other.FileHash &&
 		fm.SymlinkTarget == other.SymlinkTarget &&
-		(!includeOwnership || (fm.UID == other.UID && fm.GID == other.GID))
+		(flags&RestorableMetadataOwnership == 0 || fm.UID == other.UID && fm.GID == other.GID) &&
+		(flags&RestorableMetadataMTime == 0 || fm.MTimeSec == other.MTimeSec && fm.MTimeNSec == other.MTimeNSec) &&
+		(flags&RestorableMetadataMode == 0 || fm.ModeAndPerm&restorableMetadataModeMask == other.ModeAndPerm&restorableMetadataModeMask)
 }
 
 func MarshalFileMetadata(f *FileMetadata, w io.Writer) error {

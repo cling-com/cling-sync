@@ -210,7 +210,7 @@ func TestStatus(t *testing.T) {
 
 		// Status taking ownership into account.
 		opts := wstd.StatusOptions()
-		opts.Chown = true
+		opts.RestorableMetadataFlag = lib.RestorableMetadataOwnership
 		status, err := Status(w2.Workspace, r.Repository, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
@@ -218,7 +218,7 @@ func TestStatus(t *testing.T) {
 		}, statusFilesString(status))
 
 		// Status not taking ownership into account.
-		opts.Chown = false
+		opts.RestorableMetadataFlag ^= lib.RestorableMetadataOwnership
 		status, err = Status(w2.Workspace, r.Repository, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{}, statusFilesString(status))

@@ -27,6 +27,8 @@ podman run --rm --name cling-sync-test \
         Xvfb :99 & \
         eval $(dbus-launch) && \
         echo '\n' | gnome-keyring-daemon --unlock && \
+        groupadd testgroup && \
+        usermod -a -G testgroup \$(whoami) && \
         ./build.sh test test -v && \
         ./build.sh test integration-bash \
         "

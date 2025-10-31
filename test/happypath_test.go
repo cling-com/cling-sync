@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -61,9 +63,9 @@ func TestHappyPath(t *testing.T) {
 			A c.txt
 			M dir1/d.txt
 			1 added, 2 updated, 1 deleted
-		`), sut.ClingSync("status"), "There should be local changes")
+		`), sut.ClingSync("status", "--chtime"), "There should be local changes")
 
-		sut.ClingSync("merge", "--no-progress", "--message", "second commit")
+		sut.ClingSync("merge", "--no-progress", "--chtime", "--message", "second commit")
 
 		log := sut.ClingSync("log", "--short")
 		assert.Equal(2, td.Wc("-l", log), "Two revisions should have been created")
@@ -164,13 +166,193 @@ func TestHappyPath(t *testing.T) {
 			`))
 
 		// Accept the local changes.
-		sut.ClingSync("merge", "--no-progress", "--accept-local")
+		sut.ClingSync("merge", "--no-progress", "--chtime", "--accept-local")
 		status := sut.ClingSync("status", "--no-progress")
 		assert.Equal("No changes", status)
 
 		// The workspace changes should have been committed.
 		assert.Equal("b from workspace", sut.Cat("b.txt"))
 		assert.Equal("e from workspace", sut.Cat("dir2/e.txt"))
+		assert.Equal(
+			td.Sort(sut.Ls(), 4),
+			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
+			"Files of head should match the workspace")
+	}
+}
+
+func TestChmodChtimeChown(t *testing.T) {
+	sut := NewSut(t)
+	assert := sut.assert
+
+	user, err := user.Current()
+	assert.NoError(err)
+	groups, err := user.GroupIds()
+	assert.NoError(err)
+	assert.Greater(len(groups), 1, "There should be at least two groups for the current user")
+	uid, err := strconv.Atoi(user.Uid)
+	assert.NoError(err)
+	grp1, err := strconv.Atoi(groups[0])
+	assert.NoError(err)
+	grp2, err := strconv.Atoi(groups[1])
+	assert.NoError(err)
+
+	t.Log("Add and merge some files")
+	{
+		sut.Write("mode.txt", "mode")
+		sut.Chmod("mode.txt", 0o777)
+		sut.Write("own.txt", "own")
+		sut.Chown("own.txt", uid, grp1)
+		sut.Write("time.txt", "time")
+		sut.ClingSync("merge", "--no-progress", "--message", "first commit")
+
+		assert.Equal(
+			td.Sort(sut.Ls(), 4),
+			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
+			"Files of head should match the workspace")
+	}
+
+	t.Log("Attach the repository to a second and third workspace")
+	{
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "../repository", "../workspace2")
+		t.Chdir("../workspace2")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+		sut.ClingSync("merge", "--no-progress")
+
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "../repository", "../workspace3")
+		t.Chdir("../workspace3")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+		sut.ClingSync("merge", "--no-progress")
+		t.Chdir("../workspace")
+	}
+
+	t.Log("Change file mode, mtime, and ownership")
+	{
+		sut.Chmod("mode.txt", 0o700)
+		sut.Touch("time.txt", time.Now())
+		sut.Chown("own.txt", uid, grp2)
+	}
+
+	t.Log("Status with different flags")
+	{
+		assert.Equal(
+			"No changes",
+			sut.ClingSync("status", "--no-progress"),
+			"There should be no local changes by default",
+		)
+
+		assert.Equal(td.Dedent(`
+			M mode.txt
+			0 added, 1 updated, 0 deleted
+		`), sut.ClingSync("status", "--no-progress", "--chmod"), "Local changes with --chmod")
+
+		assert.Equal(td.Dedent(`
+			M time.txt
+			0 added, 1 updated, 0 deleted
+		`), sut.ClingSync("status", "--no-progress", "--chtime"), "Local changes with --chtime")
+
+		assert.Equal(td.Dedent(`
+			M own.txt
+			0 added, 1 updated, 0 deleted
+		`), sut.ClingSync("status", "--no-progress", "--chown"), "Local changes with --chown")
+
+		assert.Equal(td.Dedent(`
+			M mode.txt
+			M own.txt
+			M time.txt
+			0 added, 3 updated, 0 deleted
+		`), sut.ClingSync("status", "--no-progress", "--chown", "--chtime", "--chmod"), "Local changes with all flags")
+	}
+
+	t.Log("Merge without --chtime, --chmod, and --chown")
+	{
+		assert.Equal("No changes", sut.ClingSync("merge", "--no-progress", "--message", "first commit"))
+		assert.Equal(
+			td.Dedent(`
+				M mode.txt
+				M own.txt
+				M time.txt
+				0 added, 3 updated, 0 deleted
+			`),
+			sut.ClingSync(
+				"status",
+				"--chtime",
+				"--chmod",
+				"--chown",
+				"--no-progress",
+			),
+			"There should be no local changes after merge",
+		)
+	}
+
+	t.Log("Merge with --chtime, --chmod, and --chown")
+	{
+		sut.ClingSync("merge", "--no-progress", "--chtime", "--message", "with --chtime")
+		assert.Equal(2, td.Wc("-l", sut.ClingSync("log", "--short")), "A new revision should have been created")
+		assert.Equal(
+			td.Dedent(`
+				M mode.txt
+				M own.txt
+				0 added, 2 updated, 0 deleted
+			`),
+			sut.ClingSync(
+				"status",
+				"--chtime",
+				"--chmod",
+				"--chown",
+				"--no-progress",
+			),
+			"time.txt should have been committed",
+		)
+
+		sut.ClingSync("merge", "--no-progress", "--chmod", "--message", "with --chmod")
+		assert.Equal(3, td.Wc("-l", sut.ClingSync("log", "--short")), "A new revision should have been created")
+		assert.Equal(
+			td.Dedent(`
+				M own.txt
+				0 added, 1 updated, 0 deleted
+			`),
+			sut.ClingSync(
+				"status",
+				"--chtime",
+				"--chmod",
+				"--chown",
+				"--no-progress",
+			),
+			"mode.txt should have been committed",
+		)
+
+		sut.ClingSync("merge", "--no-progress", "--chown", "--message", "with --chown")
+		assert.Equal(4, td.Wc("-l", sut.ClingSync("log", "--short")), "A new revision should have been created")
+		assert.Equal("No changes", sut.ClingSync("status", "--chtime", "--chmod", "--chown", "--no-progress"))
+	}
+
+	t.Log("Merge into second workspace without --chtime, --chmod, and --chown")
+	{
+		t.Chdir("../workspace2")
+		assert.Contains(sut.ClingSync("merge", "--no-progress"), "No local changes")
+		assert.Equal(4, td.Wc("-l", sut.ClingSync("log", "--short")), "No new revision should have been created")
+
+		assert.NotEqual(
+			td.Sort(sut.Ls(), 4),
+			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
+			"Files of head should match the workspace")
+
+		// Merging again will see the local mode, mtime, and ownership changes as the new changes.
+		sut.ClingSync("merge", "--no-progress", "--chtime", "--chmod", "--chown")
+		assert.Equal(5, td.Wc("-l", sut.ClingSync("log", "--short")), "The old flags should have been committed")
+
+		assert.Equal(
+			td.Sort(sut.Ls(), 4),
+			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
+			"Files of head should match the workspace")
+	}
+
+	t.Log("Merge into third workspace with --chtime, --chmod, and --chown")
+	{
+		t.Chdir("../workspace3")
+		assert.Contains(sut.ClingSync("merge", "--no-progress", "--chtime", "--chmod", "--chown"), "No local changes")
+		assert.Equal(5, td.Wc("-l", sut.ClingSync("log", "--short")), "No new revision should have been created")
+
 		assert.Equal(
 			td.Sort(sut.Ls(), 4),
 			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),

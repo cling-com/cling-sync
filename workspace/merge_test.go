@@ -384,12 +384,12 @@ func TestMerge(t *testing.T) {
 
 		// Merge the changes - this should fail because the GUID and/or UID should not exist.
 		opts := wstd.MergeOptions()
-		opts.Chown = true
+		opts.RestorableMetadataFlag |= lib.RestorableMetadataOwnership
 		_, err = Merge(w.Workspace, r.Repository, opts)
 		assert.Error(err, "failed to restore file owner 1234 and group 5678 for a.txt")
 
 		// Try a second time without `Chown`.
-		opts.Chown = false
+		opts.RestorableMetadataFlag ^= lib.RestorableMetadataOwnership
 		_, err = Merge(w.Workspace, r.Repository, opts)
 		assert.NoError(err)
 		assert.Equal(fs.FileMode(0o700).Perm(), w.Stat("a.txt").Mode().Perm())
@@ -421,12 +421,12 @@ func TestMerge(t *testing.T) {
 
 		// Merge should fail if we take ownership into account.
 		opts := wstd.MergeOptions()
-		opts.Chown = true
+		opts.RestorableMetadataFlag |= lib.RestorableMetadataOwnership
 		_, err = Merge(w.Workspace, r.Repository, opts)
 		assert.Error(err, "MergeConflictsError")
 
 		// Merge should succeed if we ignore ownership.
-		opts.Chown = false
+		opts.RestorableMetadataFlag ^= lib.RestorableMetadataOwnership
 		revId1, err = Merge(w.Workspace, r.Repository, opts)
 		assert.NoError(err)
 		assert.Equal(revId1, w2revId2)
