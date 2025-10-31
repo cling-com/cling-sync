@@ -62,7 +62,7 @@ func (wstd WorkspaceTestData) CommitMonitor() *TestCommitMonitor {
 }
 
 func (wstd WorkspaceTestData) StatusOptions() *StatusOptions {
-	return &StatusOptions{nil, wstd.StagingMonitor(), true, false}
+	return &StatusOptions{nil, wstd.StagingMonitor(), lib.RestorableMetadataAll, false}
 }
 
 func (wstd WorkspaceTestData) MergeOptions() *MergeOptions {
@@ -72,13 +72,22 @@ func (wstd WorkspaceTestData) MergeOptions() *MergeOptions {
 		wstd.CommitMonitor(),
 		"author",
 		"message",
-		true,
+		lib.RestorableMetadataAll,
 		false,
 	}
 }
 
 func (wstd WorkspaceTestData) LsOptions(revisionId lib.RevisionId) *LsOptions {
 	return &LsOptions{RevisionId: revisionId} //nolint:exhaustruct
+}
+
+func (wstd WorkspaceTestData) CpOptions(revisionId lib.RevisionId) *CpOptions {
+	return &CpOptions{
+		revisionId,
+		wstd.CpMonitor(),
+		nil,
+		lib.RestorableMetadataAll,
+	}
 }
 
 type TestCpMonitor struct {

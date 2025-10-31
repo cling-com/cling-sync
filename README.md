@@ -23,6 +23,20 @@ losing it. Everything you put in once stays there forever.
 - **Revision**: A snapshot of the repository at a specific point in time, usually created by
   a `merge` operation.
 
+
+### Modification Tracking
+
+By default, only changes to the file contents are tracked. The file's metadata (ownership, mtime,
+and mode) are stored in the repository, but modifications to these metadata are not detected in
+consecutive merges unless the `--chown`, `--chmod`, or `--chtime` flags are used.
+
+When merging new files from the repository, mtime and mode are restored from the repository but not
+ownership. This is because ownership is highly dependent on the user's environment whereas mtime
+and mode are not.
+
+This way of tracking modifications is best suited for the main use case of cling-sync: making sure
+user data is never lost without the complications of a "real" backup system.
+
 ## OS Support
 
 Currently, the main focus is on supporting MacOS and Linux. It should work on Windows, but is not

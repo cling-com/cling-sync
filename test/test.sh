@@ -134,7 +134,7 @@ test_basic_scenario() {
         cmd "echo bb > b.txt"
         cmd "touch -d '2025-06-28T13:33:50+02:00' b.txt"
         cmd "echo 'd' > dir1/d.txt"
-        cling-sync merge --no-progress --message "second commit"
+        cling-sync merge --no-progress --chtime --message "second commit"
 
         log $green">>> A new revision should have been created"
         assert "cling-sync log --short | wc -l" "echo 2"

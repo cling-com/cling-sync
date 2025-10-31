@@ -27,13 +27,13 @@ type CommitMonitor interface {
 }
 
 type MergeOptions struct {
-	StagingMonitor  StagingEntryMonitor
-	CpMonitor       CpMonitor
-	CommitMonitor   CommitMonitor
-	Author          string
-	Message         string
-	Chown           bool
-	UseStagingCache bool
+	StagingMonitor         StagingEntryMonitor
+	CpMonitor              CpMonitor
+	CommitMonitor          CommitMonitor
+	Author                 string
+	Message                string
+	RestorableMetadataFlag lib.RestorableMetadataFlag
+	UseStagingCache        bool
 	// todo: add a `MergeMonitor` that is called after each merge step.
 }
 
@@ -238,7 +238,7 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 		var md *lib.FileMetadata
 		if existsInRemote {
 			if entry.Metadata.FileHash == remoteEntry.Metadata.FileHash {
-				if entry.Metadata.IsEqualRestorableAttributes(remoteEntry.Metadata, m.opts.Chown) {
+				if entry.Metadata.IsEqualRestorableAttributes(remoteEntry.Metadata, m.opts.RestorableMetadataFlag) {
 					// The file did not change at all, we can skip it completely.
 					mon.OnEnd(entry)
 					continue
@@ -325,11 +325,12 @@ func (m *Merger) findConflicts(
 					path,
 				)
 			}
-			if wsChangeExists && wsChange.Metadata.IsEqualRestorableAttributes(remoteChange.Metadata, m.opts.Chown) {
+			if wsChangeExists &&
+				wsChange.Metadata.IsEqualRestorableAttributes(remoteChange.Metadata, m.opts.RestorableMetadataFlag) {
 				// The file did not change between the workspace revision and the repository revision.
 				continue
 			}
-			if localChange.Metadata.IsEqualRestorableAttributes(remoteChange.Metadata, m.opts.Chown) {
+			if localChange.Metadata.IsEqualRestorableAttributes(remoteChange.Metadata, m.opts.RestorableMetadataFlag) {
 				continue
 			}
 			localChange.Path, _ = localChange.Path.TrimBase(m.ws.PathPrefix)
@@ -451,6 +452,11 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		if entry.Type != lib.RevisionEntryAdd && entry.Type != lib.RevisionEntryUpdate {
 			return lib.Errorf("unexpected revision entry type %s for %s", entry.Type, targetPath)
 		}
+		restoreMode := m.opts.RestorableMetadataFlag
+		if !existsInStaging {
+			// We restore mode and mtime for newly created directories.
+			restoreMode |= lib.RestorableMetadataMode | lib.RestorableMetadataMTime
+		}
 		// Write the file if it is different or does not exist.
 		if entry.Metadata.ModeAndPerm.IsDir() {
 			if !existsInStaging {
@@ -459,7 +465,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 				}
 			}
 			// Only update metadata.
-			if err := restoreFileMode(m.ws.FS, targetPath, entry.Metadata, m.opts.Chown); err != nil {
+			if err := restoreFileMode(m.ws.FS, targetPath, entry.Metadata, restoreMode); err != nil {
 				return lib.WrapErrorf(
 					err,
 					"failed to restore file mode %s for %s",
@@ -477,8 +483,9 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 				return lib.WrapErrorf(err, "failed to restore %s", targetPath)
 			}
 		}
-		if !existsInStaging || !entry.Metadata.IsEqualRestorableAttributes(stagingEntry.Metadata, m.opts.Chown) {
-			if err := restoreFileMode(m.ws.FS, targetPath, entry.Metadata, m.opts.Chown); err != nil {
+		if !existsInStaging ||
+			!entry.Metadata.IsEqualRestorableAttributes(stagingEntry.Metadata, m.opts.RestorableMetadataFlag) {
+			if err := restoreFileMode(m.ws.FS, targetPath, entry.Metadata, restoreMode); err != nil {
 				return lib.WrapErrorf(
 					err,
 					"failed to restore file mode %s for %s",
@@ -549,8 +556,11 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 			return lib.WrapErrorf(err, "failed to get entry from repository snapshot cache for %s", path)
 		}
 		if existsInRemote {
-			if !d.IsDir() &&
-				(remoteEntry.Metadata.MTime() != fileInfo.ModTime() || remoteEntry.Metadata.Size != fileInfo.Size()) {
+			if d.IsDir() {
+				return nil
+			}
+			if remoteEntry.Metadata.Size != fileInfo.Size() {
+				// todo: We should record inode and ctime during staging and compare them here.
 				return lib.Errorf("file %s was modified during merge - aborting merge", path)
 			}
 			return nil
@@ -767,7 +777,7 @@ func buildLocalChanges(
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create staging cache")
 	}
-	localChanges, err := staging.MergeWithSnapshot(wsRevisionSnapshot, opts.Chown)
+	localChanges, err := staging.MergeWithSnapshot(wsRevisionSnapshot, opts.RestorableMetadataFlag)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to merge staging and workspace snapshot")
 	}
