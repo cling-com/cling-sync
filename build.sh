@@ -51,7 +51,7 @@ run_build() {
             cli)
                 echo ">>> Building CLI"
                 go build "$@" -o cling-sync ./cli
-                if [ "${CS_DARWIN_CODESIGN:-}" != "" -a "$(uname -s)" == "Darwin" ]; then
+                if [ -n "${CS_DARWIN_CODESIGN:-}" ] && [ "$(uname -s)" = "Darwin" ]; then
                     echo ">>> Codesigning CLI"
                     codesign --sign "${CS_DARWIN_CODESIGN}" --force --options runtime ./cling-sync
                 fi
