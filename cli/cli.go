@@ -606,6 +606,7 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Human           bool
 		TimestampFormat string
 		ShortFileMode   bool
+		FileHash        bool
 	}{
 		TimestampFormat: time.RFC3339,
 	}
@@ -613,6 +614,7 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
 	flags.BoolVar(&args.Short, "short", false, "Show short listing (same as --timestamp-format=relative)")
+	flags.BoolVar(&args.FileHash, "file-hash", false, "Show file hash")
 	flags.BoolVar(
 		&args.Human,
 		"human",
@@ -690,6 +692,7 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	format := &ws.LsFormat{
 		FullPath:          true,
 		FullMode:          !args.ShortFileMode,
+		FileHash:          args.FileHash,
 		TimestampFormat:   args.TimestampFormat,
 		HumanReadableSize: args.Human,
 	}

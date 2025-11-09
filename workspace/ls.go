@@ -28,6 +28,7 @@ func (f *LsFile) String() string {
 type LsFormat struct {
 	FullPath bool
 	FullMode bool
+	FileHash bool
 	// A `time.Format` string or one of the special values "relative", "unix", or "unix-fraction".
 	TimestampFormat   string
 	HumanReadableSize bool
@@ -71,10 +72,14 @@ func (f *LsFile) Format(format *LsFormat) string {
 	} else {
 		mode = f.Metadata.ModeAndPerm.ShortString()
 	}
+	s := " " + path
+	if format.FileHash {
+		s = fmt.Sprintf("%s %s", s, f.Metadata.FileHash)
+	}
 	if format.HumanReadableSize {
-		return fmt.Sprintf("%s %6s %s  %s", mode, size, mtimeStr, path)
+		return fmt.Sprintf("%s %6s %s %s", mode, size, mtimeStr, s)
 	} else {
-		return fmt.Sprintf("%s %12s %s  %s", mode, size, mtimeStr, path)
+		return fmt.Sprintf("%s %12s %s %s", mode, size, mtimeStr, s)
 	}
 }
 
