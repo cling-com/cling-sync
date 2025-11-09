@@ -172,6 +172,7 @@ func TestStagingCache(t *testing.T) {
 
 		w.Write("b.txt", "b")
 		w.Write("dir/a.txt", "a")
+		w.Chmod("dir/a.txt", 0o600)
 
 		// Create the cache with an entry for `a.txt`.
 		cacheFS, err := w.Workspace.FS.MkSub(".cling/workspace/cache/staging")
@@ -179,6 +180,7 @@ func TestStagingCache(t *testing.T) {
 		tempWriter := NewStagingCacheWriter(cacheFS, lib.MaxBlockDataSize)
 		fileInfo, err := w.Workspace.FS.Stat("dir/a.txt")
 		assert.NoError(err)
+		// Note: We set a different mode here to verify that the mode is not taken from the cache.
 		amd := td.FileMetadata(0o777)
 		amd.FileHash = td.SHA256("from_cache")
 		a, err := NewStagingCacheEntry(td.Path("dir/a.txt"), fileInfo, amd)
@@ -195,7 +197,7 @@ func TestStagingCache(t *testing.T) {
 		assert.Equal([]lib.TestRevisionEntryInfo{
 			{"b.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("b")},
 			{"dir", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
-			{"dir/a.txt", lib.RevisionEntryAdd, 0o777, td.SHA256("from_cache")},
+			{"dir/a.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("from_cache")},
 		}, r.RevisionTempInfos(finalized))
 
 		// The previous run should have retained the cache entry for `a.txt`. So we should see the
@@ -207,7 +209,7 @@ func TestStagingCache(t *testing.T) {
 		assert.Equal([]lib.TestRevisionEntryInfo{
 			{"b.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("b")},
 			{"dir", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
-			{"dir/a.txt", lib.RevisionEntryAdd, 0o777, td.SHA256("from_cache")},
+			{"dir/a.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("from_cache")},
 		}, r.RevisionTempInfos(finalized))
 
 		// Not using the cache should ignore our fake cache entry and rebuild the cache correctly.

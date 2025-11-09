@@ -438,7 +438,12 @@ func (c *StagingCache) Handle(path lib.Path, fileInfo fs.FileInfo) (*lib.FileMet
 				return nil, lib.WrapErrorf(err, "failed to create cache entry for %s", path)
 			}
 			if !cacheEntry.HasChanged(existingCacheEntry) {
-				fileMetadata = existingCacheEntry.Metadata
+				md := lib.NewFileMetadataFromFileInfo(
+					fileInfo,
+					existingCacheEntry.Metadata.FileHash,
+					existingCacheEntry.Metadata.BlockIds,
+				)
+				fileMetadata = &md
 			}
 		}
 	}
