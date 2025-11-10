@@ -280,14 +280,20 @@ type StagingCacheEntry struct {
 	Inode     uint64
 }
 
-func NewStagingCacheEntry(path lib.Path, fileInfo fs.FileInfo, md *lib.FileMetadata) (*StagingCacheEntry, error) {
+func NewStagingCacheEntry(
+	path lib.Path,
+	fileInfo fs.FileInfo,
+	fileHash lib.Sha256,
+	blockIds []lib.BlockId,
+) (*StagingCacheEntry, error) {
 	stat, err := lib.EnhancedStat(fileInfo)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get metadata for %s", path)
 	}
+	md := lib.NewFileMetadataFromFileInfo(fileInfo, fileHash, blockIds)
 	return &StagingCacheEntry{
 		Path:      path,
-		Metadata:  md,
+		Metadata:  &md,
 		CTimeSec:  stat.CTimeSec,
 		CTimeNSec: stat.CTimeNSec,
 		Size:      fileInfo.Size(),
@@ -433,7 +439,12 @@ func (c *StagingCache) Handle(path lib.Path, fileInfo fs.FileInfo) (*lib.FileMet
 			return nil, lib.WrapErrorf(err, "failed to get entry from cache for %s", path)
 		}
 		if ok {
-			cacheEntry, err = NewStagingCacheEntry(path, fileInfo, existingCacheEntry.Metadata)
+			cacheEntry, err = NewStagingCacheEntry(
+				path,
+				fileInfo,
+				existingCacheEntry.Metadata.FileHash,
+				existingCacheEntry.Metadata.BlockIds,
+			)
 			if err != nil {
 				return nil, lib.WrapErrorf(err, "failed to create cache entry for %s", path)
 			}
@@ -455,7 +466,7 @@ func (c *StagingCache) Handle(path lib.Path, fileInfo fs.FileInfo) (*lib.FileMet
 		fileMetadata = &md
 	}
 	if cacheEntry == nil {
-		cacheEntry, err = NewStagingCacheEntry(path, fileInfo, fileMetadata)
+		cacheEntry, err = NewStagingCacheEntry(path, fileInfo, fileMetadata.FileHash, fileMetadata.BlockIds)
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to create cache entry for %s", path)
 		}

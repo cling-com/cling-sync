@@ -236,23 +236,16 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 			)
 		}
 		var md *lib.FileMetadata
-		if existsInRemote {
-			if entry.Metadata.FileHash == remoteEntry.Metadata.FileHash {
-				if entry.Metadata.IsEqualRestorableAttributes(remoteEntry.Metadata, m.opts.RestorableMetadataFlag) {
-					// The file did not change at all, we can skip it completely.
-					mon.OnEnd(entry)
-					continue
-				}
-				// We only need to compute the file hash and not upload the file again.
-				computedMD, err := computeFileHash(m.ws.FS, localPath, stat)
-				if err != nil {
-					return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get metadata for %s", localPath)
-				}
-				md = &computedMD
-				md.BlockIds = remoteEntry.Metadata.BlockIds
+		if existsInRemote && entry.Metadata.FileHash == remoteEntry.Metadata.FileHash {
+			if entry.Metadata.IsEqualRestorableAttributes(remoteEntry.Metadata, m.opts.RestorableMetadataFlag) {
+				// The file did not change at all, we can skip it completely.
+				mon.OnEnd(entry)
+				continue
 			}
-		}
-		if md == nil {
+			// Only metadata changed.
+			md = entry.Metadata
+			md.BlockIds = remoteEntry.Metadata.BlockIds
+		} else {
 			uploadedMD, err := AddFileToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon.OnAddBlock)
 			if err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", localPath)

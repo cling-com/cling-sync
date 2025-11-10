@@ -183,7 +183,7 @@ func TestStagingCache(t *testing.T) {
 		// Note: We set a different mode here to verify that the mode is not taken from the cache.
 		amd := td.FileMetadata(0o777)
 		amd.FileHash = td.SHA256("from_cache")
-		a, err := NewStagingCacheEntry(td.Path("dir/a.txt"), fileInfo, amd)
+		a, err := NewStagingCacheEntry(td.Path("dir/a.txt"), fileInfo, amd.FileHash, amd.BlockIds)
 		assert.NoError(err)
 		assert.NoError(tempWriter.Add(a))
 		_, err = tempWriter.Finalize()
