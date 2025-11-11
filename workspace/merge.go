@@ -388,7 +388,7 @@ func (m *Merger) restoreDirFileModes() error {
 func (m *Merger) applyRemoteChanges(
 	head lib.RevisionId,
 	remoteRevision *lib.TempCache[lib.RevisionEntry],
-	staging *lib.TempCache[lib.RevisionEntry],
+	staging *lib.TempCache[StagingEntry],
 	localChanges *lib.TempCache[lib.RevisionEntry],
 ) error {
 	defer m.restoreDirFileModes() //nolint:errcheck
@@ -410,7 +410,7 @@ func (m *Merger) applyRemoteChanges(
 // Copy all remote files that are not part of the local changes.
 func (m *Merger) copyRepositoryFiles( //nolint:funlen
 	remoteRevision *lib.Temp[lib.RevisionEntry],
-	staging *lib.TempCache[lib.RevisionEntry],
+	staging *lib.TempCache[StagingEntry],
 	localChanges *lib.TempCache[lib.RevisionEntry],
 ) error {
 	r := remoteRevision.Reader(lib.RevisionEntryPathFilter(m.ws.PathPrefix.AsFilter()))
@@ -495,7 +495,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 // Return an error if the workspace changed during the merge.
 func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 	remoteRevision *lib.TempCache[lib.RevisionEntry],
-	staging *lib.TempCache[lib.RevisionEntry],
+	staging *lib.TempCache[StagingEntry],
 	localChanges *lib.TempCache[lib.RevisionEntry],
 ) error {
 	deleteDirs := make(map[string]bool)
@@ -737,7 +737,7 @@ func buildLocalChanges(
 	tempFS lib.FS,
 	repository *lib.Repository,
 	opts *MergeOptions,
-) (wsHead lib.RevisionId, stagingCache *lib.TempCache[lib.RevisionEntry], localChangesCache *lib.TempCache[lib.RevisionEntry], wsRevisionCache *lib.TempCache[lib.RevisionEntry], err error) {
+) (wsHead lib.RevisionId, stagingCache *lib.TempCache[StagingEntry], localChangesCache *lib.TempCache[lib.RevisionEntry], wsRevisionCache *lib.TempCache[lib.RevisionEntry], err error) {
 	wsHead, err = ws.Head()
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to get workspace head")
@@ -766,7 +766,7 @@ func buildLocalChanges(
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
 	}
-	stagingCache, err = lib.NewRevisionEntryTempCache(finalStaging, 10)
+	stagingCache, err = lib.NewTempCache(finalStaging, StagingCacheKey, 10)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create staging cache")
 	}

@@ -27,8 +27,8 @@ type StagingEntryMonitor interface {
 type Staging struct {
 	PathFilter lib.PathFilter
 	pathPrefix lib.Path
-	tempWriter *lib.TempWriter[lib.RevisionEntry]
-	temp       *lib.Temp[lib.RevisionEntry]
+	tempWriter *lib.TempWriter[StagingEntry]
+	temp       *lib.Temp[StagingEntry]
 	tmpFS      lib.FS
 }
 
@@ -44,7 +44,7 @@ func NewStaging( //nolint:funlen
 	tmp lib.FS,
 	mon StagingEntryMonitor,
 ) (*Staging, error) {
-	revisionEntryWriter := lib.NewRevisionEntryTempWriter(tmp, lib.DefaultTempChunkSize)
+	revisionEntryWriter := NewStagingCacheWriter(tmp, lib.DefaultTempChunkSize)
 	cache, err := NewStagingCache(src, useCache)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create staging cache")
@@ -88,19 +88,19 @@ func NewStaging( //nolint:funlen
 			}
 			return nil
 		}
-		fileMetadata, err := cache.Handle(localPath, fileInfo)
+		repoPath := pathPrefix.Join(localPath)
+		stagingEntry, err := cache.Handle(localPath, repoPath, fileInfo)
 		if err != nil {
 			// todo: We should report the error to the monitor.
 			mon.OnEnd(localPath, false, nil)
 			return lib.WrapErrorf(err, "failed to get metadata for %s", localPath)
 		}
-		repoPath := pathPrefix.Join(localPath)
-		if err := staging.add(repoPath, fileMetadata); err != nil {
+		if err := staging.add(stagingEntry); err != nil {
 			// todo: We should report the error to the monitor.
-			mon.OnEnd(localPath, false, fileMetadata)
+			mon.OnEnd(localPath, false, stagingEntry.Metadata)
 			return lib.WrapErrorf(err, "failed to add path %s to staging (as %s)", localPath, repoPath)
 		}
-		mon.OnEnd(localPath, false, fileMetadata)
+		mon.OnEnd(localPath, false, stagingEntry.Metadata)
 		return nil
 	})
 	if err != nil {
@@ -112,7 +112,7 @@ func NewStaging( //nolint:funlen
 	return staging, nil
 }
 
-func (s *Staging) Finalize() (*lib.Temp[lib.RevisionEntry], error) {
+func (s *Staging) Finalize() (*lib.Temp[StagingEntry], error) {
 	if s.temp == nil {
 		t, err := s.tempWriter.Finalize()
 		if err != nil {
@@ -148,7 +148,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 		}
 	}
 	revReader := snapshot.Reader(lib.RevisionEntryPathFilter(revFilter))
-	stgReader := stgTemp.Reader(lib.RevisionEntryPathFilter(s.PathFilter))
+	stgReader := stgTemp.Reader(StagingEntryPathFilter(s.PathFilter))
 	final, err := s.tmpFS.MkSub("final")
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create commit directory")
@@ -164,7 +164,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 		}
 		return nil
 	}
-	var stg *lib.RevisionEntry
+	var stg *StagingEntry
 	var rev *lib.RevisionEntry
 	for {
 		if stg == nil {
@@ -200,7 +200,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 				// Write an add for all remaining staging entries.
 				for {
 					if stg != nil { // The current one might be nil.
-						if err := add(stg.Path, lib.RevisionEntryAdd, stg.Metadata); err != nil {
+						if err := add(stg.RepoPath, lib.RevisionEntryAdd, stg.Metadata); err != nil {
 							return nil, err
 						}
 					}
@@ -218,11 +218,14 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 				return nil, lib.WrapErrorf(err, "failed to read revision snapshot")
 			}
 		}
-		c := lib.RevisionEntryPathCompare(stg, rev)
+		c := strings.Compare(
+			lib.PathCompareString(stg.RepoPath, stg.Metadata.ModeAndPerm.IsDir()),
+			lib.PathCompareString(rev.Path, rev.Metadata.ModeAndPerm.IsDir()),
+		)
 		if c == 0 { //nolint:gocritic
 			if !stg.Metadata.IsEqualRestorableAttributes(rev.Metadata, restorableMetadataFlag) {
 				// Write an update.
-				if err := add(stg.Path, lib.RevisionEntryUpdate, stg.Metadata); err != nil {
+				if err := add(stg.RepoPath, lib.RevisionEntryUpdate, stg.Metadata); err != nil {
 					return nil, err
 				}
 			}
@@ -230,7 +233,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			rev = nil
 		} else if c < 0 {
 			// Write an add.
-			if err := add(stg.Path, lib.RevisionEntryAdd, stg.Metadata); err != nil {
+			if err := add(stg.RepoPath, lib.RevisionEntryAdd, stg.Metadata); err != nil {
 				return nil, err
 			}
 			stg = nil
@@ -251,28 +254,21 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	return temp, nil
 }
 
-func (s *Staging) add(path lib.Path, md *lib.FileMetadata) error {
-	if md == nil {
-		return lib.Errorf("file metadata is nil")
-	}
+func (s *Staging) add(stagingEntry *StagingEntry) error {
 	if s.tempWriter == nil {
 		return lib.Errorf("staging is closed")
 	}
-	if s.PathFilter != nil && !s.PathFilter.Include(path, md.ModeAndPerm.IsDir()) {
+	if s.PathFilter != nil && !s.PathFilter.Include(stagingEntry.RepoPath, stagingEntry.Metadata.ModeAndPerm.IsDir()) {
 		return nil
 	}
-	re, err := lib.NewRevisionEntry(path, lib.RevisionEntryAdd, md)
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to create revision entry")
-	}
-	if err := s.tempWriter.Add(&re); err != nil {
+	if err := s.tempWriter.Add(stagingEntry); err != nil {
 		return err //nolint:wrapcheck
 	}
 	return nil
 }
 
-type StagingCacheEntry struct {
-	Path      lib.Path
+type StagingEntry struct {
+	RepoPath  lib.Path
 	Metadata  *lib.FileMetadata
 	CTimeSec  int64
 	CTimeNSec int32
@@ -280,19 +276,19 @@ type StagingCacheEntry struct {
 	Inode     uint64
 }
 
-func NewStagingCacheEntry(
+func NewStagingEntry(
 	path lib.Path,
 	fileInfo fs.FileInfo,
 	fileHash lib.Sha256,
 	blockIds []lib.BlockId,
-) (*StagingCacheEntry, error) {
+) (*StagingEntry, error) {
 	stat, err := lib.EnhancedStat(fileInfo)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get metadata for %s", path)
 	}
 	md := lib.NewFileMetadataFromFileInfo(fileInfo, fileHash, blockIds)
-	return &StagingCacheEntry{
-		Path:      path,
+	return &StagingEntry{
+		RepoPath:  path,
 		Metadata:  &md,
 		CTimeSec:  stat.CTimeSec,
 		CTimeNSec: stat.CTimeNSec,
@@ -301,17 +297,17 @@ func NewStagingCacheEntry(
 	}, nil
 }
 
-func (e *StagingCacheEntry) HasChanged(other *StagingCacheEntry) bool {
+func (e *StagingEntry) HasChanged(other *StagingEntry) bool {
 	return e.CTimeSec != other.CTimeSec || e.CTimeNSec != other.CTimeNSec || e.Inode != other.Inode ||
 		e.Size != other.Size
 }
 
-func MarshalStagingCacheEntry(e *StagingCacheEntry, w io.Writer) error {
+func MarshalStagingEntry(e *StagingEntry, w io.Writer) error {
 	bw := lib.NewBinaryWriter(w)
 	bw.Write(StagingCacheVersion)
-	bw.WriteString(e.Path.String())
+	bw.WriteString(e.RepoPath.String())
 	if err := lib.MarshalFileMetadata(e.Metadata, w); err != nil {
-		return lib.WrapErrorf(err, "failed to marshal file metadata for %s", e.Path)
+		return lib.WrapErrorf(err, "failed to marshal file metadata for %s", e.RepoPath)
 	}
 	bw.Write(e.CTimeSec)
 	bw.Write(e.CTimeNSec)
@@ -320,8 +316,8 @@ func MarshalStagingCacheEntry(e *StagingCacheEntry, w io.Writer) error {
 	return bw.Err
 }
 
-func UnmarshalStagingCacheEntry(r io.Reader) (*StagingCacheEntry, error) {
-	entry := &StagingCacheEntry{} //nolint:exhaustruct
+func UnmarshalStagingEntry(r io.Reader) (*StagingEntry, error) {
+	entry := &StagingEntry{} //nolint:exhaustruct
 	br := lib.NewBinaryReader(r)
 	var version uint16
 	br.Read(&version)
@@ -333,7 +329,7 @@ func UnmarshalStagingCacheEntry(r io.Reader) (*StagingCacheEntry, error) {
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to unmarshal path")
 	}
-	entry.Path = path
+	entry.RepoPath = path
 	md, err := lib.UnmarshalFileMetadata(r)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to unmarshal file metadata")
@@ -346,9 +342,9 @@ func UnmarshalStagingCacheEntry(r io.Reader) (*StagingCacheEntry, error) {
 	return entry, br.Err
 }
 
-func MarshalledStagingCacheEntrySize(e *StagingCacheEntry) int {
+func MarshalledStagingCacheSize(e *StagingEntry) int {
 	return 2 + // Version
-		2 + e.Path.Len() + // Path
+		2 + e.RepoPath.Len() + // Path
 		e.Metadata.MarshalledSize() + // Metadata
 		8 + // CTimeSec
 		4 + // CTimeNSec
@@ -356,31 +352,37 @@ func MarshalledStagingCacheEntrySize(e *StagingCacheEntry) int {
 		8 // Inode
 }
 
-func StagingCacheEntryPathCompare(a, b *StagingCacheEntry) int {
-	return strings.Compare(lib.PathCompareString(a.Path, a.Metadata.ModeAndPerm.IsDir()),
-		lib.PathCompareString(b.Path, b.Metadata.ModeAndPerm.IsDir()))
+func StagingEntryPathFilter(pathFilter lib.PathFilter) func(e *StagingEntry) bool {
+	if pathFilter == nil {
+		return nil
+	}
+	return func(e *StagingEntry) bool {
+		return pathFilter.Include(e.RepoPath, e.Metadata.ModeAndPerm.IsDir())
+	}
 }
 
-func NewStagingCacheWriter(fs lib.FS, maxChunkSize int) *lib.TempWriter[StagingCacheEntry] {
+func StagingEntryPathCompare(a, b *StagingEntry) int {
+	return strings.Compare(lib.PathCompareString(a.RepoPath, a.Metadata.ModeAndPerm.IsDir()),
+		lib.PathCompareString(b.RepoPath, b.Metadata.ModeAndPerm.IsDir()))
+}
+
+func NewStagingCacheWriter(fs lib.FS, maxChunkSize int) *lib.TempWriter[StagingEntry] {
 	return lib.NewTempWriter(
-		StagingCacheEntryPathCompare,
-		MarshalStagingCacheEntry,
-		MarshalledStagingCacheEntrySize,
-		UnmarshalStagingCacheEntry,
+		StagingEntryPathCompare,
+		MarshalStagingEntry,
+		MarshalledStagingCacheSize,
+		UnmarshalStagingEntry,
 		fs,
 		maxChunkSize,
 	)
 }
 
-func OpenStagingCache(fs lib.FS, maxChunksInCache int) (*lib.TempCache[StagingCacheEntry], error) {
-	temp, err := lib.OpenTemp(fs, UnmarshalStagingCacheEntry)
+func OpenStagingCache(fs lib.FS, maxChunksInCache int) (*lib.TempCache[StagingEntry], error) {
+	temp, err := lib.OpenTemp(fs, UnmarshalStagingEntry)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open temp")
 	}
-	cacheKey := func(e *StagingCacheEntry) string {
-		return lib.PathCompareString(e.Path, e.Metadata.ModeAndPerm.IsDir())
-	}
-	cache, err := lib.NewTempCache(temp, cacheKey, maxChunksInCache)
+	cache, err := lib.NewTempCache(temp, StagingCacheKey, maxChunksInCache)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create new TempCache")
 	}
@@ -390,8 +392,8 @@ func OpenStagingCache(fs lib.FS, maxChunksInCache int) (*lib.TempCache[StagingCa
 type StagingCache struct {
 	src          lib.FS
 	cacheTempDir string
-	cacheWriter  *lib.TempWriter[StagingCacheEntry]
-	cache        *lib.TempCache[StagingCacheEntry]
+	cacheWriter  *lib.TempWriter[StagingEntry]
+	cache        *lib.TempCache[StagingEntry]
 }
 
 func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
@@ -400,8 +402,8 @@ func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
 		return nil, lib.WrapErrorf(err, "failed to generate random string for cache temp dir")
 	}
 	cacheTempDir := filepath.Join(cacheDir, cacheTempDirPrefix+rand)
-	var cacheWriter *lib.TempWriter[StagingCacheEntry]
-	var cache *lib.TempCache[StagingCacheEntry]
+	var cacheWriter *lib.TempWriter[StagingEntry]
+	var cache *lib.TempCache[StagingEntry]
 	cacheTempFS, err := src.MkSub(cacheTempDir)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create cache tmp dir")
@@ -427,54 +429,58 @@ func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
 	}, nil
 }
 
+func StagingCacheKey(stagingEntry *StagingEntry) string {
+	return lib.PathCompareString(stagingEntry.RepoPath, stagingEntry.Metadata.ModeAndPerm.IsDir())
+}
+
 // Return the metadata either from the cache or compute it.
 // Update the cache.
-func (c *StagingCache) Handle(path lib.Path, fileInfo fs.FileInfo) (*lib.FileMetadata, error) {
+func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs.FileInfo) (*StagingEntry, error) {
 	var fileMetadata *lib.FileMetadata
-	var cacheEntry *StagingCacheEntry
+	var stagingEntry *StagingEntry
 	var err error
 	if c.cache != nil {
-		existingCacheEntry, ok, err := c.cache.Get(lib.PathCompareString(path, fileInfo.IsDir()))
+		existingEntry, ok, err := c.cache.Get(lib.PathCompareString(repoPath, fileInfo.IsDir()))
 		if err != nil {
-			return nil, lib.WrapErrorf(err, "failed to get entry from cache for %s", path)
+			return nil, lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}
 		if ok {
-			cacheEntry, err = NewStagingCacheEntry(
-				path,
+			stagingEntry, err = NewStagingEntry(
+				repoPath,
 				fileInfo,
-				existingCacheEntry.Metadata.FileHash,
-				existingCacheEntry.Metadata.BlockIds,
+				existingEntry.Metadata.FileHash,
+				existingEntry.Metadata.BlockIds,
 			)
 			if err != nil {
-				return nil, lib.WrapErrorf(err, "failed to create cache entry for %s", path)
+				return nil, lib.WrapErrorf(err, "failed to create cache entry for %s", localPath)
 			}
-			if !cacheEntry.HasChanged(existingCacheEntry) {
+			if !stagingEntry.HasChanged(existingEntry) {
 				md := lib.NewFileMetadataFromFileInfo(
 					fileInfo,
-					existingCacheEntry.Metadata.FileHash,
-					existingCacheEntry.Metadata.BlockIds,
+					existingEntry.Metadata.FileHash,
+					existingEntry.Metadata.BlockIds,
 				)
 				fileMetadata = &md
 			}
 		}
 	}
 	if fileMetadata == nil {
-		md, err := computeFileHash(c.src, path, fileInfo)
+		md, err := computeFileHash(c.src, localPath, fileInfo)
 		if err != nil {
-			return nil, lib.WrapErrorf(err, "failed to get metadata for %s", path)
+			return nil, lib.WrapErrorf(err, "failed to get metadata for %s", localPath)
 		}
 		fileMetadata = &md
 	}
-	if cacheEntry == nil {
-		cacheEntry, err = NewStagingCacheEntry(path, fileInfo, fileMetadata.FileHash, fileMetadata.BlockIds)
+	if stagingEntry == nil {
+		stagingEntry, err = NewStagingEntry(repoPath, fileInfo, fileMetadata.FileHash, fileMetadata.BlockIds)
 		if err != nil {
-			return nil, lib.WrapErrorf(err, "failed to create cache entry for %s", path)
+			return nil, lib.WrapErrorf(err, "failed to create cache entry for %s", localPath)
 		}
 	}
-	if err := c.cacheWriter.Add(cacheEntry); err != nil {
-		return nil, lib.WrapErrorf(err, "failed to add cache entry for %s", path)
+	if err := c.cacheWriter.Add(stagingEntry); err != nil {
+		return nil, lib.WrapErrorf(err, "failed to add cache entry for %s", localPath)
 	}
-	return fileMetadata, nil
+	return stagingEntry, nil
 }
 
 func (c *StagingCache) Finalize() error {

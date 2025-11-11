@@ -3,6 +3,8 @@
 package workspace
 
 import (
+	"errors"
+	"io"
 	"io/fs"
 	"testing"
 
@@ -13,6 +15,12 @@ var (
 	td   = lib.TestData{}      //nolint:gochecknoglobals
 	wstd = WorkspaceTestData{} //nolint:gochecknoglobals
 )
+
+type TestStagingEntryInfo struct {
+	Path string
+	Mode fs.FileMode
+	Hash lib.Sha256
+}
 
 type WorkspaceTestData struct{}
 
@@ -88,6 +96,23 @@ func (wstd WorkspaceTestData) CpOptions(revisionId lib.RevisionId) *CpOptions {
 		nil,
 		lib.RestorableMetadataAll,
 	}
+}
+
+func (wstd WorkspaceTestData) StagingEntryInfos(temp *lib.Temp[StagingEntry]) []TestStagingEntryInfo {
+	infos := []TestStagingEntryInfo{}
+	r := temp.Reader(nil)
+	for {
+		entry, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		infos = append(infos, TestStagingEntryInfo{
+			Path: entry.RepoPath.String(),
+			Mode: entry.Metadata.ModeAndPerm.AsFileMode(),
+			Hash: entry.Metadata.FileHash,
+		})
+	}
+	return infos
 }
 
 type TestCpMonitor struct {

@@ -46,13 +46,13 @@ func TestStaging(t *testing.T) {
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
-		assert.Equal([]lib.TestRevisionEntryInfo{
-			{"a.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("a")},
-			{"b", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, td.SHA256("")},
-			{"b/c.txt", lib.RevisionEntryAdd, 0o400, td.SHA256("cc")},
-			{"b/e", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, td.SHA256("")},
-			{"b/e/f.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("fff")},
-		}, r.RevisionTempInfos(finalized))
+		assert.Equal([]TestStagingEntryInfo{
+			{"a.txt", 0o600, td.SHA256("a")},
+			{"b", 0o700 | fs.ModeDir, td.SHA256("")},
+			{"b/c.txt", 0o400, td.SHA256("cc")},
+			{"b/e", 0o700 | fs.ModeDir, td.SHA256("")},
+			{"b/e/f.txt", 0o600, td.SHA256("fff")},
+		}, wstd.StagingEntryInfos(finalized))
 
 		// Merge the staging with a snapshot of the remote revision.
 		snapshot, err := lib.NewRevisionSnapshot(r.Repository, remoteRev1, td.NewFS(t))
@@ -92,35 +92,54 @@ func TestStaging(t *testing.T) {
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
-		assert.Equal([]lib.TestRevisionEntryInfo{
-			{".clingignore", lib.RevisionEntryAdd, 0o600, td.SHA256("*.png")},
-			{"a.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("a")},
-			{"dir1", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
-			{"dir1/.gitignore", lib.RevisionEntryAdd, 0o600, td.SHA256("dir2\n*.txt")},
-			{"dir1/b.md", lib.RevisionEntryAdd, 0o600, td.SHA256("b")},
-			{"dir1/dir3", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
-			{"dir1/dir3/c.md", lib.RevisionEntryAdd, 0o600, td.SHA256("c")},
-		}, r.RevisionTempInfos(finalized))
+		assert.Equal([]TestStagingEntryInfo{
+			{".clingignore", 0o600, td.SHA256("*.png")},
+			{"a.txt", 0o600, td.SHA256("a")},
+			{"dir1", 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"dir1/.gitignore", 0o600, td.SHA256("dir2\n*.txt")},
+			{"dir1/b.md", 0o600, td.SHA256("b")},
+			{"dir1/dir3", 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"dir1/dir3/c.md", 0o600, td.SHA256("c")},
+		}, wstd.StagingEntryInfos(finalized))
+	})
+
+	t.Run("With path prefix", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+
+		// Add first commit to the root workspace.
+		w.Write("a.txt", "a")
+
+		staging, err := NewStaging(w.Workspace.FS, td.Path("look/here/"), nil, false, w.TempFS, wstd.StagingMonitor())
+		assert.NoError(err)
+		finalized, err := staging.Finalize()
+		assert.NoError(err)
+		assert.Equal([]TestStagingEntryInfo{
+			// Make sure that the path prefix is included in the StagingEntry.
+			{"look/here/a.txt", 0o600, td.SHA256("a")},
+		}, wstd.StagingEntryInfos(finalized))
 	})
 }
 
 func TestStagingCache(t *testing.T) {
 	t.Parallel()
-	t.Run("Marshal and Unmarshal StagingCacheEntry", func(t *testing.T) {
+	t.Run("Marshal and Unmarshal StagingEntry", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		var buf bytes.Buffer
-		sut := StagingCacheEntry{
-			Path:      td.Path("a.txt"),
+		sut := StagingEntry{
+			RepoPath:  td.Path("a.txt"),
 			Metadata:  td.FileMetadata(0o600),
 			CTimeSec:  123,
 			CTimeNSec: 456,
 			Inode:     789,
 			Size:      1234,
 		}
-		err := MarshalStagingCacheEntry(&sut, &buf)
+		err := MarshalStagingEntry(&sut, &buf)
 		assert.NoError(err)
-		read, err := UnmarshalStagingCacheEntry(&buf)
+		read, err := UnmarshalStagingEntry(&buf)
 		assert.NoError(err)
 		assert.Equal(sut, *read)
 	})
@@ -130,16 +149,16 @@ func TestStagingCache(t *testing.T) {
 		assert := lib.NewAssert(t)
 		fs := td.NewFS(t)
 		tempWriter := NewStagingCacheWriter(fs, lib.MaxBlockDataSize)
-		a := StagingCacheEntry{
-			Path:      td.Path("a.txt"),
+		a := StagingEntry{
+			RepoPath:  td.Path("a.txt"),
 			Metadata:  td.FileMetadata(0o600),
 			CTimeSec:  123,
 			CTimeNSec: 456,
 			Size:      789,
 			Inode:     987654,
 		}
-		b := StagingCacheEntry{
-			Path:      td.Path("b.txt"),
+		b := StagingEntry{
+			RepoPath:  td.Path("b.txt"),
 			Metadata:  td.FileMetadata(0o700),
 			CTimeSec:  234,
 			CTimeNSec: 567,
@@ -153,12 +172,12 @@ func TestStagingCache(t *testing.T) {
 		cache, err := OpenStagingCache(fs, 2)
 		assert.NoError(err)
 
-		entry, ok, err := cache.Get(lib.PathCompareString(a.Path, a.Metadata.ModeAndPerm.IsDir()))
+		entry, ok, err := cache.Get(lib.PathCompareString(a.RepoPath, a.Metadata.ModeAndPerm.IsDir()))
 		assert.NoError(err)
 		assert.Equal(true, ok)
 		assert.Equal(a, *entry)
 
-		entry, ok, err = cache.Get(lib.PathCompareString(b.Path, b.Metadata.ModeAndPerm.IsDir()))
+		entry, ok, err = cache.Get(lib.PathCompareString(b.RepoPath, b.Metadata.ModeAndPerm.IsDir()))
 		assert.NoError(err)
 		assert.Equal(true, ok)
 		assert.Equal(b, *entry)
@@ -183,7 +202,7 @@ func TestStagingCache(t *testing.T) {
 		// Note: We set a different mode here to verify that the mode is not taken from the cache.
 		amd := td.FileMetadata(0o777)
 		amd.FileHash = td.SHA256("from_cache")
-		a, err := NewStagingCacheEntry(td.Path("dir/a.txt"), fileInfo, amd.FileHash, amd.BlockIds)
+		a, err := NewStagingEntry(td.Path("dir/a.txt"), fileInfo, amd.FileHash, amd.BlockIds)
 		assert.NoError(err)
 		assert.NoError(tempWriter.Add(a))
 		_, err = tempWriter.Finalize()
@@ -194,11 +213,11 @@ func TestStagingCache(t *testing.T) {
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
-		assert.Equal([]lib.TestRevisionEntryInfo{
-			{"b.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("b")},
-			{"dir", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
-			{"dir/a.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("from_cache")},
-		}, r.RevisionTempInfos(finalized))
+		assert.Equal([]TestStagingEntryInfo{
+			{"b.txt", 0o600, td.SHA256("b")},
+			{"dir", 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"dir/a.txt", 0o600, td.SHA256("from_cache")},
+		}, wstd.StagingEntryInfos(finalized))
 
 		// The previous run should have retained the cache entry for `a.txt`. So we should see the
 		// same result.
@@ -206,11 +225,11 @@ func TestStagingCache(t *testing.T) {
 		assert.NoError(err)
 		finalized, err = staging.Finalize()
 		assert.NoError(err)
-		assert.Equal([]lib.TestRevisionEntryInfo{
-			{"b.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("b")},
-			{"dir", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
-			{"dir/a.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("from_cache")},
-		}, r.RevisionTempInfos(finalized))
+		assert.Equal([]TestStagingEntryInfo{
+			{"b.txt", 0o600, td.SHA256("b")},
+			{"dir", 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"dir/a.txt", 0o600, td.SHA256("from_cache")},
+		}, wstd.StagingEntryInfos(finalized))
 
 		// Not using the cache should ignore our fake cache entry and rebuild the cache correctly.
 		// Note: The cache will be re-created even if `useCache` is false.
@@ -218,11 +237,11 @@ func TestStagingCache(t *testing.T) {
 		assert.NoError(err)
 		finalized, err = staging.Finalize()
 		assert.NoError(err)
-		assert.Equal([]lib.TestRevisionEntryInfo{
-			{"b.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("b")},
-			{"dir", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
-			{"dir/a.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("a")},
-		}, r.RevisionTempInfos(finalized))
+		assert.Equal([]TestStagingEntryInfo{
+			{"b.txt", 0o600, td.SHA256("b")},
+			{"dir", 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"dir/a.txt", 0o600, td.SHA256("a")},
+		}, wstd.StagingEntryInfos(finalized))
 		cache, err := OpenStagingCache(cacheFS, 2)
 		assert.NoError(err)
 		entry, ok, err := cache.Get(lib.PathCompareString(td.Path("dir/a.txt"), false))
