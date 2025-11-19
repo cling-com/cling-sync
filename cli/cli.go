@@ -422,6 +422,7 @@ func ResetCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err := ws.Reset(workspace, repository, opts); err != nil {
 		return err //nolint:wrapcheck
 	}
+	stagingMonitor.Close()
 	wsHead, err := workspace.Head()
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -1183,6 +1184,7 @@ func main() { //nolint:funlen
 		fmt.Fprint(os.Stderr, "  ls           List files in the repository\n")
 		fmt.Fprint(os.Stderr, "  log          Show revision log\n")
 		fmt.Fprint(os.Stderr, "  merge        Merge changes from the repository and the workspace\n")
+		fmt.Fprint(os.Stderr, "  reset        Reset the workspace to a specific revision\n")
 		fmt.Fprint(os.Stderr, "  security	  See and configure security settings\n")
 		fmt.Fprint(os.Stderr, "  serve        Serve a repository over HTTP\n")
 		fmt.Fprint(os.Stderr, "  status       Show repository status\n")
@@ -1213,16 +1215,16 @@ func main() { //nolint:funlen
 	switch cmd {
 	case "attach":
 		err = AttachCmd(argv, args.PassphraseFromStdin)
-	case "init":
-		err = InitCmd(argv, args.PassphraseFromStdin)
 	case "cp":
 		err = CpCmd(argv, args.PassphraseFromStdin)
-	case "merge":
-		err = MergeCmd(argv, args.PassphraseFromStdin)
-	case "log":
-		err = LogCmd(argv, args.PassphraseFromStdin)
+	case "init":
+		err = InitCmd(argv, args.PassphraseFromStdin)
 	case "ls":
 		err = LsCmd(argv, args.PassphraseFromStdin)
+	case "log":
+		err = LogCmd(argv, args.PassphraseFromStdin)
+	case "merge":
+		err = MergeCmd(argv, args.PassphraseFromStdin)
 	case "reset":
 		err = ResetCmd(argv, args.PassphraseFromStdin)
 	case "security":
