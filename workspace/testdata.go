@@ -98,6 +98,17 @@ func (wstd WorkspaceTestData) CpOptions(revisionId lib.RevisionId) *CpOptions {
 	}
 }
 
+func (wstd WorkspaceTestData) ResetOptions(revisionId lib.RevisionId, force bool) *ResetOptions {
+	return &ResetOptions{
+		revisionId,
+		force,
+		wstd.StagingMonitor(),
+		wstd.CpMonitor(),
+		lib.RestorableMetadataAll,
+		false,
+	}
+}
+
 func (wstd WorkspaceTestData) StagingEntryInfos(temp *lib.Temp[StagingEntry]) []TestStagingEntryInfo {
 	infos := []TestStagingEntryInfo{}
 	r := temp.Reader(nil)

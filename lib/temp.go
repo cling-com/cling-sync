@@ -331,6 +331,9 @@ func NewTempCache[T any](temp *Temp[T], cacheKey func(*T) string, maxChunksInCac
 }
 
 func (tc *TempCache[T]) Get(key string) (*T, bool, error) {
+	if tc == nil {
+		return nil, false, nil
+	}
 	// Find the chunk that contains the entry.
 	chunkIndex := tc.Source.Chunks() - 1
 	for i, firstEntry := range tc.firstEntries {

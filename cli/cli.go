@@ -349,6 +349,87 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	return nil
 }
 
+func ResetCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
+	workspace, err := openWorkspace()
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open workspace")
+	}
+	defer workspace.Close() //nolint:errcheck
+	args := struct {        //nolint:exhaustruct
+		Help       bool
+		Chown      bool
+		Chtime     bool
+		Chmod      bool
+		Verbose    bool
+		NoProgress bool
+		FastScan   bool
+		Force      bool
+	}{}
+	flags := flag.NewFlagSet("reset", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
+	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
+	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	flags.BoolVar(&args.Chown, "chown", false, "Include file ownership changes")
+	flags.BoolVar(&args.Chmod, "chmod", false, "Include file mode changes")
+	flags.BoolVar(&args.Chtime, "chtime", false, "Include file time changes")
+	flags.BoolVar(&args.FastScan, "fast-scan", false, fastScanFlagDescription)
+	flags.BoolVar(&args.Force, "force", false, "Ignore local changes. All local changes will be lost.")
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s reset <revision-id>\n\n", appName)
+		fmt.Fprint(os.Stderr, "Reset the workspace to a specific revision.\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	if len(flags.Args()) != 1 {
+		return lib.Errorf("one positional argument is required: <revision-id>")
+	}
+	repository, err := openRepository(workspace, passphraseFromStdin)
+	if err != nil {
+		return err
+	}
+	revisionId, err := revisionId(repository, flags.Arg(0))
+	if err != nil {
+		return err
+	}
+	stagingMonitor := NewStagingMonitor(args.Verbose, args.NoProgress)
+	cpMonitor := NewCpMonitor(ws.CpOnExistsAbort, args.Verbose, false, args.NoProgress)
+	restorableMetadataFlag := lib.RestorableMetadataAll
+	if !args.Chown {
+		restorableMetadataFlag ^= lib.RestorableMetadataOwnership
+	}
+	if !args.Chtime {
+		restorableMetadataFlag ^= lib.RestorableMetadataMTime
+	}
+	if !args.Chmod {
+		restorableMetadataFlag ^= lib.RestorableMetadataMode
+	}
+	opts := &ws.ResetOptions{
+		RevisionId:             revisionId,
+		Force:                  args.Force,
+		StagingMonitor:         stagingMonitor,
+		CpMonitor:              cpMonitor,
+		RestorableMetadataFlag: restorableMetadataFlag,
+		UseStagingCache:        args.FastScan,
+	}
+	if err := ws.Reset(workspace, repository, opts); err != nil {
+		return err //nolint:wrapcheck
+	}
+	wsHead, err := workspace.Head()
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	fmt.Printf("Reset to revision %s\n", wsHead)
+	return nil
+}
+
 func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	workspace, err := openWorkspace()
 	if err != nil {
@@ -1142,6 +1223,8 @@ func main() { //nolint:funlen
 		err = LogCmd(argv, args.PassphraseFromStdin)
 	case "ls":
 		err = LsCmd(argv, args.PassphraseFromStdin)
+	case "reset":
+		err = ResetCmd(argv, args.PassphraseFromStdin)
 	case "security":
 		err = SecurityCmd(argv, args.PassphraseFromStdin)
 	case "serve":

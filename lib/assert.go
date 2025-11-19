@@ -34,6 +34,13 @@ func areEqual(expected, actual any) bool {
 		}
 		return bytes.Equal(expectedBytes, actualBytes)
 	}
+	if expectedTime, ok := expected.(time.Time); ok {
+		actualTime, ok := actual.(time.Time)
+		if !ok {
+			return false
+		}
+		return expectedTime.Equal(actualTime)
+	}
 	return reflect.DeepEqual(expected, actual)
 }
 

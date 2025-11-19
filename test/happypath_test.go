@@ -76,6 +76,7 @@ func TestHappyPath(t *testing.T) {
 	}
 	rev2Id := sut.RepositoryHead()
 	rev2Date := sut.RepositoryHeadDate()
+	rev2Ls := sut.Ls()
 
 	t.Log("List an older revision (ls)")
 	{
@@ -177,6 +178,30 @@ func TestHappyPath(t *testing.T) {
 			td.Sort(sut.Ls(), 4),
 			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
 			"Files of head should match the workspace")
+	}
+
+	t.Log("Reset to the first commit (reset)")
+	{
+		// We use `--chtime` so that `ls` will return exactly the same output as when we did first
+		// merge.
+		sut.ClingSync("reset", "--no-progress", "--chtime", rev1Id)
+		assert.Equal(rev1Ls, sut.Ls())
+	}
+
+	t.Log("Make some changes and reset to second commit (reset)")
+	{
+		sut.Write("a.txt", "achange")
+		sut.Write("new.txt", "new")
+		ls := sut.Ls()
+
+		// Reset w/o `--force` should fail.
+		err := sut.ClingSyncError("reset", "--no-progress", "--chtime", rev2Id)
+		assert.Contains(err, "Reset aborted due to local changes")
+		assert.Equal(ls, sut.Ls())
+
+		// Reset with `--force` should succeed.
+		sut.ClingSync("reset", "--no-progress", "--chtime", "--force", rev2Id)
+		assert.Equal(rev2Ls, sut.Ls())
 	}
 }
 

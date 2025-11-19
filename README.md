@@ -114,6 +114,12 @@ This will copy all new or modified files from the repository and delete all file
 the repository's latest revision. After this, changes from the local workspace are committed to the
 repository. If there are conflicts, the user is asked to resolve them.
 
+#### Reset the workspace to a specific revision
+
+    cling-sync reset head
+
+This will reset the workspace to the latest repository revision.
+
 #### Show the status of the workspace
 
     cling-sync status
