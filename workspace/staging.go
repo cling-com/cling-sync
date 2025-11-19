@@ -279,6 +279,7 @@ type StagingEntry struct {
 func NewStagingEntry(
 	path lib.Path,
 	fileInfo fs.FileInfo,
+	fileSize int64,
 	fileHash lib.Sha256,
 	blockIds []lib.BlockId,
 ) (*StagingEntry, error) {
@@ -286,13 +287,22 @@ func NewStagingEntry(
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get metadata for %s", path)
 	}
+	if fileInfo.IsDir() {
+		if fileSize != 0 {
+			return nil, lib.Errorf("file size mismatch: %d vs 0", fileSize)
+		}
+	} else {
+		if fileInfo.Size() != fileSize {
+			return nil, lib.Errorf("file size mismatch: %d vs %d", fileInfo.Size(), fileSize)
+		}
+	}
 	md := lib.NewFileMetadataFromFileInfo(fileInfo, fileHash, blockIds)
 	return &StagingEntry{
 		RepoPath:  path,
 		Metadata:  &md,
 		CTimeSec:  stat.CTimeSec,
 		CTimeNSec: stat.CTimeNSec,
-		Size:      fileInfo.Size(),
+		Size:      fileSize,
 		Inode:     stat.Inode,
 	}, nil
 }
@@ -444,10 +454,11 @@ func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}
-		if ok {
+		if ok && existingEntry.Metadata.Size == fileInfo.Size() {
 			stagingEntry, err = NewStagingEntry(
 				repoPath,
 				fileInfo,
+				existingEntry.Metadata.Size,
 				existingEntry.Metadata.FileHash,
 				existingEntry.Metadata.BlockIds,
 			)
@@ -472,7 +483,13 @@ func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs
 		fileMetadata = &md
 	}
 	if stagingEntry == nil {
-		stagingEntry, err = NewStagingEntry(repoPath, fileInfo, fileMetadata.FileHash, fileMetadata.BlockIds)
+		stagingEntry, err = NewStagingEntry(
+			repoPath,
+			fileInfo,
+			fileMetadata.Size,
+			fileMetadata.FileHash,
+			fileMetadata.BlockIds,
+		)
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to create cache entry for %s", localPath)
 		}

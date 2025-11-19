@@ -56,13 +56,13 @@ func (mc MergeConflictsError) Error() string {
 }
 
 type Merger struct {
-	ws          *Workspace
-	wsHead      lib.RevisionId
-	head        lib.RevisionId
-	tempFS      lib.FS
-	repository  *lib.Repository
-	directories map[string]fs.FileInfo
-	opts        *MergeOptions
+	ws               *Workspace
+	wsHead           lib.RevisionId
+	remoteRevisionId lib.RevisionId
+	tempFS           lib.FS
+	repository       *lib.Repository
+	directories      map[string]fs.FileInfo
+	opts             *MergeOptions
 }
 
 // Merge the changes from the repository into the workspace and vice versa.
@@ -253,7 +253,29 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 			md = &uploadedMD
 		}
 		if md.FileHash != entry.Metadata.FileHash {
-			return lib.RevisionId{}, lib.Errorf("file %s was modified during merge - aborting merge", localPath)
+			return lib.RevisionId{}, lib.Errorf(
+				"file %s was modified during merge - aborting merge (hash: %s vs %s)",
+				localPath,
+				md.FileHash,
+				entry.Metadata.FileHash,
+			)
+		}
+		if !stat.IsDir() && md.Size != stat.Size() {
+			// Just a sanity check that we are committing the correct file size.
+			return lib.RevisionId{}, lib.Errorf(
+				"sanity check of file-size failed for %s (size: %d vs %d)",
+				localPath,
+				md.Size,
+				stat.Size(),
+			)
+		}
+		if stat.IsDir() && md.Size != 0 {
+			// Just a sanity check that we are committing the correct directory size (which is always 0).
+			return lib.RevisionId{}, lib.Errorf(
+				"sanity check of directory-size failed for %s (size: %d)",
+				localPath,
+				md.Size,
+			)
 		}
 		entry.Metadata = md
 		if err := commit.Add(entry); err != nil {
@@ -262,7 +284,7 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 		mon.OnEnd(entry)
 	}
 	// Make sure the path prefix exists in the repository after the commit.
-	if err := commit.EnsureDirExists(m.ws.PathPrefix, remoteRevision, m.head); err != nil {
+	if err := commit.EnsureDirExists(m.ws.PathPrefix, remoteRevision, m.remoteRevisionId); err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(
 			err,
 			"failed to ensure path %s exists in the repository",
@@ -415,25 +437,25 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 ) error {
 	r := remoteRevision.Reader(lib.RevisionEntryPathFilter(m.ws.PathPrefix.AsFilter()))
 	for {
-		entry, err := r.Read()
+		remoteEntry, err := r.Read()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		if entry.Path == m.ws.PathPrefix {
+		if remoteEntry.Path == m.ws.PathPrefix {
 			continue
 		}
-		localPath, _ := entry.Path.TrimBase(m.ws.PathPrefix)
+		localPath, _ := remoteEntry.Path.TrimBase(m.ws.PathPrefix)
 		if err := m.makeDirsWritable(localPath.String()); err != nil {
-			return lib.WrapErrorf(err, "failed to make directories writable for %s", entry.Path)
+			return lib.WrapErrorf(err, "failed to make directories writable for %s", remoteEntry.Path)
 		}
-		stagingEntry, existsInStaging, err := staging.Get(lib.RevisionEntryPathCompareString(entry))
+		stagingEntry, existsInStaging, err := staging.Get(lib.RevisionEntryPathCompareString(remoteEntry))
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}
-		_, isLocalChange, err := localChanges.Get(lib.RevisionEntryPathCompareString(entry))
+		_, isLocalChange, err := localChanges.Get(lib.RevisionEntryPathCompareString(remoteEntry))
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}
@@ -442,8 +464,8 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		}
 		// Make sure parent directories are writable.
 		targetPath := localPath.String()
-		if entry.Type != lib.RevisionEntryAdd && entry.Type != lib.RevisionEntryUpdate {
-			return lib.Errorf("unexpected revision entry type %s for %s", entry.Type, targetPath)
+		if remoteEntry.Type != lib.RevisionEntryAdd && remoteEntry.Type != lib.RevisionEntryUpdate {
+			return lib.Errorf("unexpected revision entry type %s for %s", remoteEntry.Type, targetPath)
 		}
 		restoreMode := m.opts.RestorableMetadataFlag
 		if !existsInStaging {
@@ -451,18 +473,18 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 			restoreMode |= lib.RestorableMetadataMode | lib.RestorableMetadataMTime
 		}
 		// Write the file if it is different or does not exist.
-		if entry.Metadata.ModeAndPerm.IsDir() {
+		if remoteEntry.Metadata.ModeAndPerm.IsDir() {
 			if !existsInStaging {
 				if err := m.ws.FS.Mkdir(targetPath); err != nil {
 					return lib.WrapErrorf(err, "failed to create directory %s", targetPath)
 				}
 			}
 			// Only update metadata.
-			if err := restoreFileMode(m.ws.FS, targetPath, entry.Metadata, restoreMode); err != nil {
+			if err := restoreFileMode(m.ws.FS, targetPath, remoteEntry.Metadata, restoreMode); err != nil {
 				return lib.WrapErrorf(
 					err,
 					"failed to restore file mode %s for %s",
-					entry.Metadata.ModeAndPerm,
+					remoteEntry.Metadata.ModeAndPerm,
 					targetPath,
 				)
 			}
@@ -470,22 +492,20 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		}
 		// todo: we should check whether the file has been modified since merging has been started.
 		//       or if it is new
-		if !existsInStaging || entry.Metadata.FileHash != stagingEntry.Metadata.FileHash {
+		if !existsInStaging || remoteEntry.Metadata.FileHash != stagingEntry.Metadata.FileHash ||
+			remoteEntry.Metadata.Size != stagingEntry.Metadata.Size {
 			// Write the file.
-			if err := m.restoreFromRepository(entry, m.opts.CpMonitor, targetPath); err != nil {
+			if err := m.restoreFromRepository(remoteEntry, m.opts.CpMonitor, targetPath); err != nil {
 				return lib.WrapErrorf(err, "failed to restore %s", targetPath)
 			}
 		}
-		if !existsInStaging ||
-			!entry.Metadata.IsEqualRestorableAttributes(stagingEntry.Metadata, m.opts.RestorableMetadataFlag) {
-			if err := restoreFileMode(m.ws.FS, targetPath, entry.Metadata, restoreMode); err != nil {
-				return lib.WrapErrorf(
-					err,
-					"failed to restore file mode %s for %s",
-					entry.Metadata.ModeAndPerm,
-					targetPath,
-				)
-			}
+		if err := restoreFileMode(m.ws.FS, targetPath, remoteEntry.Metadata, restoreMode); err != nil {
+			return lib.WrapErrorf(
+				err,
+				"failed to restore file mode %s for %s",
+				remoteEntry.Metadata.ModeAndPerm,
+				targetPath,
+			)
 		}
 	}
 	return nil
@@ -554,7 +574,12 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 			}
 			if remoteEntry.Metadata.Size != fileInfo.Size() {
 				// todo: We should record inode and ctime during staging and compare them here.
-				return lib.Errorf("file %s was modified during merge - aborting merge", path)
+				return lib.Errorf(
+					"file %s was modified during merge - aborting merge (size: %d vs %d)",
+					path,
+					remoteEntry.Metadata.Size,
+					fileInfo.Size(),
+				)
 			}
 			return nil
 		}
