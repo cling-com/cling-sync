@@ -131,6 +131,13 @@ This will reset the workspace to the latest repository revision.
 Show all revisions that contain a path that matches the pattern and show all paths that were added,
 updated, or deleted.
 
+#### Check the health of the repository
+
+    cling-sync check
+
+Scan all revisions and verify the repository's integrity. `cling-sync check --data` will also check
+every block for data corruption. This will take a while. :-)
+
 #### Serve the repository over HTTP
 
     cling-sync serve --address 127.0.0.1:4242 /path/to/repository

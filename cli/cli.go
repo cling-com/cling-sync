@@ -263,7 +263,6 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to copy from")
 	flags.BoolVar(&args.IgnoreErrors, "ignore-errors", false, "Ignore errors")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
-	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Chown, "chown", false, "Restore file ownership from the repository.")
 	flags.BoolVar(&args.Overwrite, "overwrite", false, "Overwrite existing files")
@@ -368,7 +367,6 @@ func ResetCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags := flag.NewFlagSet("reset", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
-	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Chown, "chown", false, "Include file ownership changes")
 	flags.BoolVar(&args.Chmod, "chmod", false, "Include file mode changes")
@@ -458,7 +456,6 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	flags := flag.NewFlagSet("merge", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
-	flags.BoolVar(&args.Verbose, "v", false, "Short for --verbose")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.AcceptLocal, "accept-local", false, "Ignore all conflicts and commit all local changes")
 	flags.BoolVar(&args.Chown, "chown", false, "Include file ownership changes")
@@ -871,6 +868,86 @@ func LogCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	return nil
 }
 
+func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
+	workspace, err := openWorkspace()
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open workspace")
+	}
+	defer workspace.Close() //nolint:errcheck
+	args := struct {        //nolint:exhaustruct
+		Help       bool
+		Verbose    bool
+		NoProgress bool
+		Data       bool
+	}{}
+	flags := flag.NewFlagSet("check", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
+	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	flags.BoolVar(&args.Data, "data", false, "Check all file data blocks of all paths in all revisions")
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s check\n\n", appName)
+		fmt.Fprint(os.Stderr, "Check the health of the repository.\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	if len(flags.Args()) != 0 {
+		return lib.Errorf("too many positional arguments")
+	}
+	repository, err := openRepository(workspace, passphraseFromStdin)
+	if err != nil {
+		return err
+	}
+	monitor := NewHeathCheckMonitor(args.Verbose, args.NoProgress)
+	err = lib.CheckHealth(repository, lib.HealthCheckOptions{Monitor: monitor, DataBlocks: args.Data})
+	monitor.Close()
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	fmt.Printf("Repository is healthy\n")
+	fmt.Printf("  [ok] revision chain is intact\n")
+	fmt.Printf("  [ok] metadata blocks are valid\n")
+	fmt.Printf("  [ok] paths in each revision are sorted\n")
+	dataChecked := "--"
+	if args.Data {
+		dataChecked = "ok"
+	}
+	fmt.Printf("  [%s] actual file size matches path metadata\n", dataChecked)
+	fmt.Printf("  [%s] actual file hash matches path metadata\n", dataChecked)
+	fmt.Printf("  [%s] data blocks are valid\n", dataChecked)
+	fmt.Printf("\nStatistics:\n")
+	fmt.Printf("  %d revisions\n", monitor.Revisions)
+	fmt.Printf("  %d paths entries in all revisions\n", monitor.Paths)
+	dataBlocks := "data blocks not checked"
+	dataSize := "data blocks not checked"
+	if args.Data {
+		dataBlocks = fmt.Sprintf("%d data", monitor.DataBlocks)
+		dataSize = fmt.Sprintf("%s (%dB) data", ws.FormatBytes(monitor.DataBytes), monitor.DataBytes)
+	}
+	fmt.Printf(
+		"  %d unique blocks, %d metadata, %s\n",
+		monitor.DataBlocks+monitor.MetadataBlocks,
+		monitor.MetadataBlocks,
+		dataBlocks,
+	)
+	totalBytes := monitor.MetadataBytes + monitor.DataBytes
+	fmt.Printf("  %s (%dB) total, %s (%dB) metadata, %s\n",
+		ws.FormatBytes(totalBytes),
+		totalBytes,
+		ws.FormatBytes(monitor.MetadataBytes),
+		monitor.MetadataBytes,
+		dataSize,
+	)
+	return nil
+}
+
 func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	workspace, err := openWorkspace()
 	if err != nil {
@@ -1179,6 +1256,7 @@ func main() { //nolint:funlen
 		fmt.Fprintf(os.Stderr, "Usage: %s <command> [command arguments]\n\n", appName)
 		fmt.Fprint(os.Stderr, "Commands:\n")
 		fmt.Fprint(os.Stderr, "  attach       Attach a local directory to a repository\n")
+		fmt.Fprint(os.Stderr, "  check        Check the health of the repository\n")
 		fmt.Fprint(os.Stderr, "  cp           Copy files from the repository to a local directory\n")
 		fmt.Fprint(os.Stderr, "  init         Initialize a new repository\n")
 		fmt.Fprint(os.Stderr, "  ls           List files in the repository\n")
@@ -1215,6 +1293,8 @@ func main() { //nolint:funlen
 	switch cmd {
 	case "attach":
 		err = AttachCmd(argv, args.PassphraseFromStdin)
+	case "check":
+		err = CheckCmd(argv, args.PassphraseFromStdin)
 	case "cp":
 		err = CpCmd(argv, args.PassphraseFromStdin)
 	case "init":

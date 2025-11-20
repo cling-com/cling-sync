@@ -203,6 +203,13 @@ func TestHappyPath(t *testing.T) {
 		sut.ClingSync("reset", "--no-progress", "--chtime", "--force", rev2Id)
 		assert.Equal(rev2Ls, sut.Ls())
 	}
+
+	t.Log("Check health (check)")
+	{
+		check := sut.ClingSync("check", "--no-progress")
+		assert.Contains(check, "Repository is healthy")
+		assert.Contains(check, "5 revisions")
+	}
 }
 
 func TestChmodChtimeChown(t *testing.T) {

@@ -115,6 +115,26 @@ func (td TestData) CommitInfo() *CommitInfo {
 	return &CommitInfo{Author: "test author", Message: "test message"}
 }
 
+type TestHealthCheckMonitor struct {
+	Calls []MockCall
+}
+
+func (m *TestHealthCheckMonitor) OnRevisionStart(revisionId RevisionId) {
+	m.Calls = append(m.Calls, NewMockCall("OnRevisionStart", revisionId))
+}
+
+func (m *TestHealthCheckMonitor) OnRevisionEntry(entry *RevisionEntry) {
+	m.Calls = append(m.Calls, NewMockCall("OnRevisionEntry", entry))
+}
+
+func (m *TestHealthCheckMonitor) OnBlockOk(blockId BlockId, duplicate bool, length int) {
+	m.Calls = append(m.Calls, NewMockCall("OnBlockOk", blockId, duplicate, length))
+}
+
+func (td TestData) NewHealthCheckMonitor() *TestHealthCheckMonitor {
+	return &TestHealthCheckMonitor{[]MockCall{}}
+}
+
 func (td TestData) SHA256(content string) Sha256 {
 	if len(content) == 0 {
 		return Sha256{}

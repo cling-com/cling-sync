@@ -308,6 +308,101 @@ func (m *CpMonitor) isProgress() bool {
 	return !m.Verbose && !m.NoProgress && IsTerm(os.Stderr)
 }
 
+type HeathCheckMonitor struct {
+	Verbose        bool
+	NoProgress     bool
+	Revisions      int
+	Paths          int
+	MetadataBytes  int64
+	MetadataBlocks int
+	DataBytes      int64
+	DataBlocks     int
+	startTime      time.Time
+	revisionEntry  *lib.RevisionEntry
+}
+
+func NewHeathCheckMonitor(verbose, noProgress bool) *HeathCheckMonitor {
+	return &HeathCheckMonitor{ //nolint:exhaustruct
+		Verbose:    verbose,
+		NoProgress: noProgress,
+	}
+}
+
+func (m *HeathCheckMonitor) OnRevisionStart(revisionId lib.RevisionId) {
+	m.revisionEntry = nil
+	if m.startTime.IsZero() {
+		m.startTime = time.Now()
+	}
+	m.Revisions++
+	m.progress()
+	if !m.Verbose {
+		return
+	}
+	fmt.Printf("revision %s\n", revisionId)
+}
+
+func (m *HeathCheckMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
+	m.revisionEntry = entry
+	m.Paths++
+	m.progress()
+	if !m.Verbose {
+		return
+	}
+	fmt.Printf("  path     %s (%s)\n", entry.Path, entry.Type)
+}
+
+func (m *HeathCheckMonitor) OnBlockOk(blockId lib.BlockId, duplicate bool, length int) {
+	if !duplicate {
+		if m.revisionEntry == nil {
+			m.MetadataBytes += int64(length)
+			m.MetadataBlocks++
+		} else {
+			m.DataBytes += int64(length)
+			m.DataBlocks++
+		}
+	}
+	m.progress()
+	if !m.Verbose {
+		return
+	}
+	if m.revisionEntry != nil {
+		fmt.Print("  ")
+	}
+	fmt.Printf("  block  %s\n", blockId)
+}
+
+func (m *HeathCheckMonitor) Close() {
+	if !m.isProgress() {
+		return
+	}
+	clearLine()
+}
+
+func (m *HeathCheckMonitor) progress() {
+	if !m.isProgress() {
+		return
+	}
+	var sb strings.Builder
+	totalBytes := m.MetadataBytes + m.DataBytes
+	mbs := (float64(totalBytes) / float64(time.Since(m.startTime).Seconds()))
+	sb.WriteString(
+		fmt.Sprintf(
+			"%d revisions, %d path entries, %d unique blocks, %s at %s/s",
+			m.Revisions,
+			m.Paths,
+			m.DataBlocks+m.MetadataBlocks,
+			ws.FormatBytes(totalBytes),
+			ws.FormatBytes(int64(mbs)),
+		),
+	)
+	clearLine()
+	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
+}
+
+func (m *HeathCheckMonitor) isProgress() bool {
+	return !m.Verbose && !m.NoProgress && IsTerm(os.Stderr)
+}
+
 func clearLine() {
 	cols, _, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {

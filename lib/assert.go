@@ -13,18 +13,32 @@ import (
 	"time"
 )
 
+var justAny = &struct{}{} //nolint:gochecknoglobals
+
 type Assert struct {
-	tb testing.TB
+	tb  testing.TB
+	Any any
 }
 
 func NewAssert(tb testing.TB) Assert {
 	tb.Helper()
-	return Assert{tb: tb}
+	return Assert{tb: tb, Any: justAny}
 }
 
 func areEqual(expected, actual any) bool {
+	if expected == justAny || actual == justAny {
+		return true
+	}
 	if expected == nil || actual == nil {
 		return expected != actual
+	}
+	expectedMockCall, ok := expected.(MockCall)
+	if ok {
+		actualMockCall, ok := actual.(MockCall)
+		if !ok {
+			return false
+		}
+		return expectedMockCall.Equal(actualMockCall)
 	}
 	expectedBytes, ok := expected.([]byte)
 	if ok {
@@ -90,6 +104,69 @@ func (a Assert) NotEqual(expected, actual any, msg ...any) {
 		actualStr,
 		actual,
 	)
+}
+
+type MockCall struct {
+	Name string
+	Args []any
+}
+
+func NewMockCall(name string, args ...any) MockCall {
+	return MockCall{Name: name, Args: args}
+}
+
+func (m MockCall) String() string {
+	s := m.Name + "("
+	for i, arg := range m.Args {
+		if i > 0 {
+			s += ", "
+		}
+		s += stringify(arg)
+	}
+	s += ")"
+	return s
+}
+
+func (m MockCall) Equal(other MockCall) bool {
+	if m.Name != other.Name {
+		return false
+	}
+	if len(m.Args) != len(other.Args) {
+		return false
+	}
+	for i, arg := range m.Args {
+		if !areEqual(arg, other.Args[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Make sure at least one to the given function is found.
+func (a Assert) Call(expected MockCall, calls []MockCall, msg ...any) {
+	a.tb.Helper()
+	if slices.ContainsFunc(calls, expected.Equal) {
+		return
+	}
+	callsStr := ""
+	for _, call := range calls {
+		callsStr += call.String() + "\n"
+	}
+	a.tb.Fatalf("%sexpected call:\nwant: %s\ngot:\n%s", details(msg), expected, callsStr)
+}
+
+func (a Assert) Calls(expected []MockCall, calls []MockCall, msg ...any) {
+	a.tb.Helper()
+	callsStr := ""
+	for _, call := range calls {
+		callsStr += call.String() + "\n"
+	}
+	if len(expected) != len(calls) {
+		a.tb.Fatalf("%sexpected %d calls, got %d\n%s", details(msg), len(expected), len(calls), callsStr)
+	}
+	for i, call := range calls {
+		a.Equal(expected[i], call, msg...)
+	}
 }
 
 // Just mark different lines.
