@@ -21,7 +21,7 @@ import (
 
 const MaxDownloadSize = 500 * 1024 * 1024
 
-var repositoryHandles = make(map[int]*lib.Repository)
+var repositoryHandles = make(map[int]*lib.Repository) //nolint:gochecknoglobals
 
 func BuildRepositoryAPI() js.Value {
 	repositoryAPI := &RepositoryAPI{}
@@ -112,7 +112,7 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any {
 		if excludes != "" {
 			filter = lib.NewPathExclusionFilter(strings.Split(excludes, ","))
 		}
-		opts := &workspace.LsOptions{RevisionId: revisionId, PathFilter: filter}
+		opts := &workspace.LsOptions{RevisionId: revisionId, PathFilter: filter, PathPrefix: lib.Path{}}
 		files, err := workspace.Ls(repository, tmpFS, opts)
 		if err != nil {
 			reject(js.ValueOf(err.Error()))
@@ -163,7 +163,7 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any {
 //
 //	Promise<[Uint8Array, string]>
 //	The data and the file name.
-func (r *RepositoryAPI) ReadFile(this js.Value, args []js.Value) any {
+func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:funlen
 	return Async(func(resolve func(js.Value), reject func(js.Value)) {
 		handle := args[0].Int()
 		pathBytes, err := base64.StdEncoding.DecodeString(args[1].String())

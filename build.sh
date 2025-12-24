@@ -14,6 +14,7 @@ if [ $# -eq 0 ]; then
     echo "      Build the target. If no target is specified, build all targets."
     echo "      Available targets:"
     echo "        cli - build the CLI as \`./cling-sync\`"
+    echo "        wasm - build the wasm binary"
     echo
     echo "  fmt [project]"
     echo "      Format code. If no project is specified, format all projects."
@@ -26,12 +27,9 @@ if [ $# -eq 0 ]; then
     echo
     echo "  test [project|integration-bash]"
     echo "      Run tests. If no project is specified, run all tests including integration tests."
-    echo 
+    echo
     echo "  tools"
     echo "      Build tools needed for development."
-    echo
-    echo "  wasm"
-    echo "      Build the wasm binary."
     exit 1
 fi
 
@@ -41,7 +39,7 @@ projects="lib workspace http cli wasm test"
 # Input:
 #   - $1: target (optional, if not specified, build all targets)
 run_build() {
-    local targets=cli
+    local targets="cli wasm"
     if [ $# -gt 0 ]; then
         targets="$1"
         shift
@@ -52,9 +50,12 @@ run_build() {
                 echo ">>> Building CLI"
                 go build "$@" -o cling-sync ./cli
                 if [ -n "${CS_DARWIN_CODESIGN:-}" ] && [ "$(uname -s)" = "Darwin" ]; then
-                    echo ">>> Codesigning CLI"
+                    echo "Codesigning CLI"
                     codesign --sign "${CS_DARWIN_CODESIGN}" --force --options runtime ./cling-sync
                 fi
+                ;;
+            wasm)
+                bash wasm/build.sh build "$@"
                 ;;
             *)
                 echo "Unknown target: $target"
@@ -124,15 +125,26 @@ case "$cmd" in
         build_tools
         ;;
     fmt)
-        build_tools
-        echo ">>> Formatting code"
-        run_project_cmd "$root/tools/golangci-lint fmt" "$@"
+        if [ $# -gt 0 ] && [ "$1" = "wasm" ]; then
+            shift
+            bash wasm/build.sh fmt "$@"
+        else
+            build_tools
+            echo ">>> Formatting code"
+            run_project_cmd "$root/tools/golangci-lint fmt" "$@"
+            bash wasm/build.sh fmt
+        fi
         ;;
     lint)
-        # todo: Lint the code that has the `wasm` build tag.
-        build_tools
-        echo ">>> Linting code"
-        run_project_cmd "$root/tools/golangci-lint run" "$@"
+        if [ $# -gt 0 ] && [ "$1" = "wasm" ]; then
+            shift
+            bash wasm/build.sh lint "$@"
+        else
+            build_tools
+            echo ">>> Linting code"
+            run_project_cmd "$root/tools/golangci-lint run" "$@"
+            bash wasm/build.sh lint
+        fi
         ;;
     test)
         echo ">>> Running tests"
@@ -154,9 +166,6 @@ case "$cmd" in
         fi
         echo
         echo "Looks perfect, go ahead and commit this beauty."
-        ;;
-    wasm)
-        bash wasm/build.sh "$@"
         ;;
     *)
         echo "Unknown target: $cmd"

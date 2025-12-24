@@ -7,7 +7,7 @@ cd "$root"
 
 
 if [ $# -eq 0 ]; then
-    echo "Usage: $0 build|serve"
+    echo "Usage: $0 build|dev|fmt|lint"
     echo
     echo "  build [--optimize]"
     echo "      Build the wasm binary."
@@ -18,6 +18,12 @@ if [ $# -eq 0 ]; then
     echo "      Build and serve the wasm binary and supporting files."
     echo "      --optimize - use the TinyGo compiler to produce a much smaller binary (~10%)"
     echo "                   (TinyGo has to be installed)"
+    echo
+    echo "  fmt"
+    echo "      Run golangci-lint fmt with wasm build tags."
+    echo
+    echo "  lint"
+    echo "      Run golangci-lint with wasm build tags."
     exit 1
 fi
 
@@ -62,6 +68,13 @@ case "$cmd" in
         build_wasm "$@"
         echo ">>> Serving wasm"
         python3 -m http.server 8000 --directory .
+        ;;
+    fmt)
+        echo "wasm: golangci-lint does not support formatting with build constraints."
+        ;;
+    lint)
+        echo ">>> Linting wasm code"
+        GOOS=js GOARCH=wasm ../tools/golangci-lint run --build-tags=wasm
         ;;
     *)
         echo "Unknown target: $cmd"

@@ -47,6 +47,13 @@ linters:
         linters:
           - funlen
           - wrapcheck
+      - path: wasm/
+        linters:
+          # No matter what we do, we can't seem to satisfy any of those for wasm files.
+          # And it's not like they are the most important linters anyway.
+          - gci
+          - gofumpt
+          - goimports
   settings:
     depguard:
       rules:

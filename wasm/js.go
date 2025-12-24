@@ -80,7 +80,11 @@ func (e FetchError) Error() string {
 	return e.Message
 }
 
-func (c *WasmHTTPClient) Request(method string, url string, body []byte) (*clingHTTP.HTTPResponse, error) {
+func (c *WasmHTTPClient) Request( //nolint:funlen
+	method string,
+	url string,
+	body []byte,
+) (*clingHTTP.HTTPResponse, error) {
 	// Convert body to JS.
 	var bodyJS js.Value
 	if len(body) > 0 {
