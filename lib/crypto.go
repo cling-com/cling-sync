@@ -29,10 +29,6 @@ type Salt [32]byte
 
 type Sha256 [32]byte
 
-func (s Sha256) String() string {
-	return hex.EncodeToString(s[:])
-}
-
 type Sha256Hmac Sha256
 
 type RawKey [RawKeySize]byte
