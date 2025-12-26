@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"context"
 	"io"
 	"io/fs"
 	"os"
@@ -683,6 +684,62 @@ func checkConsistency(t *testing.T, newSut func() FS) {
 		stat, err := sut.Stat("a.txt")
 		assert.NoError(err)
 		assert.Equal(fs.FileMode(0o644), stat.Mode().Perm())
+	})
+
+	t.Run("Lock", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		unlock, err := sut.Lock(t.Context(), "lock")
+		assert.NoError(err)
+
+		ctx2, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		_, err = sut.Lock(ctx2, "lock")
+		assert.ErrorIs(err, context.DeadlineExceeded)
+
+		err = unlock()
+		assert.NoError(err)
+
+		unlock2, err := sut.Lock(t.Context(), "lock")
+		assert.NoError(err)
+		err = unlock2()
+		assert.NoError(err)
+	})
+
+	t.Run("Calling unlock multiple times", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		unlock, err := sut.Lock(t.Context(), "lock")
+		assert.NoError(err)
+
+		err = unlock()
+		assert.NoError(err)
+
+		err = unlock()
+		assert.NoError(err)
+	})
+
+	t.Run("Lock file is created", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		unlock, err := sut.Lock(t.Context(), "lock")
+		assert.NoError(err)
+
+		_, err = sut.Stat("lock")
+		assert.NoError(err)
+
+		err = unlock()
+		assert.NoError(err)
+
+		// Lock file should still exist.
+		_, err = sut.Stat("lock")
+		assert.NoError(err)
 	})
 }
 

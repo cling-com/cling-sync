@@ -4,6 +4,7 @@
 package lib
 
 import (
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -126,4 +127,12 @@ func (f *RealFS) WalkDir(path string, fn fs.WalkDirFunc) error {
 
 func (f *RealFS) String() string {
 	return "RealFS(" + f.BasePath + ")"
+}
+
+func (f *RealFS) Lock(ctx context.Context, path string) (unlock func() error, err error) {
+	lock := NewLock(filepath.Join(f.BasePath, path))
+	if err := lock.Lock(ctx); err != nil {
+		return nil, err
+	}
+	return lock.Unlock, nil
 }

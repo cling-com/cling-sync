@@ -2,6 +2,7 @@ package lib
 
 import (
 	"bytes"
+	"context"
 	"crypto/cipher"
 	"encoding/hex"
 	"errors"
@@ -326,7 +327,11 @@ func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
 			return RevisionId{}, Errorf("block %s does not exist", blockId)
 		}
 	}
-	// todo: we should really lock the repository here.
+	unlock, err := r.storage.Lock(context.Background(), "head")
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "failed to create lock")
+	}
+	defer unlock() //nolint:errcheck
 	head, err := r.Head()
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to get head revision")

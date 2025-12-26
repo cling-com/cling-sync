@@ -2,6 +2,7 @@ package lib
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -55,6 +56,9 @@ type Storage interface {
 
 	// Return `ErrControlFileNotFound` if the control file does not exist.
 	DeleteControlFile(section ControlFileSection, name string) error
+
+	// Create a lock file in `.cling/<purpose>/locks/<name>`.
+	Lock(ctx context.Context, name string) (func() error, error)
 }
 
 type FileStorage struct {
@@ -292,6 +296,21 @@ func (s *FileStorage) DeleteControlFile(section ControlFileSection, name string)
 		return WrapErrorf(err, "failed to delete control file %s", path)
 	}
 	return nil
+}
+
+func (s *FileStorage) Lock(ctx context.Context, name string) (func() error, error) {
+	if filepath.Base(name) != name {
+		return nil, Errorf("invalid file name %s", name)
+	}
+	path := filepath.Join(".cling", string(s.Purpose), "locks", name)
+	if err := s.FS.MkdirAll(filepath.Dir(path)); err != nil {
+		return nil, WrapErrorf(err, "failed to create directory for lock file %s", path)
+	}
+	unlock, err := s.FS.Lock(ctx, path)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to create lock file %s", path)
+	}
+	return unlock, nil
 }
 
 func (s *FileStorage) blockPath(blockId BlockId) string {

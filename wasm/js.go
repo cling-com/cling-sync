@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"time"
 
 	clingHTTP "github.com/flunderpero/cling-sync/http"
@@ -81,6 +82,7 @@ func (e FetchError) Error() string {
 }
 
 func (c *WasmHTTPClient) Request( //nolint:funlen
+	ctx context.Context,
 	method string,
 	url string,
 	body []byte,
@@ -152,7 +154,7 @@ func (c *WasmHTTPClient) Request( //nolint:funlen
 		return resp, nil
 	case err := <-errChan:
 		return nil, err
-	case <-time.After(30 * time.Second):
-		return nil, FetchError{"request timeout"}
+	case <-ctx.Done():
+		return nil, ctx.Err() //nolint:wrapcheck
 	}
 }

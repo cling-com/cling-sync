@@ -3,6 +3,7 @@ package lib
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -48,6 +50,10 @@ type FS interface {
 	// `fn` is called with a path relative to the root of the FS.
 	WalkDir(path string, fn fs.WalkDirFunc) error
 	String() string
+	// Create the lock file if it does not exist and places a lock on it.
+	// Use this to synchronize inter-process access to any resource.
+	// The file is not deleted when the lock is released.
+	Lock(ctx context.Context, path string) (unlock func() error, err error)
 }
 
 type memoryFileWriter struct {
@@ -133,12 +139,14 @@ func (f *MemoryFileInfo) Type() fs.FileMode {
 
 type MemoryFS struct {
 	files      map[string]*MemoryFileInfo
+	locks      map[string]*sync.Mutex
+	locksMutex sync.Mutex
 	maxMemory  int64
 	usedMemory int64
 }
 
 func NewMemoryFS(maxMemory int64) *MemoryFS {
-	f := &MemoryFS{make(map[string]*MemoryFileInfo), maxMemory, 0}
+	f := &MemoryFS{make(map[string]*MemoryFileInfo), make(map[string]*sync.Mutex), sync.Mutex{}, maxMemory, 0}
 	f.create(".", 0o700|os.ModeDir)
 	return f
 }
@@ -370,6 +378,50 @@ func (f *MemoryFS) String() string {
 	return "MemoryFS"
 }
 
+// This uses a sync.Mutex because MemoryFS can only be used in a single process.
+func (f *MemoryFS) Lock(ctx context.Context, path string) (func() error, error) {
+	if _, ok := f.locks[path]; !ok {
+		f, err := f.OpenWriteExcl(path)
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to create lock file %s", path)
+		}
+		if _, err := f.Write([]byte(time.Now().Format(time.RFC3339Nano) + "\n")); err != nil {
+			return nil, WrapErrorf(err, "failed to write lock file %s", path)
+		}
+		if err := f.Close(); err != nil {
+			return nil, WrapErrorf(err, "failed to close lock file %s", path)
+		}
+	}
+	f.locksMutex.Lock()
+	m := f.locks[path]
+	if m == nil {
+		m = new(sync.Mutex)
+		f.locks[path] = m
+	}
+	f.locksMutex.Unlock()
+
+	locked := make(chan struct{}, 1)
+	go func() {
+		m.Lock()
+		locked <- struct{}{}
+	}()
+
+	select {
+	case <-locked:
+		unlocked := false
+		return func() error {
+			if unlocked {
+				return nil
+			}
+			unlocked = true
+			m.Unlock()
+			return nil
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func (f *MemoryFS) Debug() string {
 	var sb strings.Builder
 	sb.WriteString("MemoryFS(")
@@ -468,6 +520,10 @@ func (f *subMemoryFS) WalkDir(path string, fn fs.WalkDirFunc) error {
 
 func (f *subMemoryFS) String() string {
 	return "MemoryFS(" + f.path + ")"
+}
+
+func (f *subMemoryFS) Lock(ctx context.Context, path string) (unlock func() error, err error) {
+	return f.parent.Lock(ctx, filepath.Join(f.path, path))
 }
 
 func ReadFile(fs FS, name string) ([]byte, error) {

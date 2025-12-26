@@ -3,11 +3,13 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
@@ -15,13 +17,17 @@ import (
 var td = lib.TestData{} //nolint:gochecknoglobals
 
 func TestHTTPStorageClient(t *testing.T) {
+	oldLeaseMin := LockLeaseMin
+	t.Cleanup(func() { LockLeaseMin = oldLeaseMin })
+	LockLeaseMin = 100 * time.Millisecond
+
 	t.Parallel()
 
 	t.Run("HTTPStorageClient implements lib.Storage", func(t *testing.T) {
 		t.Parallel()
 		_, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 		var _ lib.Storage = client
 	})
 
@@ -30,7 +36,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		_, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 		toml, err := client.Open()
 		assert.NoError(err)
 		assert.Equal(lib.Toml{"some": {"key": "value"}}, toml)
@@ -41,7 +47,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 		blockId := td.BlockId("1")
 
 		ok, err := client.HasBlock(blockId)
@@ -59,7 +65,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 		blockId := td.BlockId("1")
 
 		_, _, err := client.ReadBlock(blockId)
@@ -77,7 +83,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 
 		blockId := td.BlockId("1")
 		_, err := client.ReadBlockHeader(blockId)
@@ -94,7 +100,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 
 		blockId := td.BlockId("1")
 		block := lib.Block{
@@ -127,7 +133,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 
 		ok, err := client.HasControlFile(lib.ControlFileSectionRefs, "head")
 		assert.NoError(err)
@@ -145,7 +151,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 
 		_, err := client.ReadControlFile(lib.ControlFileSectionRefs, "head")
 		assert.ErrorIs(err, lib.ErrControlFileNotFound)
@@ -162,7 +168,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 
 		err := client.WriteControlFile(lib.ControlFileSectionRefs, "head", []byte("abcd"))
 		assert.NoError(err)
@@ -182,7 +188,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert := lib.NewAssert(t)
 		storage, srv := newSut(t)
 		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client(), t.Context()))
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 
 		err := client.DeleteControlFile(lib.ControlFileSectionRefs, "head")
 		assert.ErrorIs(err, lib.ErrControlFileNotFound)
@@ -196,6 +202,51 @@ func TestHTTPStorageClient(t *testing.T) {
 		ok, err := storage.HasControlFile(lib.ControlFileSectionRefs, "head")
 		assert.NoError(err)
 		assert.Equal(false, ok)
+	})
+
+	t.Run("Lock", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		_, srv := newSut(t)
+		defer srv.Close()
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
+
+		unlock, err := client.Lock(t.Context(), "lock")
+		assert.NoError(err)
+
+		t0 := time.Now()
+		ctx2, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		_, err = client.Lock(ctx2, "lock")
+		assert.ErrorIs(err, context.DeadlineExceeded)
+		assert.Greater(time.Since(t0), 99*time.Millisecond)
+
+		err = unlock()
+		assert.NoError(err)
+
+		unlock2, err := client.Lock(t.Context(), "lock")
+		assert.NoError(err)
+		err = unlock2()
+		assert.NoError(err)
+	})
+
+	t.Run("Lock continuously extends the lease", func(t *testing.T) {
+		t.Parallel()
+
+		assert := lib.NewAssert(t)
+		_, srv := newSut(t)
+		defer srv.Close()
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
+
+		unlock, err := client.Lock(t.Context(), "lock")
+		assert.NoError(err)
+		defer unlock() //nolint:errcheck
+
+		// Trying to lock again should fail.
+		ctx2, cancel := context.WithTimeout(t.Context(), 1*time.Second)
+		defer cancel()
+		_, err = client.Lock(ctx2, "lock")
+		assert.ErrorIs(err, context.DeadlineExceeded)
 	})
 }
 

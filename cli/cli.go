@@ -2,7 +2,6 @@
 package main
 
 import (
-	"context"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -83,7 +82,7 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if clingHTTP.IsHTTPStorageUIR(repositoryURI) {
 		storage = clingHTTP.NewHTTPStorageClient(
 			repositoryURI,
-			clingHTTP.NewDefaultHTTPClient(http.DefaultClient, context.Background()),
+			clingHTTP.NewDefaultHTTPClient(http.DefaultClient),
 		)
 	} else {
 		repositoryURI, err = filepath.Abs(repositoryURI)
@@ -1214,7 +1213,7 @@ func openRepositoryStorage(workspace *ws.Workspace) (lib.Storage, error) { //nol
 	if clingHTTP.IsHTTPStorageUIR(string(workspace.RemoteRepository)) {
 		return clingHTTP.NewHTTPStorageClient(
 			string(workspace.RemoteRepository),
-			clingHTTP.NewDefaultHTTPClient(http.DefaultClient, context.Background()),
+			clingHTTP.NewDefaultHTTPClient(http.DefaultClient),
 		), nil
 	}
 	storage, err := lib.NewFileStorage(lib.NewRealFS(string(workspace.RemoteRepository)), lib.StoragePurposeRepository)

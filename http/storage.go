@@ -11,14 +11,19 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
 
+var LockLeaseMin = 5 * time.Second //nolint:gochecknoglobals
+
 // We use a simplified interface to improve support for Wasm, i.e. we don't
 // bring in the full HTTP client which adds a lot of dependencies.
 type HTTPClient interface {
-	Request(method string, url string, body []byte) (*HTTPResponse, error)
+	Request(ctx context.Context, method string, url string, body []byte) (*HTTPResponse, error)
 }
 
 type HTTPResponse struct {
@@ -27,16 +32,20 @@ type HTTPResponse struct {
 }
 
 type DefaultHTTPClient struct {
-	Client  *http.Client
-	Context context.Context //nolint:containedctx
+	Client *http.Client
 }
 
-func NewDefaultHTTPClient(client *http.Client, context context.Context) *DefaultHTTPClient {
-	return &DefaultHTTPClient{client, context}
+func NewDefaultHTTPClient(client *http.Client) *DefaultHTTPClient {
+	return &DefaultHTTPClient{client}
 }
 
-func (c *DefaultHTTPClient) Request(method string, url string, body []byte) (*HTTPResponse, error) {
-	req, err := http.NewRequestWithContext(c.Context, method, url, bytes.NewReader(body))
+func (c *DefaultHTTPClient) Request(
+	ctx context.Context,
+	method string,
+	url string,
+	body []byte,
+) (*HTTPResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create request")
 	}
@@ -53,8 +62,9 @@ func (c *DefaultHTTPClient) Request(method string, url string, body []byte) (*HT
 }
 
 type HTTPStorageClient struct {
-	Address string
-	Client  HTTPClient
+	Address        string
+	Client         HTTPClient
+	lockLeaseError atomic.Value
 }
 
 func IsHTTPStorageUIR(uri string) bool {
@@ -62,7 +72,7 @@ func IsHTTPStorageUIR(uri string) bool {
 }
 
 func NewHTTPStorageClient(address string, client HTTPClient) *HTTPStorageClient {
-	return &HTTPStorageClient{address, client}
+	return &HTTPStorageClient{address, client, atomic.Value{}}
 }
 
 func (c *HTTPStorageClient) Init(config lib.Toml, headerComment string) error {
@@ -70,7 +80,7 @@ func (c *HTTPStorageClient) Init(config lib.Toml, headerComment string) error {
 }
 
 func (c *HTTPStorageClient) Open() (lib.Toml, error) {
-	resp, err := c.request(http.MethodGet, "/storage/open", nil)
+	resp, err := c.request(context.Background(), http.MethodGet, "/storage/open", nil)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
 	}
@@ -82,7 +92,7 @@ func (c *HTTPStorageClient) Open() (lib.Toml, error) {
 }
 
 func (c *HTTPStorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
-	resp, err := c.request(http.MethodHead, "/storage/block/"+blockId.String(), nil, 404)
+	resp, err := c.request(context.Background(), http.MethodHead, "/storage/block/"+blockId.String(), nil, 404)
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to check if block exists")
 	}
@@ -90,7 +100,7 @@ func (c *HTTPStorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
 }
 
 func (c *HTTPStorageClient) ReadBlock(blockId lib.BlockId) ([]byte, lib.BlockHeader, error) {
-	resp, err := c.request(http.MethodGet, "/storage/block/"+blockId.String(), nil, 404)
+	resp, err := c.request(context.Background(), http.MethodGet, "/storage/block/"+blockId.String(), nil, 404)
 	if err != nil {
 		return nil, lib.BlockHeader{}, lib.WrapErrorf(err, "failed to read block")
 	}
@@ -102,9 +112,6 @@ func (c *HTTPStorageClient) ReadBlock(blockId lib.BlockId) ([]byte, lib.BlockHea
 		return nil, lib.BlockHeader{}, lib.WrapErrorf(err, "failed to unmarshal block header")
 	}
 	data := resp.Body[lib.BlockHeaderSize:]
-	if err != nil {
-		return nil, lib.BlockHeader{}, lib.WrapErrorf(err, "failed to read block data")
-	}
 	if len(data) != int(header.EncryptedDataSize) {
 		return nil, lib.BlockHeader{}, lib.Errorf(
 			"read %d bytes, expected %d",
@@ -116,7 +123,7 @@ func (c *HTTPStorageClient) ReadBlock(blockId lib.BlockId) ([]byte, lib.BlockHea
 }
 
 func (c *HTTPStorageClient) ReadBlockHeader(blockId lib.BlockId) (lib.BlockHeader, error) {
-	resp, err := c.request(http.MethodGet, "/storage/block/"+blockId.String()+"/header", nil, 404)
+	resp, err := c.request(context.Background(), http.MethodGet, "/storage/block/"+blockId.String()+"/header", nil, 404)
 	if err != nil {
 		return lib.BlockHeader{}, lib.WrapErrorf(err, "failed to read block header")
 	}
@@ -141,7 +148,7 @@ func (c *HTTPStorageClient) WriteBlock(block lib.Block) (bool, error) {
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to read block data")
 	}
-	resp, err := c.request(http.MethodPut, "/storage/block/"+block.Header.BlockId.String(), body)
+	resp, err := c.request(context.Background(), http.MethodPut, "/storage/block/"+block.Header.BlockId.String(), body)
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to write block")
 	}
@@ -149,7 +156,13 @@ func (c *HTTPStorageClient) WriteBlock(block lib.Block) (bool, error) {
 }
 
 func (c *HTTPStorageClient) HasControlFile(section lib.ControlFileSection, name string) (bool, error) {
-	resp, err := c.request(http.MethodHead, "/storage/control/"+string(section)+"/"+name, nil, 404)
+	resp, err := c.request(
+		context.Background(),
+		http.MethodHead,
+		"/storage/control/"+string(section)+"/"+name,
+		nil,
+		404,
+	)
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to check if control file exists")
 	}
@@ -157,7 +170,7 @@ func (c *HTTPStorageClient) HasControlFile(section lib.ControlFileSection, name 
 }
 
 func (c *HTTPStorageClient) ReadControlFile(section lib.ControlFileSection, name string) ([]byte, error) {
-	resp, err := c.request(http.MethodGet, "/storage/control/"+string(section)+"/"+name, nil, 404)
+	resp, err := c.request(context.Background(), http.MethodGet, "/storage/control/"+string(section)+"/"+name, nil, 404)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read control file")
 	}
@@ -168,7 +181,7 @@ func (c *HTTPStorageClient) ReadControlFile(section lib.ControlFileSection, name
 }
 
 func (c *HTTPStorageClient) WriteControlFile(section lib.ControlFileSection, name string, data []byte) error {
-	resp, err := c.request(http.MethodPut, "/storage/control/"+string(section)+"/"+name, data)
+	resp, err := c.request(context.Background(), http.MethodPut, "/storage/control/"+string(section)+"/"+name, data)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to write control file")
 	}
@@ -179,7 +192,13 @@ func (c *HTTPStorageClient) WriteControlFile(section lib.ControlFileSection, nam
 }
 
 func (c *HTTPStorageClient) DeleteControlFile(section lib.ControlFileSection, name string) error {
-	resp, err := c.request(http.MethodDelete, "/storage/control/"+string(section)+"/"+name, nil, 404)
+	resp, err := c.request(
+		context.Background(),
+		http.MethodDelete,
+		"/storage/control/"+string(section)+"/"+name,
+		nil,
+		404,
+	)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to delete control file")
 	}
@@ -192,28 +211,106 @@ func (c *HTTPStorageClient) DeleteControlFile(section lib.ControlFileSection, na
 	return nil
 }
 
+func (c *HTTPStorageClient) Lock(ctx context.Context, name string) (func() error, error) {
+	resp, err := c.request(ctx, http.MethodPut, "/storage/lock/"+name, nil)
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to create lock file %s", name)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, lib.Errorf("failed to create lock file: got %d (%s)", resp.StatusCode, string(resp.Body))
+	}
+	token := string(resp.Body)
+	refreshCtx, refreshCancel := context.WithCancel(ctx)
+	// Continuously extend the lock lease.
+	go func() {
+		ticker := time.NewTicker(min(LockLeaseMin/2, time.Second))
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+			case <-refreshCtx.Done():
+				return
+			}
+			ctx, cancel := context.WithTimeout(refreshCtx, LockLeaseMin/2)
+			resp, err := c.request(ctx, http.MethodPost, "/storage/lock/"+token, nil)
+			cancel()
+			if refreshCtx.Err() != nil {
+				return
+			}
+			if err != nil {
+				err := lib.WrapErrorf(err, "failed to extend lock %s", token)
+				c.lockLeaseError.Store(err)
+				panic(err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				err := lib.Errorf("failed to extend lock %s: got %d (%s)", token, resp.StatusCode, string(resp.Body))
+				c.lockLeaseError.Store(err)
+				panic(err)
+			}
+		}
+	}()
+	var once sync.Once
+	var unlockErr error
+	return func() error {
+		once.Do(func() {
+			refreshCancel()
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			resp, err := c.request(ctx, http.MethodDelete, "/storage/lock/"+token, nil)
+			if err != nil {
+				unlockErr = lib.WrapErrorf(err, "failed to delete lock %s with token %s", name, token)
+				return
+			}
+			if resp.StatusCode != http.StatusOK {
+				unlockErr = lib.Errorf(
+					"failed to delete lock %s with token %s: got %d (%s)",
+					name,
+					token,
+					resp.StatusCode,
+					string(resp.Body),
+				)
+			}
+		})
+		return unlockErr
+	}, nil
+}
+
 func (c *HTTPStorageClient) request(
+	ctx context.Context,
 	method, path string,
 	body []byte,
 	ignoreStatusCodes ...int,
 ) (*HTTPResponse, error) {
-	resp, err := c.Client.Request(method, c.Address+path, body)
+	if err := c.lockLeaseError.Load(); err != nil {
+		err, ok := err.(error)
+		if !ok {
+			return nil, lib.Errorf("failed to execute request because a lock lease expired")
+		}
+		return nil, lib.WrapErrorf(err, "failed to execute request because a lock lease expired")
+	}
+	resp, err := c.Client.Request(ctx, method, c.Address+path, body)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to execute request")
 	}
 	if resp.StatusCode >= 400 && !slices.Contains(ignoreStatusCodes, resp.StatusCode) {
-		return nil, lib.Errorf("failed to open storage: got %d (%s)", resp.StatusCode, string(resp.Body))
+		return nil, lib.Errorf("failed request %s %s: got %d (%s)", method, path, resp.StatusCode, string(resp.Body))
 	}
 	return resp, nil
+}
+
+type lockHandle struct {
+	extend chan struct{}
+	done   chan struct{}
 }
 
 type HTTPStorageServer struct {
 	Storage *lib.FileStorage
 	Address string
+	locks   sync.Map // token -> *lockHandle
 }
 
 func NewHTTPStorageServer(storage *lib.FileStorage, address string) *HTTPStorageServer {
-	return &HTTPStorageServer{storage, address}
+	return &HTTPStorageServer{Storage: storage, Address: address, locks: sync.Map{}}
 }
 
 func (s *HTTPStorageServer) RegisterRoutes(mux *http.ServeMux) {
@@ -226,6 +323,9 @@ func (s *HTTPStorageServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /storage/control/{section}/{name}", s.ReadControlFile)
 	mux.HandleFunc("PUT /storage/control/{section}/{name}", s.WriteControlFile)
 	mux.HandleFunc("DELETE /storage/control/{section}/{name}", s.DeleteControlFile)
+	mux.HandleFunc("PUT /storage/lock/{name}", s.Lock)
+	mux.HandleFunc("DELETE /storage/lock/{token}", s.Unlock)
+	mux.HandleFunc("POST /storage/lock/{token}", s.ExtendLock)
 }
 
 // Return the storage TOML as a string.
@@ -411,6 +511,91 @@ func (s *HTTPStorageServer) DeleteControlFile(w http.ResponseWriter, r *http.Req
 		}
 		s.error(lib.WrapErrorf(err, "failed to delete control file"), w, http.StatusInternalServerError)
 		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *HTTPStorageServer) Lock(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	token, err := lib.RandStr(32)
+	if err != nil {
+		s.error(lib.WrapErrorf(err, "failed to generate random token"), w, http.StatusInternalServerError)
+		return
+	}
+
+	unlockPure, err := s.Storage.Lock(r.Context(), name)
+	if err != nil {
+		s.error(lib.WrapErrorf(err, "failed to create lock %s", name), w, http.StatusInternalServerError)
+		return
+	}
+	// Make sure the unlock function is called exactly once.
+	unlock := sync.OnceValue(unlockPure)
+
+	handle := &lockHandle{
+		extend: make(chan struct{}, 1),
+		done:   make(chan struct{}),
+	}
+	s.locks.Store(token, handle)
+
+	go func() {
+		timer := time.NewTimer(LockLeaseMin)
+		defer timer.Stop()
+		defer s.locks.Delete(token)
+		for {
+			select {
+			case <-timer.C:
+				if err := unlock(); err != nil {
+					slog.Error("Failed to unlock expired lock", "error", err, "token", token, "name", name)
+				}
+				return
+			case <-handle.extend:
+				if !timer.Stop() {
+					// Timer already fired, drain it if needed
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(LockLeaseMin)
+			case <-handle.done:
+				if err := unlock(); err != nil {
+					slog.Error("Failed to unlock lock", "error", err, "token", token, "name", name)
+				}
+				return
+			}
+		}
+	}()
+
+	if _, err := w.Write([]byte(token)); err != nil {
+		s.error(lib.WrapErrorf(err, "failed to write token"), w, http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *HTTPStorageServer) Unlock(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	value, ok := s.locks.LoadAndDelete(token)
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	handle := value.(*lockHandle) //nolint:forcetypeassert
+	close(handle.done)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *HTTPStorageServer) ExtendLock(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	value, ok := s.locks.Load(token)
+	if !ok {
+		s.error(lib.Errorf("lock %s does not exist", token), w, http.StatusNotFound)
+		return
+	}
+	handle := value.(*lockHandle) //nolint:forcetypeassert
+	select {
+	case handle.extend <- struct{}{}:
+	default:
+		// There is already a message that signals to extend the lock.
 	}
 	w.WriteHeader(http.StatusOK)
 }
