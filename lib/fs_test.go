@@ -205,6 +205,28 @@ func checkConsistency(t *testing.T, newSut func() FS) {
 		assert.ErrorIs(err, fs.ErrExist)
 	})
 
+	t.Run("FSync", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		f, err := sut.OpenWrite("a.txt")
+		assert.NoError(err)
+		assert.NoError(sut.FSync(f))
+		assert.NoError(f.Close())
+	})
+
+	t.Run("FSyncDir", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		assert.NoError(sut.Mkdir("a"))
+		writeFile(t, sut, "a/b.txt", "abcd")
+		assert.NoError(sut.FSyncDir("a"))
+	})
+
 	t.Run("OpenRead", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

@@ -28,6 +28,27 @@ func (f *RealFS) OpenWriteExcl(name string) (io.WriteCloser, error) {
 	return os.OpenFile(filepath.Join(f.BasePath, name), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 }
 
+func (f *RealFS) FSync(file io.WriteCloser) error {
+	fsFile, ok := file.(*os.File)
+	if !ok {
+		return Errorf("invalid file type %T", file)
+	}
+	return fsFile.Sync()
+}
+
+func (f *RealFS) FSyncDir(path string) error {
+	path = filepath.Join(f.BasePath, path)
+	dir, err := os.Open(path)
+	if err != nil {
+		return WrapErrorf(err, "failed to open directory %s", path)
+	}
+	defer dir.Close() //nolint:errcheck
+	if err := dir.Sync(); err != nil {
+		return WrapErrorf(err, "failed to sync directory %s", path)
+	}
+	return nil
+}
+
 func (f *RealFS) OpenRead(name string) (io.ReadCloser, error) {
 	return os.Open(filepath.Join(f.BasePath, name))
 }

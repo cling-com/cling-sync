@@ -28,6 +28,8 @@ type FS interface {
 	OpenWrite(name string) (io.WriteCloser, error)
 	// Return `fs.ErrExist` if the file already exists.
 	OpenWriteExcl(name string) (io.WriteCloser, error)
+	FSync(file io.WriteCloser) error
+	FSyncDir(path string) error
 	OpenRead(name string) (io.ReadCloser, error)
 	Chmod(name string, mode fs.FileMode) error
 	Chmtime(name string, mtime time.Time) error
@@ -59,6 +61,10 @@ func (w *memoryFileWriter) Write(p []byte) (n int, err error) {
 		return 0, WrapErrorf(io.ErrShortWrite, "memory limit of %d bytes exceeded", w.fs.maxMemory)
 	}
 	return w.Buffer.Write(p)
+}
+
+func (w *memoryFileWriter) Sync() error {
+	return nil
 }
 
 func (w *memoryFileWriter) Close() error {
@@ -150,6 +156,14 @@ func (f *MemoryFS) OpenWriteExcl(name string) (io.WriteCloser, error) {
 		return nil, fs.ErrExist
 	}
 	return f.OpenWrite(name)
+}
+
+func (f *MemoryFS) FSync(file io.WriteCloser) error {
+	return nil
+}
+
+func (f *MemoryFS) FSyncDir(path string) error {
+	return nil
 }
 
 func (f *MemoryFS) OpenRead(name string) (io.ReadCloser, error) {
@@ -379,6 +393,14 @@ func (f *subMemoryFS) OpenWriteExcl(name string) (io.WriteCloser, error) {
 	return f.parent.OpenWriteExcl(filepath.Join(f.path, name))
 }
 
+func (f *subMemoryFS) FSync(file io.WriteCloser) error {
+	return f.parent.FSync(file)
+}
+
+func (f *subMemoryFS) FSyncDir(path string) error {
+	return f.parent.FSyncDir(path)
+}
+
 func (f *subMemoryFS) OpenRead(name string) (io.ReadCloser, error) {
 	return f.parent.OpenRead(filepath.Join(f.path, name))
 }
@@ -484,9 +506,15 @@ func IsAtomicWriteTempFile(name string) bool {
 	return strings.HasPrefix(filepath.Base(name), ".cling_sync_tmp_")
 }
 
-// Write the data to a temporary file, set the permissions, and rename it to the target file.
+// Try to write the data to the target file in the most safe way possible:
+//   - Write the data to a temporary file.
+//   - fsync the temporary file.
+//   - Set the permissions of the temporary file.
+//   - Rename the temporary file to the target file.
+//   - fsync the parent directory of the target file.
+//
 // In case of an error, the temporary file is deleted.
-func AtomicWriteFile(fs FS, name string, perm fs.FileMode, data ...[]byte) error {
+func AtomicWriteFile(fs FS, name string, perm fs.FileMode, data ...[]byte) error { //nolint:funlen
 	tmpPath := AtomicWriteTempFilename(name)
 	f, err := fs.OpenWrite(tmpPath)
 	if err != nil {
@@ -505,6 +533,17 @@ func AtomicWriteFile(fs FS, name string, perm fs.FileMode, data ...[]byte) error
 			return err
 		}
 	}
+	if err := fs.FSync(f); err != nil {
+		_ = f.Close()
+		if err := fs.Remove(tmpPath); err != nil {
+			return WrapErrorf(
+				err,
+				"failed to fsync temporary file %s and failed to remove it (it is garbage now)",
+				tmpPath,
+			)
+		}
+		return WrapErrorf(err, "failed to fsync temporary file %s", tmpPath)
+	}
 	if err := f.Close(); err != nil {
 		if err := fs.Remove(tmpPath); err != nil {
 			return WrapErrorf(
@@ -513,7 +552,7 @@ func AtomicWriteFile(fs FS, name string, perm fs.FileMode, data ...[]byte) error
 				tmpPath,
 			)
 		}
-		return err
+		return WrapErrorf(err, "failed to close temporary file %s", tmpPath)
 	}
 	// Set the permissions.
 	if err := fs.Chmod(tmpPath, perm); err != nil {
@@ -529,7 +568,19 @@ func AtomicWriteFile(fs FS, name string, perm fs.FileMode, data ...[]byte) error
 				name,
 			)
 		}
-		return err
+		return WrapErrorf(err, "failed to rename temporary file %s to %s", tmpPath, name)
+	}
+	// fsync the parent directory to make sure the rename is durable.
+	if err := fs.FSyncDir(filepath.Dir(name)); err != nil {
+		_ = f.Close()
+		if err := fs.Remove(tmpPath); err != nil {
+			return WrapErrorf(
+				err,
+				"failed to fsync parent directory of temporary file %s and failed to remove it (it is garbage now)",
+				tmpPath,
+			)
+		}
+		return WrapErrorf(err, "failed to fsync parent directory of temporary file %s", tmpPath)
 	}
 	return nil
 }
