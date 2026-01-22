@@ -1,5 +1,3 @@
-//go:build !wasm
-
 package lib
 
 import (
@@ -63,11 +61,11 @@ func (a Assert) Equal(expected, actual any, msg ...any) {
 	if areEqual(expected, actual) {
 		return
 	}
-	expectedStr := stringify(expected)
+	expectedStr := Stringify(expected)
 	if strings.Contains(expectedStr, "\n") {
 		expectedStr = "\n" + expectedStr
 	}
-	actualStr := stringify(actual)
+	actualStr := Stringify(actual)
 	if strings.Contains(actualStr, "\n") {
 		actualStr = "\n" + actualStr
 	}
@@ -87,11 +85,11 @@ func (a Assert) NotEqual(expected, actual any, msg ...any) {
 	if !areEqual(expected, actual) {
 		return
 	}
-	expectedStr := stringify(expected)
+	expectedStr := Stringify(expected)
 	if strings.Contains(expectedStr, "\n") {
 		expectedStr = "\n" + expectedStr
 	}
-	actualStr := stringify(actual)
+	actualStr := Stringify(actual)
 	if strings.Contains(actualStr, "\n") {
 		actualStr = "\n" + actualStr
 	}
@@ -116,15 +114,16 @@ func NewMockCall(name string, args ...any) MockCall {
 }
 
 func (m MockCall) String() string {
-	s := m.Name + "("
+	var s strings.Builder
+	s.WriteString(m.Name + "(")
 	for i, arg := range m.Args {
 		if i > 0 {
-			s += ", "
+			s.WriteString(", ")
 		}
-		s += stringify(arg)
+		s.WriteString(Stringify(arg))
 	}
-	s += ")"
-	return s
+	s.WriteString(")")
+	return s.String()
 }
 
 func (m MockCall) Equal(other MockCall) bool {
@@ -148,21 +147,21 @@ func (a Assert) Call(expected MockCall, calls []MockCall, msg ...any) {
 	if slices.ContainsFunc(calls, expected.Equal) {
 		return
 	}
-	callsStr := ""
+	var callsStr strings.Builder
 	for _, call := range calls {
-		callsStr += call.String() + "\n"
+		callsStr.WriteString(call.String() + "\n")
 	}
-	a.tb.Fatalf("%sexpected call:\nwant: %s\ngot:\n%s", details(msg), expected, callsStr)
+	a.tb.Fatalf("%sexpected call:\nwant: %s\ngot:\n%s", details(msg), expected, callsStr.String())
 }
 
 func (a Assert) Calls(expected []MockCall, calls []MockCall, msg ...any) {
 	a.tb.Helper()
-	callsStr := ""
+	var callsStr strings.Builder
 	for _, call := range calls {
-		callsStr += call.String() + "\n"
+		callsStr.WriteString(call.String() + "\n")
 	}
 	if len(expected) != len(calls) {
-		a.tb.Fatalf("%sexpected %d calls, got %d\n%s", details(msg), len(expected), len(calls), callsStr)
+		a.tb.Fatalf("%sexpected %d calls, got %d\n%s", details(msg), len(expected), len(calls), callsStr.String())
 	}
 	for i, call := range calls {
 		a.Equal(expected[i], call, msg...)
@@ -188,58 +187,76 @@ func diff(a, b string) (string, string) {
 	return a, b
 }
 
-func stringify(v any) string {
+func Stringify(v any) string {
 	return stringifyInternal(v, 0)
 }
 
-func stringifyInternal(v any, indent int) string { //nolint:funlen
+func stringifyInternal(v any, indent int) string {
 	if t, ok := v.(time.Time); ok {
 		return t.Format(time.RFC3339Nano)
 	}
 	if t, ok := v.(string); ok {
 		return t
 	}
-	reflectV := reflect.ValueOf(v)
-	t := reflectV.Type()
+	return stringifyValue(reflect.ValueOf(v), indent)
+}
+
+func stringifyValue(v reflect.Value, indent int) string { //nolint:funlen
+	if !v.IsValid() {
+		return "nil"
+	}
+	for v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return "nil"
+		}
+		v = v.Elem()
+		if !v.IsValid() {
+			return "nil"
+		}
+	}
+
+	t := v.Type()
 	kind := t.Kind()
 	// Check for byte array or byte slice (including aliases like [32]byte or Sha256).
 	if (kind == reflect.Slice || kind == reflect.Array) && t.Elem().Kind() == reflect.Uint8 {
-		n := reflectV.Len()
+		n := v.Len()
 		if n == 0 {
 			return fmt.Sprintf("%s{}", t.String())
 		}
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("%s{ ", t.String()))
+		fmt.Fprintf(&sb, "%s{ ", t.String())
 		for i := range min(n, 500) {
 			if i > 0 {
 				sb.WriteString(" ")
 			}
-			sb.WriteString(fmt.Sprintf("%02x", reflectV.Index(i).Uint()))
+			fmt.Fprintf(&sb, "%02x", v.Index(i).Uint())
 		}
 		if n > 500 {
-			sb.WriteString(fmt.Sprintf(" ... %d more bytes }", n-500))
+			fmt.Fprintf(&sb, " ... %d more bytes }", n-500)
 		}
 		sb.WriteString(" }")
 		return sb.String()
 	}
 
-	if reflectV.Kind() == reflect.Ptr {
-		if reflectV.IsNil() {
+	if kind == reflect.Pointer {
+		if v.IsNil() {
 			return "nil"
 		}
-		reflectV = reflectV.Elem()
-		t = reflectV.Type()
-		kind = t.Kind()
+		return "&" + stringifyValue(v.Elem(), indent)
 	}
 
 	switch kind { //nolint:exhaustive
 	case reflect.Slice, reflect.Array:
-		if reflectV.Len() == 0 {
+		if v.IsNil() {
+			return "nil"
+		}
+		if v.Len() == 0 {
 			return "[]"
 		}
-		parts := make([]string, reflectV.Len())
-		for i := range reflectV.Len() {
-			parts[i] = stringifyInternal(reflectV.Index(i).Interface(), indent+1)
+		n := v.Len()
+		parts := make([]string, n)
+		for i := range n {
+			parts[i] = stringifyValue(v.Index(i), indent+1)
 		}
 		inline := "[ " + strings.Join(parts, ", ") + " ]"
 		if len(inline)+(indent*2) <= 100 {
@@ -261,14 +278,12 @@ func stringifyInternal(v any, indent int) string { //nolint:funlen
 		return sb.String()
 
 	case reflect.Struct:
-		numFields := reflectV.NumField()
+		numFields := v.NumField()
 		parts := make([]string, 0, numFields)
+
 		for i := range numFields {
 			field := t.Field(i)
-			if field.PkgPath != "" {
-				continue // unexported
-			}
-			valStr := stringifyInternal(reflectV.Field(i).Interface(), indent+1)
+			valStr := stringifyValue(v.Field(i), indent+1)
 			parts = append(parts, fmt.Sprintf("%s: %s", field.Name, valStr))
 		}
 		prefix := t.Name() + "{ "
@@ -289,9 +304,12 @@ func stringifyInternal(v any, indent int) string { //nolint:funlen
 		return sb.String()
 
 	case reflect.String:
-		return fmt.Sprintf("%q", reflectV.String())
+		return fmt.Sprintf("%q", v.String())
 
 	default:
+		if v.CanInterface() {
+			return fmt.Sprintf("%v", v.Interface())
+		}
 		return fmt.Sprintf("%v", v)
 	}
 }
@@ -374,7 +392,7 @@ func (a Assert) Contains(haystack any, needle any, msg ...any) {
 	}
 }
 
-func (a Assert) Nil(v interface{}, msg ...any) {
+func (a Assert) Nil(v any, msg ...any) {
 	a.tb.Helper()
 	if v == nil {
 		return
@@ -385,11 +403,23 @@ func (a Assert) Nil(v interface{}, msg ...any) {
 	a.tb.Fatalf("%sexpected nil, got %v (%T)", details(msg), v, v)
 }
 
+func (a Assert) NotNil(v any, msg ...any) {
+	a.tb.Helper()
+	if v != nil && !reflect.ValueOf(v).IsNil() {
+		return
+	}
+	a.tb.Fatalf("%sexpected non-nil, got %v (%T)", details(msg), v, v)
+}
+
 func (a Assert) NoError(err error, msg ...any) {
 	a.tb.Helper()
-	if err != nil {
-		a.tb.Fatalf("%sexpected no error, got %v", details(msg), err)
+	if err == nil {
+		return
 	}
+	if reflect.ValueOf(err).IsNil() {
+		return
+	}
+	a.tb.Fatalf("%sexpected no error, got %v", details(msg), err)
 }
 
 func (a Assert) compare(x, y any, compare func(x, y reflect.Value) bool, msg ...any) {
