@@ -64,7 +64,7 @@ func (m ModeAndPerm) String() string {
 	const rwx = "rwxrwxrwx"
 	for i, c := range rwx {
 		if m&ModeAndPerm(1<<(8-i)) != 0 {
-			buf[i+5] = byte(c)
+			buf[i+5] = byte(c) //nolint:gosec
 		} else {
 			buf[i+5] = '-'
 		}
@@ -79,7 +79,7 @@ func (m ModeAndPerm) ShortString() string {
 	const rwx = "rwxrwxrwx"
 	for i, c := range rwx {
 		if m&ModeAndPerm(1<<(8-i)) != 0 {
-			buf[i+1] = byte(c)
+			buf[i+1] = byte(c) //nolint:gosec
 		} else {
 			buf[i+1] = '-'
 		}

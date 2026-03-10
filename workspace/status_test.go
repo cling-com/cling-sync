@@ -226,9 +226,9 @@ func TestStatus(t *testing.T) {
 }
 
 func statusFilesString(files []StatusFile) []string {
-	s := []string{}
-	for _, file := range files {
-		s = append(s, file.Format())
+	s := make([]string, len(files))
+	for i, file := range files {
+		s[i] = file.Format()
 	}
 	return s
 }

@@ -1,6 +1,6 @@
 // The comments in quotes are from the Git documentation at https://git-scm.com/docs/gitignore
 //
-//nolint:forbidigo,paralleltest,gosec
+//nolint:forbidigo,paralleltest
 package lib
 
 import (

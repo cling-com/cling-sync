@@ -114,10 +114,9 @@ type PathExclusionFilter struct {
 
 // Parse the exclude and include patterns and create a PathFilter.
 func NewPathExclusionFilter(excludes []string) *PathExclusionFilter {
-	e := make(ExtendedGlobPatterns, 0, len(excludes))
-	for _, pattern := range excludes {
-		p := NewExtendedGlobPattern(pattern, "")
-		e = append(e, p)
+	e := make(ExtendedGlobPatterns, len(excludes))
+	for i, pattern := range excludes {
+		e[i] = NewExtendedGlobPattern(pattern, "")
 	}
 	return &PathExclusionFilter{e}
 }
@@ -131,10 +130,9 @@ type PathInclusionFilter struct {
 }
 
 func NewPathInclusionFilter(includes []string) *PathInclusionFilter {
-	patterns := make(ExtendedGlobPatterns, 0, len(includes))
-	for _, pattern := range includes {
-		p := NewExtendedGlobPattern(pattern, "")
-		patterns = append(patterns, p)
+	patterns := make(ExtendedGlobPatterns, len(includes))
+	for i, pattern := range includes {
+		patterns[i] = NewExtendedGlobPattern(pattern, "")
 	}
 	return &PathInclusionFilter{patterns}
 }

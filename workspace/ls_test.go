@@ -147,13 +147,13 @@ type lsFileInfo struct {
 }
 
 func lsFiles(f []LsFile) []lsFileInfo {
-	result := []lsFileInfo{}
-	for _, file := range f {
-		result = append(result, lsFileInfo{
+	result := make([]lsFileInfo, len(f))
+	for i, file := range f {
+		result[i] = lsFileInfo{
 			Path: file.Path.String(),
 			Mode: file.Metadata.ModeAndPerm,
 			Size: int(file.Metadata.Size),
-		})
+		}
 	}
 	return result
 }

@@ -360,7 +360,11 @@ func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
 }
 
 func WriteRef(storage Storage, name string, revisionId RevisionId) error {
-	if err := storage.WriteControlFile(ControlFileSectionRefs, name, []byte(hex.EncodeToString(revisionId[:]))); err != nil {
+	if err := storage.WriteControlFile(
+		ControlFileSectionRefs,
+		name,
+		[]byte(hex.EncodeToString(revisionId[:])),
+	); err != nil {
 		return WrapErrorf(err, "failed to write reference %s", name)
 	}
 	return nil

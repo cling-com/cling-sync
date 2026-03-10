@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
@@ -45,14 +46,15 @@ type MergeConflict struct {
 type MergeConflictsError []MergeConflict
 
 func (mc MergeConflictsError) Error() string {
-	s := "MergeConflictsError("
+	var s strings.Builder
+	s.WriteString("MergeConflictsError(")
 	for i, conflict := range mc {
 		if i > 0 {
-			s += ", "
+			s.WriteString(", ")
 		}
-		s += fmt.Sprintf("%q", conflict.WorkspaceEntry.Path)
+		fmt.Fprintf(&s, "%q", conflict.WorkspaceEntry.Path)
 	}
-	return s + ")"
+	return s.String() + ")"
 }
 
 type Merger struct {

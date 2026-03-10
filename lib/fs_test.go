@@ -356,9 +356,9 @@ func checkConsistency(t *testing.T, newSut func() FS) {
 		entries, err := sut.ReadDir("a")
 		assert.NoError(err)
 		assert.Equal(2, len(entries))
-		names := []string{}
-		for _, entry := range entries {
-			names = append(names, entry.Name())
+		names := make([]string, len(entries))
+		for i, entry := range entries {
+			names[i] = entry.Name()
 		}
 		slices.Sort(names)
 		assert.Equal([]string{"b.txt", "c.txt"}, names)

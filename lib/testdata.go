@@ -443,8 +443,8 @@ func (r *TestRepository) RevisionSnapshot(revisionId RevisionId, pathFilter Path
 func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFilter PathFilter) []TestFileInfo {
 	r.t.Helper()
 	entries := r.RevisionSnapshot(revisionId, pathFilter)
-	actual := []TestFileInfo{}
-	for _, entry := range entries {
+	actual := make([]TestFileInfo, len(entries))
+	for i, entry := range entries {
 		content := ""
 		if entry.Type != RevisionEntryDelete && entry.Metadata.ModeAndPerm.IsRegular() {
 			// Rebuild the content from the repository.
@@ -456,12 +456,12 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 			}
 			content = buf.String()
 		}
-		actual = append(actual, TestFileInfo{
+		actual[i] = TestFileInfo{
 			Path:    entry.Path.String(),
 			Mode:    entry.Metadata.ModeAndPerm.AsFileMode(),
 			Size:    int(entry.Metadata.Size),
 			Content: content,
-		})
+		}
 	}
 	return actual
 }

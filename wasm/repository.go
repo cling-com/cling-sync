@@ -11,12 +11,12 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"syscall/js"
 	"time"
 
 	clingHTTP "github.com/flunderpero/cling-sync/http"
 	"github.com/flunderpero/cling-sync/lib"
 	"github.com/flunderpero/cling-sync/workspace"
-	"syscall/js"
 )
 
 const MaxDownloadSize = 500 * 1024 * 1024

@@ -114,7 +114,11 @@ func (w *Workspace) WriteRepositoryKeys(keys *lib.RepositoryKeys, cipher cryptoC
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to encrypt repository keys")
 	}
-	if err := w.Storage.WriteControlFile(lib.ControlFileSectionSecurity, repositoryKeysFileName, encrypted); err != nil {
+	if err := w.Storage.WriteControlFile(
+		lib.ControlFileSectionSecurity,
+		repositoryKeysFileName,
+		encrypted,
+	); err != nil {
 		return lib.WrapErrorf(err, "failed to copy repository keys to local storage")
 	}
 	return nil

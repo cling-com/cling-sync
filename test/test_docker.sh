@@ -7,7 +7,7 @@ set -eu
 cd "$(dirname "$0")"
 
 podman build -t cling-sync-test - <<EOF
-FROM golang:1.24.4-bullseye
+FROM golang:1.26.1-bullseye
 RUN apt-get update && apt-get install -y \
     dbus-x11 \
     gnome-keyring \

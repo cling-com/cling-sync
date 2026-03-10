@@ -142,9 +142,9 @@ func revisionLog(t *testing.T, r *lib.TestRepository, revId lib.RevisionId, file
 }
 
 func newTestRevisionLogs(logs []RevisionLog, status bool) []TestRevisionLog {
-	testLogs := []TestRevisionLog{}
-	for _, log := range logs {
-		testLogs = append(testLogs, newTestRevisionLog(log, status))
+	testLogs := make([]TestRevisionLog, len(logs))
+	for i, log := range logs {
+		testLogs[i] = newTestRevisionLog(log, status)
 	}
 	return testLogs
 }
@@ -152,9 +152,9 @@ func newTestRevisionLogs(logs []RevisionLog, status bool) []TestRevisionLog {
 func newTestRevisionLog(log RevisionLog, status bool) TestRevisionLog {
 	var files []TestStatusFile
 	if status {
-		files = []TestStatusFile{}
-		for _, file := range log.Files {
-			files = append(files, TestStatusFile{file.Path.String(), file.Type, int(file.Metadata.Size)})
+		files = make([]TestStatusFile, len(log.Files))
+		for i, file := range log.Files {
+			files[i] = TestStatusFile{file.Path.String(), file.Type, int(file.Metadata.Size)}
 		}
 	}
 	return TestRevisionLog{log.RevisionId, log.Revision, files}

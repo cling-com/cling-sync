@@ -347,7 +347,7 @@ func (f *MemoryFS) WalkDir(path string, fn fs.WalkDirFunc) error {
 	if path == "." {
 		path = ""
 	}
-	var names []string //nolint:prealloc
+	var names []string
 	for name := range f.files {
 		if !strings.HasPrefix(name, path) {
 			continue

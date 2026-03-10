@@ -159,10 +159,10 @@ func TestFileMetadata(t *testing.T) {
 		assert := NewAssert(t)
 
 		base := td.FileMetadata(0)
-		actualFields := make([]string, 0)
-		typ := reflect.TypeOf(*base)
-		for i := range typ.NumField() {
-			actualFields = append(actualFields, typ.Field(i).Name)
+		typ := reflect.TypeFor[FileMetadata]()
+		actualFields := []string{}
+		for field := range typ.Fields() {
+			actualFields = append(actualFields, field.Name)
 		}
 		slices.Sort(actualFields)
 		assert.Equal(
@@ -253,7 +253,7 @@ func TestFileMetadata(t *testing.T) {
 		assert.Equal(FileMetadata{
 			ModeAndPerm: 0o700 | ModeDir,
 			MTimeSec:    now.Unix(),
-			MTimeNSec:   int32(now.Nanosecond()), //nolint:gosec
+			MTimeNSec:   int32(now.Nanosecond()),
 			Size:        0,
 			FileHash:    Sha256{},
 			BlockIds:    nil,
@@ -263,7 +263,7 @@ func TestFileMetadata(t *testing.T) {
 			UID:           UIDUnset,
 			GID:           UIDUnset,
 			BirthtimeSec:  now.Unix(),
-			BirthtimeNSec: int32(now.Nanosecond()), //nolint:gosec
+			BirthtimeNSec: int32(now.Nanosecond()),
 		}, actual)
 	})
 }

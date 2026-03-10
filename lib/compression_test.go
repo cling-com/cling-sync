@@ -32,9 +32,7 @@ func TestIsCompressible(t *testing.T) {
 		var sb strings.Builder
 		sb.WriteString("[")
 		for range 100 {
-			sb.WriteString(
-				fmt.Sprintf(`{"name": %q, "city": %q, "number": %q},`, rand.Text(), rand.Text(), rand.Text()),
-			)
+			fmt.Fprintf(&sb, `{"name": %q, "city": %q, "number": %q},`, rand.Text(), rand.Text(), rand.Text())
 		}
 		sb.WriteString("]")
 		assert.Equal(true, IsCompressible([]byte(sb.String())))

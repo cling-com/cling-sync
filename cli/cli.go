@@ -166,7 +166,7 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		if err != nil {
 			return err //nolint:wrapcheck
 		}
-		passphrase, err = term.ReadPassword(int(os.Stdin.Fd()))
+		passphrase, err = term.ReadPassword(int(os.Stdin.Fd())) //nolint:gosec
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read passphrase")
 		}
@@ -184,7 +184,7 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		if err != nil {
 			return err //nolint:wrapcheck
 		}
-		passphraseRepeat, err := term.ReadPassword(int(os.Stdin.Fd()))
+		passphraseRepeat, err := term.ReadPassword(int(os.Stdin.Fd())) //nolint:gosec
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read passphrase")
 		}
@@ -523,18 +523,17 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		var sb strings.Builder
 		sb.WriteString("merge aborted due to conflicts:\n\n")
 		for _, conflict := range conflicts {
-			sb.WriteString(fmt.Sprintf("  %s (remote: %s, local: %s)\n",
+			fmt.Fprintf(&sb, "  %s (remote: %s, local: %s)\n",
 				conflict.WorkspaceEntry.Path,
 				conflict.RepositoryEntry.Type,
-				conflict.WorkspaceEntry.Type,
-			))
+				conflict.WorkspaceEntry.Type)
 		}
-		sb.WriteString(fmt.Sprintf(`
+		fmt.Fprintf(&sb, `
 No files were changed, you need to resolve the conflicts manually.
 
 To accept all local changes, run `+"`"+`%s merge --accept-local`+"`"+`
 To select remote changes, run `+"`"+`%s cp --overwrite <remote-path> .`+"`"+`
-`, appName, appName))
+`, appName, appName)
 		return lib.Errorf("%s", sb.String())
 	}
 	if err != nil {
@@ -1200,7 +1199,7 @@ func readPassphrase(passphraseFromStdin bool) ([]byte, error) {
 		if err != nil {
 			return nil, err //nolint:wrapcheck
 		}
-		passphrase, err = term.ReadPassword(int(os.Stdin.Fd()))
+		passphrase, err = term.ReadPassword(int(os.Stdin.Fd())) //nolint:gosec
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read passphrase")
 		}

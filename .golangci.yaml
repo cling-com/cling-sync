@@ -1,7 +1,7 @@
 version: "2"
 
 run:
-  go: "1.24.2"
+  go: "1.26.1"
   timeout: 5m
   tests: true
 
@@ -19,10 +19,12 @@ linters:
   default: "all"
   disable:
     - cyclop
+    - embeddedstructfieldcheck
     - err113
     - gocognit
     - goconst
     - gocyclo
+    - godoclint
     - gomodguard
     - inamedparam
     - interfacebloat
@@ -31,6 +33,7 @@ linters:
     - makezero
     - maintidx
     - nestif
+    - noinlineerr
     - nonamedreturns
     - mnd
     - musttag
@@ -39,6 +42,7 @@ linters:
     - testpackage
     - varnamelen
     - wsl
+    - wsl_v5
   exclusions:
     presets:
       - common-false-positives
@@ -46,6 +50,8 @@ linters:
       - path: _test\.go
         linters:
           - funlen
+          - gosec
+          - noctx
           - wrapcheck
       - path: wasm/
         linters:

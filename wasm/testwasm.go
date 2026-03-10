@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-
 	"syscall/js"
 )
 

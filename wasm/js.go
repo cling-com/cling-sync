@@ -5,10 +5,10 @@ package main
 
 import (
 	"context"
+	"syscall/js"
 	"time"
 
 	clingHTTP "github.com/flunderpero/cling-sync/http"
-	"syscall/js"
 )
 
 // Wrap a function in a JS Promise.

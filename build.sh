@@ -83,7 +83,7 @@ run_project_cmd() {
 }
 
 build_tools() {
-    local expected_version="2.1.2"
+    local expected_version="2.11.2"
     
     # Check if tools/golangci-lint exists and has the correct version.
     if [ -f tools/golangci-lint ]; then

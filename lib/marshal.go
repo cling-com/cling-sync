@@ -92,7 +92,7 @@ func ReadToml(src io.Reader) (Toml, error) {
 	}
 	sections := make(map[string]map[string]string)
 	var currentSection map[string]string
-	for _, line := range strings.Split(string(buf), "\n") {
+	for line := range strings.SplitSeq(string(buf), "\n") {
 		line = strings.TrimSpace(line)
 		if len(line) == 0 || line[0] == '#' {
 			continue
@@ -106,12 +106,12 @@ func ReadToml(src io.Reader) (Toml, error) {
 			sections[sectionName] = currentSection
 
 			continue
-		} else if idx := strings.Index(line, "="); idx != -1 {
+		} else if before, after, ok := strings.Cut(line, "="); ok {
 			if currentSection == nil {
 				return nil, Errorf("unexpected key-value pair outside of section: %s", line)
 			}
-			key := strings.TrimSpace(line[:idx])
-			value := strings.TrimSpace(line[idx+1:])
+			key := strings.TrimSpace(before)
+			value := strings.TrimSpace(after)
 			if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
 				return nil, Errorf("invalid value: %s", line)
 			}
@@ -188,7 +188,7 @@ func (bw *BinaryWriter) WriteLen(l int) {
 		bw.Err = Errorf("length too long: %d", l)
 		return
 	}
-	bw.Err = binary.Write(bw.w, binary.LittleEndian, uint16(l)) //nolint:gosec
+	bw.Err = binary.Write(bw.w, binary.LittleEndian, uint16(l))
 }
 
 type BinaryReader struct {

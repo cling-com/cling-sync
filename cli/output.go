@@ -14,7 +14,7 @@ import (
 )
 
 func IsTerm(f *os.File) bool {
-	return term.IsTerminal(int(f.Fd()))
+	return term.IsTerminal(int(f.Fd())) //nolint:gosec
 }
 
 func PrintErr(msg string, args ...any) {
@@ -110,9 +110,9 @@ func (m *CommitMonitor) progress() {
 		return
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("adding %d paths", m.paths))
+	fmt.Fprintf(&sb, "adding %d paths", m.paths)
 	mbs := (float64(m.rawBytesAdded) / float64(time.Since(m.startTime).Seconds()))
-	sb.WriteString(fmt.Sprintf(" (%s at %s/s)", ws.FormatBytes(m.rawBytesAdded), ws.FormatBytes(int64(mbs))))
+	fmt.Fprintf(&sb, " (%s at %s/s)", ws.FormatBytes(m.rawBytesAdded), ws.FormatBytes(int64(mbs)))
 	clearLine()
 	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
 }
@@ -181,12 +181,12 @@ func (m *StagingMonitor) progress() {
 		return
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("scanned %d paths", (m.paths - m.excluded)))
+	fmt.Fprintf(&sb, "scanned %d paths", (m.paths - m.excluded))
 	if m.excluded > 0 {
-		sb.WriteString(fmt.Sprintf(" (%d excluded)", m.excluded))
+		fmt.Fprintf(&sb, " (%d excluded)", m.excluded)
 	}
 	mbs := (float64(m.totalFileSizes) / float64(time.Since(m.startTime).Seconds()))
-	sb.WriteString(fmt.Sprintf(" (%s at %s/s)", ws.FormatBytes(m.totalFileSizes), ws.FormatBytes(int64(mbs))))
+	fmt.Fprintf(&sb, " (%s at %s/s)", ws.FormatBytes(m.totalFileSizes), ws.FormatBytes(int64(mbs)))
 	clearLine()
 	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
 }
@@ -291,15 +291,15 @@ func (m *CpMonitor) progress() {
 		return
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%d files copied", (m.paths - m.excluded)))
+	fmt.Fprintf(&sb, "%d files copied", (m.paths - m.excluded))
 	if m.excluded > 0 {
-		sb.WriteString(fmt.Sprintf(" (+ %d excluded)", m.excluded))
+		fmt.Fprintf(&sb, " (+ %d excluded)", m.excluded)
 	}
 	if m.errors > 0 {
-		sb.WriteString(fmt.Sprintf(", %d errors", m.errors))
+		fmt.Fprintf(&sb, ", %d errors", m.errors)
 	}
 	mbs := (float64(m.bytesWritten) / float64(time.Since(m.startTime).Seconds()))
-	sb.WriteString(fmt.Sprintf(" (%s at %s/s)", ws.FormatBytes(m.bytesWritten), ws.FormatBytes(int64(mbs))))
+	fmt.Fprintf(&sb, " (%s at %s/s)", ws.FormatBytes(m.bytesWritten), ws.FormatBytes(int64(mbs)))
 	clearLine()
 	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
 }
@@ -385,16 +385,12 @@ func (m *HeathCheckMonitor) progress() {
 	var sb strings.Builder
 	totalBytes := m.MetadataBytes + m.DataBytes
 	mbs := (float64(totalBytes) / float64(time.Since(m.startTime).Seconds()))
-	sb.WriteString(
-		fmt.Sprintf(
-			"%d revisions, %d path entries, %d unique blocks, %s at %s/s",
-			m.Revisions,
-			m.Paths,
-			m.DataBlocks+m.MetadataBlocks,
-			ws.FormatBytes(totalBytes),
-			ws.FormatBytes(int64(mbs)),
-		),
-	)
+	fmt.Fprintf(&sb, "%d revisions, %d path entries, %d unique blocks, %s at %s/s",
+		m.Revisions,
+		m.Paths,
+		m.DataBlocks+m.MetadataBlocks,
+		ws.FormatBytes(totalBytes),
+		ws.FormatBytes(int64(mbs)))
 	clearLine()
 	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
 }
@@ -404,7 +400,7 @@ func (m *HeathCheckMonitor) isProgress() bool {
 }
 
 func clearLine() {
-	cols, _, err := term.GetSize(int(os.Stderr.Fd()))
+	cols, _, err := term.GetSize(int(os.Stderr.Fd())) //nolint:gosec
 	if err != nil {
 		fmt.Fprint(os.Stderr, "\n")
 		return

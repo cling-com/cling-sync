@@ -21,7 +21,7 @@ func TestWasm(t *testing.T) {
 	storageServer := clingHTTP.NewHTTPStorageServer(r.Storage, "127.0.0.1:9123")
 	mux := http.NewServeMux()
 	storageServer.RegisterRoutes(mux)
-	server := &http.Server{Addr: "127.0.0.1:9123", Handler: mux} //nolint:gosec,exhaustruct
+	server := &http.Server{Addr: "127.0.0.1:9123", Handler: mux} //nolint:exhaustruct
 	defer server.Close()                                         //nolint:errcheck
 	go server.ListenAndServe()                                   //nolint:errcheck
 

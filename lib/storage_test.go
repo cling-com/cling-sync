@@ -43,9 +43,9 @@ func TestFileStorageInit(t *testing.T) {
 		files, err = sut.FS.ReadDir(filepath.Join(".cling", "repository"))
 		assert.NoError(err)
 		assert.Equal(2, len(files))
-		names := []string{}
-		for _, f := range files {
-			names = append(names, f.Name())
+		names := make([]string, len(files))
+		for i, f := range files {
+			names[i] = f.Name()
 		}
 		slices.Sort(names)
 		assert.Equal([]string{"objects", "refs"}, names)
@@ -185,10 +185,10 @@ func TestFileStorageMultiPurpose(t *testing.T) {
 			},
 			EncryptedData: []byte("repository data"),
 		}
-		repoBlock.Header.EncryptedDataSize = uint32(len(repoBlock.EncryptedData)) //nolint:gosec
+		repoBlock.Header.EncryptedDataSize = uint32(len(repoBlock.EncryptedData))
 		workspaceBlock := repoBlock
 		workspaceBlock.EncryptedData = []byte("workspace data")
-		workspaceBlock.Header.EncryptedDataSize = uint32(len(workspaceBlock.EncryptedData)) //nolint:gosec
+		workspaceBlock.Header.EncryptedDataSize = uint32(len(workspaceBlock.EncryptedData))
 
 		ok, err := repo.WriteBlock(repoBlock)
 		assert.NoError(err)
@@ -229,7 +229,7 @@ func TestFileStorageBlocks(t *testing.T) {
 			},
 			EncryptedData: []byte("block 1 data"),
 		}
-		block.Header.EncryptedDataSize = uint32(len(block.EncryptedData)) //nolint:gosec
+		block.Header.EncryptedDataSize = uint32(len(block.EncryptedData))
 		ok, err := sut.HasBlock(block.Header.BlockId)
 		assert.NoError(err)
 		assert.Equal(false, ok)
@@ -325,7 +325,7 @@ func TestFileStorageBlocks(t *testing.T) {
 			},
 			EncryptedData: make([]byte, MaxEncryptedBlockDataSize+1),
 		}
-		block.Header.EncryptedDataSize = uint32(len(block.EncryptedData)) //nolint:gosec
+		block.Header.EncryptedDataSize = uint32(len(block.EncryptedData))
 		_, err = sut.WriteBlock(block)
 		assert.Error(err, "block data too large")
 		_, err = sut.FS.Stat(sut.blockPath(block.Header.BlockId))

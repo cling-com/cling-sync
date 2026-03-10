@@ -220,7 +220,7 @@ func (c *HTTPStorageClient) Lock(ctx context.Context, name string) (func() error
 		return nil, lib.Errorf("failed to create lock file: got %d (%s)", resp.StatusCode, string(resp.Body))
 	}
 	token := string(resp.Body)
-	refreshCtx, refreshCancel := context.WithCancel(ctx)
+	refreshCtx, refreshCancel := context.WithCancel(ctx) //nolint:gosec
 	// Continuously extend the lock lease.
 	go func() {
 		ticker := time.NewTicker(min(LockLeaseMin/2, time.Second))
@@ -480,7 +480,7 @@ func (s *HTTPStorageServer) ReadControlFile(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	if _, err := w.Write(data); err != nil {
+	if _, err := w.Write(data); err != nil { //nolint:gosec
 		s.error(lib.WrapErrorf(err, "failed to write control file data"), w, http.StatusInternalServerError)
 		return
 	}
@@ -545,7 +545,15 @@ func (s *HTTPStorageServer) Lock(w http.ResponseWriter, r *http.Request) {
 			select {
 			case <-timer.C:
 				if err := unlock(); err != nil {
-					slog.Error("Failed to unlock expired lock", "error", err, "token", token, "name", name)
+					slog.Error( //nolint:gosec
+						"Failed to unlock expired lock",
+						"error",
+						err,
+						"token",
+						token,
+						"name",
+						name,
+					)
 				}
 				return
 			case <-handle.extend:
@@ -559,7 +567,7 @@ func (s *HTTPStorageServer) Lock(w http.ResponseWriter, r *http.Request) {
 				timer.Reset(LockLeaseMin)
 			case <-handle.done:
 				if err := unlock(); err != nil {
-					slog.Error("Failed to unlock lock", "error", err, "token", token, "name", name)
+					slog.Error("Failed to unlock lock", "error", err, "token", token, "name", name) //nolint:gosec
 				}
 				return
 			}
@@ -601,10 +609,10 @@ func (s *HTTPStorageServer) ExtendLock(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *HTTPStorageServer) error(wrappedError *lib.WrappedError, w http.ResponseWriter, status int) {
-	slog.Error("HTTP error", "error", wrappedError)
+	slog.Error("HTTP error", "error", wrappedError) //nolint:gosec
 	w.WriteHeader(status)
 	w.Header().Set("Content-Type", "text/plain")
-	if _, err := w.Write([]byte(wrappedError.Msg)); err != nil {
+	if _, err := w.Write([]byte(wrappedError.Msg)); err != nil { //nolint:gosec
 		slog.Error("Failed to write error response", "error", err)
 		return
 	}

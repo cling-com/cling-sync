@@ -655,7 +655,7 @@ func NewSut(t *testing.T) *Sut {
 
 	// Make sure the temporary directory can be removed.
 	err := filepath.WalkDir(tmpDir, func(path string, d os.DirEntry, err error) error {
-		_ = os.Chmod(path, 0o777) //nolint:gosec
+		_ = os.Chmod(path, 0o777)
 		return nil
 	})
 	assert.NoError(err, "failed to make temporary directory writable")

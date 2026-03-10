@@ -10,6 +10,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,7 +24,7 @@ import (
 // `srcFiles` is a list of files to compile and is passed to `go build`.
 func RunWasmTests(tb testing.TB, srcFiles ...string) {
 	tb.Helper()
-	if err := skipIfNodeJSNotInstalled(); err != nil {
+	if err := skipIfNodeJSNotInstalled(tb.Context()); err != nil {
 		tb.Skip(err.Error())
 	}
 	wasmPath := compile(tb, srcFiles)
@@ -59,7 +60,7 @@ func runNodeJS(tb testing.TB, wasmPath string) { //nolint:funlen
 		})()`
 
 	// Run the Node.js script from stdin and stream its output.
-	cmd := exec.Command("node", "-")
+	cmd := exec.CommandContext(tb.Context(), "node", "-")
 	cmd.Env = []string{"GOROOT=" + runtime.GOROOT(), "WASM_BINARY=" + wasmPath} //nolint:staticcheck
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -106,9 +107,9 @@ func runNodeJS(tb testing.TB, wasmPath string) { //nolint:funlen
 func compile(tb testing.TB, wasmScripts []string) string {
 	tb.Helper()
 	wasmPath := filepath.Join(tb.TempDir(), "main_test.wasm")
-	args := []string{"build", "-o", wasmPath, "./testwasm.go"}
+	args := []string{"build", "-o", wasmPath, "./testwasm.go"} //nolint:prealloc
 	args = append(args, wasmScripts...)
-	buildCmd := exec.Command("go", args...)
+	buildCmd := exec.CommandContext(tb.Context(), "go", args...)
 	buildCmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm") //nolint:forbidigo
 	if output, err := buildCmd.CombinedOutput(); err != nil {
 		tb.Fatalf("Failed to build Wasm: %v\n%s", err, output)
@@ -116,9 +117,9 @@ func compile(tb testing.TB, wasmScripts []string) string {
 	return wasmPath
 }
 
-func skipIfNodeJSNotInstalled() error {
+func skipIfNodeJSNotInstalled(ctx context.Context) error {
 	// Test if Node.js v22 is installed.
-	cmd := exec.Command("node", "--version")
+	cmd := exec.CommandContext(ctx, "node", "--version")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("Node.js not installed: %s", output) //nolint:staticcheck

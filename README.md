@@ -49,7 +49,7 @@ standard library with a few select `golang.org/x` dependencies should make it hi
 
 **Build the Command Line Interface (CLI) tool:**
 
-Install [Go](https://go.dev/doc/install) version 1.24.2 or later and run:
+Install [Go](https://go.dev/doc/install) version 1.26.1 or later and run:
 
     ./build.sh build cli
 

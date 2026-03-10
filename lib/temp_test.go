@@ -104,9 +104,9 @@ func TestTemp(t *testing.T) {
 		assert.NoError(err)
 		merged := readAllRevsisionTemp(t, temp, nil)
 		assert.Equal(2, len(merged))
-		names := []string{}
-		for _, entry := range merged {
-			names = append(names, entry.Path.String())
+		names := make([]string, len(merged))
+		for i, entry := range merged {
+			names[i] = entry.Path.String()
 		}
 		slices.Sort(names)
 		assert.Equal([]string{"some/dir/filea", "some/dir/fileb"}, names)
@@ -279,7 +279,7 @@ func BenchmarkRevisionTemp(b *testing.B) {
 	fs := td.NewFS(b)
 	sut := NewRevisionEntryTempWriter(fs, 16*1024) // Force chunk rotation.
 	for b.Loop() {
-		path := fmt.Sprintf("/%d/%d/%d", rand.Int(), rand.Int(), rand.Int()) //nolint:gosec
+		path := fmt.Sprintf("/%d/%d/%d", rand.Int(), rand.Int(), rand.Int())
 		_ = sut.Add(td.RevisionEntry(path, RevisionEntryAdd))
 	}
 	if b.N > 1000 {

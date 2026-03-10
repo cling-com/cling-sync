@@ -70,7 +70,7 @@ func (l *FileLock) Unlock() error {
 	}
 	f := l.f
 	l.f = nil
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_UN); err != nil {
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_UN); err != nil { //nolint:gosec
 		_ = f.Close()
 		return WrapErrorf(err, "failed to unlock %s", l.path)
 	}
@@ -84,11 +84,11 @@ func (l *FileLock) acquire() error {
 	if l.f != nil {
 		return WrapErrorf(ErrLockAlreadyAcquired, "lock %s is already acquired", l.path)
 	}
-	f, err := os.OpenFile(l.path, os.O_RDWR|os.O_CREATE, 0o600) //nolint:forbidigo
+	f, err := os.OpenFile(l.path, os.O_RDWR|os.O_CREATE, 0o600) //nolint:forbidigo,gosec
 	if err != nil {
 		return WrapErrorf(err, "failed to open lock file %s", l.path)
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil { //nolint:gosec
 		_ = f.Close()
 		return WrapErrorf(err, "failed to acquire lock %s", l.path)
 	}

@@ -102,7 +102,7 @@ func TestFileLockInterProcess(t *testing.T) { //nolint:paralleltest
 	readyPath := lockPath + ".ready"
 
 	// Run the test itself as a subprocess.
-	second := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestFileLockInterProcess$") //nolint:gosec
+	second := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestFileLockInterProcess$")
 	second.Env = append(os.Environ(), "LOCK_TEST_INTERPROCESS=1", "LOCK_TEST_LOCK_PATH="+lockPath)
 	second.Stdout = os.Stdout
 	second.Stderr = os.Stderr

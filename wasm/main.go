@@ -5,9 +5,8 @@ package main
 import (
 	"fmt"
 	"runtime"
-	"time"
-
 	"syscall/js"
+	"time"
 )
 
 func main() {

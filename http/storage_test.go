@@ -1,4 +1,4 @@
-//nolint:bodyclose,noctx
+//nolint:bodyclose
 package http
 
 import (
@@ -465,7 +465,7 @@ func testWriteBlock(t *testing.T, storage *lib.FileStorage, blockId lib.BlockId,
 		EncryptedDEK:      td.EncryptedKey(blockId.String()),
 		BlockId:           blockId,
 		Flags:             0,
-		EncryptedDataSize: uint32(len(data)), //nolint:gosec
+		EncryptedDataSize: uint32(len(data)),
 	}
 	_, err := storage.WriteBlock(lib.Block{Header: header, EncryptedData: data})
 	assert.NoError(err)
