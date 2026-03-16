@@ -45,9 +45,6 @@ func revisionNWayMerge(
 	for i, revision := range revisions {
 		readers[i] = NewRevisionReader(repository, revision)
 		re, err := readers[i].Read()
-		if errors.Is(err, io.EOF) {
-			continue
-		}
 		if err != nil {
 			return WrapErrorf(err, "failed to read revision")
 		}
