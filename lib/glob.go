@@ -306,7 +306,7 @@ func GlobMatch(pattern GlobPattern, text []byte, isDir bool) bool { //nolint:fun
 			p += 1
 			if p > pend {
 				// Trailing "*" matches everything.
-				return true
+				return !mustMatchDir || isDir
 			}
 			switch pattern[p] {
 			case '/':
@@ -324,7 +324,7 @@ func GlobMatch(pattern GlobPattern, text []byte, isDir bool) bool { //nolint:fun
 				p += 1
 				if p > pend {
 					// Trailing "**" matches everything.
-					return true
+					return !mustMatchDir || isDir
 				}
 				// Consume all consecutive asterisks.
 				for p < pend && pattern[p] == '*' {

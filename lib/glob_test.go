@@ -166,6 +166,11 @@ func TestGlobMatch(t *testing.T) {
 		g.non("li*/README.md", "lib/path.go")
 		g.yes("li*/", "lib")
 
+		// Trailing `*/` should only match directories, not files.
+		g.non("*/", "README.md", ".env")
+		// Trailing `**/` should only match directories, not files.
+		g.non("**/", "README.md", ".env")
+
 		g.yes("lib/*.go", "lib/path.go")
 		g.non("lib/*.go", "lib/README.md")
 		g.non("lib*.go", "lib/path.go") // * does not match slashes.
