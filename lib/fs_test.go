@@ -106,6 +106,42 @@ func TestMemoryFS(t *testing.T) {
 		assert.Equal(int64(3), sut.usedMemory)
 	})
 
+	t.Run("RemoveAll should not delete entries that merely share a prefix", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewMemoryFS(10000000)
+
+		assert.NoError(sut.Mkdir("foo"))
+		writeFile(t, sut, "foo/a.txt", "a")
+		assert.NoError(sut.Mkdir("foobar"))
+		writeFile(t, sut, "foobar/b.txt", "b")
+
+		err := sut.RemoveAll("foo")
+		assert.NoError(err)
+
+		// "foobar" and its contents should not have been deleted.
+		_, err = sut.Stat("foobar")
+		assert.NoError(err)
+		data, err := ReadFile(sut, "foobar/b.txt")
+		assert.NoError(err)
+		assert.Equal("b", string(data))
+	})
+
+	t.Run("Mkdir should not create orphaned entries on failure", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewMemoryFS(10000000)
+
+		// "a" exists but "a/b" does not, so Mkdir("a/b/c") should fail.
+		assert.NoError(sut.Mkdir("a"))
+		err := sut.Mkdir("a/b/c")
+		assert.ErrorIs(err, fs.ErrNotExist)
+
+		// "a/b/c" should not exist.
+		_, err = sut.Stat("a/b/c")
+		assert.ErrorIs(err, fs.ErrNotExist)
+	})
+
 	t.Run("Rename frees memory", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

@@ -248,14 +248,15 @@ func (f *MemoryFS) Mkdir(path string) error {
 		return fs.ErrExist
 	}
 	for {
-		f.create(path, 0o700|os.ModeDir)
-		path = filepath.Dir(path)
-		if path == "." {
+		parent := filepath.Dir(path)
+		if parent == "." {
 			break
 		}
-		if _, ok := f.files[path]; !ok {
+		if _, ok := f.files[parent]; !ok {
 			return fs.ErrNotExist
 		}
+		f.create(path, 0o700|os.ModeDir)
+		path = parent
 	}
 	f.create(path, 0o700|os.ModeDir)
 	return nil
@@ -298,7 +299,7 @@ func (f *MemoryFS) Remove(name string) error {
 func (f *MemoryFS) RemoveAll(path string) error {
 	toDelete := []string{}
 	for _, file := range f.files {
-		if strings.HasPrefix(file.name, path) {
+		if strings.HasPrefix(file.name, path+"/") || file.name == path {
 			toDelete = append(toDelete, file.name)
 		}
 	}
