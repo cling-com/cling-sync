@@ -34,6 +34,9 @@ func TestPath(t *testing.T) {
 		assert := NewAssert(t)
 		_, err := NewPath("C:/a/b/c")
 		assert.Error(err, "invalid path")
+		// A volume name without a trailing slash should not panic.
+		_, err = NewPath("C:")
+		assert.Error(err, "invalid path")
 	})
 
 	t.Run("Paths must not contain `//`", func(t *testing.T) {

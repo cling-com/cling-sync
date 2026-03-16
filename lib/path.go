@@ -22,7 +22,7 @@ func NewPath(path string) (Path, error) {
 	if strings.HasPrefix(path, "/") {
 		return Path{""}, Errorf("invalid path %q, must not start with `/`", path)
 	}
-	if len(path) > 1 && path[1] == ':' && path[2] == '/' {
+	if len(path) > 1 && path[1] == ':' {
 		return Path{""}, Errorf("invalid path %q, must not contain volume name", path)
 	}
 	if path != "" && strings.HasSuffix(path, "/") {
