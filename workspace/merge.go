@@ -371,12 +371,12 @@ func (m *Merger) makeDirsWritable(relPath string) error {
 			return lib.WrapErrorf(err, "failed to stat directory %s", parent)
 		}
 		m.directories[parent] = stat
-		parent = filepath.Dir(parent)
 		if stat.Mode()&0o700 != 0o700 {
 			if err := m.ws.FS.Chmod(parent, stat.Mode()|0o700); err != nil {
 				return lib.WrapErrorf(err, "failed to make directory %s writable", parent)
 			}
 		}
+		parent = filepath.Dir(parent)
 	}
 	return nil
 }
@@ -392,7 +392,7 @@ func (m *Merger) restoreDirFileModes() error {
 		fileInfo := m.directories[path]
 		mode := fileInfo.Mode()
 		if mode&0o700 != 0o700 {
-			if err := m.ws.FS.Chmod(path, mode|0o700); err != nil {
+			if err := m.ws.FS.Chmod(path, mode); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", mode, path)
 			}
 		}

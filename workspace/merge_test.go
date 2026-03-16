@@ -79,6 +79,46 @@ func TestMerge(t *testing.T) {
 		assert.ErrorIs(err, ErrUpToDate)
 	})
 
+	t.Run("Merge into non-writable directories", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		// First commit: create a file inside a directory.
+		w.Write("dir/a.txt", "a")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Merge into workspace 2.
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Make the directory non-writable in w2.
+		w2.Chmod("dir", 0o500)
+
+		// w1: add a new file inside the directory.
+		w.Write("dir/b.txt", "b")
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Merge the remote changes into w2.
+		// The merge should succeed despite `dir` being non-writable,
+		// because `makeDirsWritable` should temporarily make it writable.
+		// After the merge, `dir` should be restored to its original mode (0o500).
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Verify the new file was written.
+		assert.Equal("b", w2.Cat("dir/b.txt"))
+
+		// Verify the directory permissions were restored.
+		dirStat := w2.Stat("dir")
+		assert.Equal(fs.FileMode(0o500)|fs.ModeDir, dirStat.Mode(),
+			"directory permissions should be restored to 0o500 after merge")
+	})
+
 	t.Run("Nested directories are deleted depth-first", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
