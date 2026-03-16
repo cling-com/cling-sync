@@ -215,7 +215,7 @@ func (s *FileStorage) ReadBlock(blockId BlockId) ([]byte, BlockHeader, error) {
 	if int(header.EncryptedDataSize) != bytesRead {
 		return nil, BlockHeader{}, Errorf(
 			"read %d bytes, expected %d",
-			bytesRead-BlockHeaderSize,
+			bytesRead,
 			header.EncryptedDataSize,
 		)
 	}
