@@ -193,7 +193,7 @@ func (s *FileStorage) ReadBlock(blockId BlockId) ([]byte, BlockHeader, error) {
 	}
 	defer file.Close() //nolint:errcheck
 	headerBytes := make([]byte, BlockHeaderSize)
-	hearderRead, err := file.Read(headerBytes)
+	hearderRead, err := io.ReadFull(file, headerBytes)
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block header of %s", path)
 	}
@@ -205,7 +205,7 @@ func (s *FileStorage) ReadBlock(blockId BlockId) ([]byte, BlockHeader, error) {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block header of %s", path)
 	}
 	data := make([]byte, header.EncryptedDataSize)
-	bytesRead, err := file.Read(data)
+	bytesRead, err := io.ReadFull(file, data)
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block data %s", blockId)
 	}
@@ -231,7 +231,7 @@ func (s *FileStorage) ReadBlockHeader(blockId BlockId) (BlockHeader, error) {
 	}
 	defer file.Close() //nolint:errcheck
 	buf := [BlockHeaderSize]byte{}
-	n, err := file.Read(buf[:])
+	n, err := io.ReadFull(file, buf[:])
 	if err != nil {
 		return BlockHeader{}, WrapErrorf(err, "failed to read block header of file %s", path)
 	}
