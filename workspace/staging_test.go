@@ -250,4 +250,39 @@ func TestStagingCache(t *testing.T) {
 		assert.Equal(lib.ModeAndPerm(0o600), entry.Metadata.ModeAndPerm)
 		assert.Equal(td.SHA256("a"), entry.Metadata.FileHash)
 	})
+
+	t.Run("Cache detects same-size content changes", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		// Write a file with content "aaa" (3 bytes).
+		w.Write("a.txt", "aaa")
+
+		// Build the cache by running staging.
+		// This seeds the cache with the hash of "aaa".
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
+		assert.NoError(err)
+		finalized, err := staging.Finalize()
+		assert.NoError(err)
+		assert.Equal([]TestStagingEntryInfo{
+			{"a.txt", 0o600, td.SHA256("aaa")},
+		}, wstd.StagingEntryInfos(finalized))
+
+		// Now modify the file content with the SAME size (3 bytes).
+		// This changes ctime and mtime but not size.
+		w.Write("a.txt", "bbb")
+
+		// Run staging WITH cache. The cache has the hash for "aaa" but the file
+		// now contains "bbb" (same size). HasChanged() should detect the ctime
+		// change and the staging should return the hash of "bbb".
+		staging, err = NewStaging(w.Workspace.FS, lib.Path{}, nil, true, w.TempFS, wstd.StagingMonitor())
+		assert.NoError(err)
+		finalized, err = staging.Finalize()
+		assert.NoError(err)
+		assert.Equal([]TestStagingEntryInfo{
+			{"a.txt", 0o600, td.SHA256("bbb")},
+		}, wstd.StagingEntryInfos(finalized))
+	})
 }

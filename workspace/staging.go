@@ -455,7 +455,7 @@ func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs
 			return nil, lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}
 		if ok && existingEntry.Metadata.Size == fileInfo.Size() {
-			stagingEntry, err = NewStagingEntry(
+			newEntry, err := NewStagingEntry(
 				repoPath,
 				fileInfo,
 				existingEntry.Metadata.Size,
@@ -465,7 +465,8 @@ func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs
 			if err != nil {
 				return nil, lib.WrapErrorf(err, "failed to create cache entry for %s", localPath)
 			}
-			if !stagingEntry.HasChanged(existingEntry) {
+			if !newEntry.HasChanged(existingEntry) {
+				stagingEntry = newEntry
 				md := lib.NewFileMetadataFromFileInfo(
 					fileInfo,
 					existingEntry.Metadata.FileHash,
