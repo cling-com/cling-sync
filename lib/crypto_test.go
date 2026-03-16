@@ -38,6 +38,23 @@ func TestEncryptDecrypt(t *testing.T) {
 		_, err = Decrypt(ciphertext, cipher, ad, decrypted)
 		assert.Error(err, "message authentication failed")
 	})
+	t.Run("Decrypt rejects too-small dst buffer", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		key := RawKey([]byte("0123456789abcdef0123456789abcdef"))
+		cipher, err := NewCipher(key)
+		assert.NoError(err)
+		plaintext := "This is a test."
+		ad := []byte("Some associated data")
+		ciphertext := make([]byte, len(plaintext)+TotalCipherOverhead)
+		ciphertext, err = Encrypt([]byte(plaintext), cipher, ad, ciphertext)
+		assert.NoError(err)
+
+		// 10 bytes is too small.
+		tooSmall := make([]byte, 10)
+		_, err = Decrypt(ciphertext, cipher, ad, tooSmall)
+		assert.Error(err, "target buffer too small")
+	})
 }
 
 func TestDeriveUserKey(t *testing.T) {

@@ -108,7 +108,7 @@ func Decrypt(ciphertext []byte, cipher cryptoCipher.AEAD, associatedData []byte,
 		return nil, Errorf("payload too short")
 	}
 	nonce, encryptedData := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	plaintextSize := len(encryptedData) - TotalCipherOverhead
+	plaintextSize := len(ciphertext) - TotalCipherOverhead
 	if len(dst) < plaintextSize {
 		return nil, Errorf("target buffer too small, want %d, got %d", plaintextSize, len(dst))
 	}
