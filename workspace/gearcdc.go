@@ -63,15 +63,15 @@ func (g *GearCDC) Read() ([]byte, error) {
 	for {
 		if i == g.bufSize {
 			n, err := g.r.Read(g.buf)
-			if errors.Is(err, io.EOF) || n == 0 {
+			if err != nil && !errors.Is(err, io.EOF) {
+				return nil, lib.WrapErrorf(err, "failed to read from underlying reader")
+			}
+			if n == 0 {
 				if dstIndex > 0 {
 					// This is the last block, emit it.
 					break
 				}
 				return nil, io.EOF
-			}
-			if err != nil {
-				return nil, lib.WrapErrorf(err, "failed to read from underlying reader")
 			}
 			g.bufSize = n
 			i = 0

@@ -233,6 +233,46 @@ func TestGearCDCWithDefaults(t *testing.T) {
 	})
 }
 
+func TestGearCDCReaderReturnsDataWithEOF(t *testing.T) {
+	// io.Reader is allowed to return (n>0, io.EOF) on the final read.
+	// GearCDC must not drop those n bytes.
+	t.Parallel()
+	assert := lib.NewAssert(t)
+	input := []byte("hello world, this is a test of the gear cdc chunking algorithm")
+	r := &eofDataReader{data: input, done: false}
+	sut := NewGearCDC(r, (1<<3)-1, 10, 20)
+	var result []byte
+	for {
+		block, err := sut.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		assert.NoError(err)
+		result = append(result, block...)
+	}
+	assert.Equal(string(input), string(result))
+}
+
+// eofDataReader returns all data in a single Read call with io.EOF,
+// which is valid per the io.Reader contract.
+type eofDataReader struct {
+	data []byte
+	done bool
+}
+
+func (r *eofDataReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	if len(r.data) == 0 {
+		r.done = true
+		return n, io.EOF
+	}
+	return n, nil
+}
+
 func BenchmarkGearCDCWithDefaults(b *testing.B) {
 	b.SetBytes(100 * 1024 * 1024)
 	for b.Loop() {
