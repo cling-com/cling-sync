@@ -84,6 +84,9 @@ func UnmarshalRevision(r io.Reader) (*Revision, error) {
 	c.Author = br.ReadString()
 	br.Read(&c.Parent)
 	l := br.ReadLen()
+	if l <= 0 {
+		return nil, Errorf("invalid blocks length")
+	}
 	c.Blocks = make([]BlockId, l)
 	for i := range l {
 		br.Read(&c.Blocks[i])
