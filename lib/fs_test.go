@@ -142,6 +142,25 @@ func TestMemoryFS(t *testing.T) {
 		assert.ErrorIs(err, fs.ErrNotExist)
 	})
 
+	t.Run("ReadDir must not corrupt internal file names", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewMemoryFS(10000000)
+
+		assert.NoError(sut.Mkdir("a"))
+		writeFile(t, sut, "a/b.txt", "data")
+
+		// ReadDir returns entries with basenames, but must not mutate the
+		// internal full-path names stored in the FS.
+		_, err := sut.ReadDir("a")
+		assert.NoError(err)
+
+		// After ReadDir, the file should still be accessible by its full path.
+		stat, err := sut.Stat("a/b.txt")
+		assert.NoError(err)
+		assert.Equal("a/b.txt", stat.Name())
+	})
+
 	t.Run("Rename frees memory", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

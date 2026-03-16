@@ -235,9 +235,9 @@ func (f *MemoryFS) ReadDir(path string) ([]fs.DirEntry, error) {
 	entries := []fs.DirEntry{}
 	for name, file := range f.files {
 		if filepath.Dir(name) == path && name != path {
-			entry := file
+			entry := *file
 			entry.name = strings.TrimPrefix(name, path+"/")
-			entries = append(entries, entry)
+			entries = append(entries, &entry)
 		}
 	}
 	return entries, nil
