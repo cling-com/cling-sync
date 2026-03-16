@@ -270,7 +270,87 @@ func TestTempCache(t *testing.T) {
 			assert.Equal(false, ok, path)
 			assert.Nil(entry, path)
 		}
-		assert.Equal(4, cache.CacheMisses)
+		// The cache size is only two, so some more cache misses happened.
+		assert.Equal(7, cache.CacheMisses)
+	})
+
+	t.Run("LRU eviction respects maxChunksInCache", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		fs := td.NewFS(t)
+		sut := NewRevisionEntryTempWriter(fs, 500)
+		add := func(path string, mode ModeAndPerm) {
+			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})
+			assert.NoError(err)
+		}
+
+		add("b.txt", 0)
+		add("y.txt", 0)
+		add("sub", ModeDir)
+		add("sub/a.txt", 0)
+		add("sub/y.txt", 0)
+		add("sub/sub", ModeDir)
+		add("sub/sub/a.txt", 0)
+		add("sub/sub/y.txt", 0)
+
+		temp, err := sut.Finalize()
+		assert.NoError(err)
+		assert.Equal(4, temp.Chunks())
+
+		loadedChunks := func(c *TempCache[RevisionEntry]) []int {
+			loaded := []int{}
+			for i, chunk := range c.cache {
+				if chunk != nil {
+					loaded = append(loaded, i)
+				}
+			}
+			return loaded
+		}
+
+		// maxChunksInCache = 2, so at most 2 chunks should be in memory.
+		cache, err := NewRevisionEntryTempCache(temp, 2)
+		assert.NoError(err)
+		assert.Equal([]int{}, loadedChunks(cache))
+
+		// Figure out which chunk each entry lives in by looking up three
+		// entries that must reside in different chunks.
+		chunkOf := func(path string, isDir bool) int {
+			key := PathCompareString(Path{path}, isDir)
+			for i := len(cache.firstEntries) - 1; i >= 0; i-- {
+				if strings.Compare(key, cache.firstEntries[i]) >= 0 {
+					return i
+				}
+			}
+			return -1
+		}
+
+		chunkA := chunkOf("b.txt", false)
+		chunkB := chunkOf("sub/a.txt", false)
+		chunkC := chunkOf("sub/sub/a.txt", false)
+		// Sanity: all three must be in distinct chunks.
+		assert.Equal(true, chunkA != chunkB && chunkB != chunkC && chunkA != chunkC,
+			"entries must be in 3 distinct chunks: %d, %d, %d", chunkA, chunkB, chunkC)
+
+		// Load first entry - one chunk loaded.
+		_, ok, err := cache.Get(PathCompareString(Path{"sub/sub/a.txt"}, false))
+		assert.NoError(err)
+		assert.Equal(true, ok)
+		assert.Equal([]int{chunkC}, loadedChunks(cache))
+
+		// Load second entry in a different chunk - two chunks loaded (at the limit).
+		_, ok, err = cache.Get(PathCompareString(Path{"b.txt"}, false))
+		assert.NoError(err)
+		assert.Equal(true, ok)
+		loaded := loadedChunks(cache)
+		assert.Equal(2, len(loaded))
+
+		// Load third entry in yet another chunk - must evict one, keeping exactly 2.
+		_, ok, err = cache.Get(PathCompareString(Path{"sub/a.txt"}, false))
+		assert.NoError(err)
+		assert.Equal(true, ok)
+		assert.Equal(2, len(loadedChunks(cache)),
+			"at most maxChunksInCache (2) chunks should be loaded, got: %v",
+			loadedChunks(cache))
 	})
 }
 

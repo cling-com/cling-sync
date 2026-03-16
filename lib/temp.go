@@ -355,6 +355,9 @@ func (tc *TempCache[T]) Get(key string) (*T, bool, error) {
 			// Evict the oldest chunk.
 			oldest := -1
 			for i, lastAccessed := range tc.lastAccessed {
+				if tc.cache[i] == nil {
+					continue
+				}
 				if oldest < 0 || lastAccessed < tc.lastAccessed[oldest] {
 					oldest = i
 				}
