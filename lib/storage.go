@@ -79,7 +79,10 @@ func (s *FileStorage) Init(config Toml, headerComment string) error {
 	}
 	purposeDir := filepath.Join(".cling", string(s.Purpose))
 	_, err = s.FS.Stat(purposeDir)
-	if !errors.Is(err, fs.ErrNotExist) {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return WrapErrorf(err, "failed to stat %s", purposeDir)
+	}
+	if err == nil {
 		return ErrStorageAlreadyExists
 	}
 	err = s.FS.MkdirAll(purposeDir)
