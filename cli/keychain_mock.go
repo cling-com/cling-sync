@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -15,7 +16,7 @@ var (
 	ErrKeychainEntryAlreadyExists = lib.Errorf("keychain entry already exists")
 )
 
-func AddKeychainEntry(service, account, secret string) error {
+func AddKeychainEntry(ctx context.Context, service, account, secret string) error {
 	entries, err := readKeychainEntries()
 	if err != nil {
 		return err
@@ -28,7 +29,7 @@ func AddKeychainEntry(service, account, secret string) error {
 	return writeKeychainEntries(entries)
 }
 
-func GetKeychainEntry(service, account string) (string, error) {
+func GetKeychainEntry(ctx context.Context, service, account string) (string, error) {
 	entries, err := readKeychainEntries()
 	if err != nil {
 		return "", err
@@ -40,7 +41,7 @@ func GetKeychainEntry(service, account string) (string, error) {
 	return entry, nil
 }
 
-func DeleteKeychainEntry(service, account string) error {
+func DeleteKeychainEntry(ctx context.Context, service, account string) error {
 	entries, err := readKeychainEntries()
 	if err != nil {
 		return err

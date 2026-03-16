@@ -12,6 +12,7 @@ package main
 import "C"
 
 import (
+	"context"
 	"unsafe"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -57,7 +58,7 @@ func buildQueryDict(service, account string) C.CFMutableDictionaryRef {
 	return query
 }
 
-func AddKeychainEntry(service, account, secret string) error {
+func AddKeychainEntry(ctx context.Context, service, account, secret string) error {
 	query := buildQueryDict(service, account)
 	defer C.CFRelease(C.CFTypeRef(query))
 
@@ -75,7 +76,7 @@ func AddKeychainEntry(service, account, secret string) error {
 	return nil
 }
 
-func GetKeychainEntry(service, account string) (string, error) {
+func GetKeychainEntry(ctx context.Context, service, account string) (string, error) {
 	query := buildQueryDict(service, account)
 	defer C.CFRelease(C.CFTypeRef(query))
 
@@ -101,7 +102,7 @@ func GetKeychainEntry(service, account string) (string, error) {
 	return string(goBytes), nil
 }
 
-func DeleteKeychainEntry(service, account string) error {
+func DeleteKeychainEntry(ctx context.Context, service, account string) error {
 	query := buildQueryDict(service, account)
 	defer C.CFRelease(C.CFTypeRef(query))
 

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os/exec"
 	"strings"
 
@@ -15,12 +16,13 @@ var (
 	ErrKeychainEntryAlreadyExists = lib.Errorf("keychain entry already exists")
 )
 
-func AddKeychainEntry(service, account, secret string) error {
-	_, err := GetKeychainEntry(service, account)
+func AddKeychainEntry(ctx context.Context, service, account, secret string) error {
+	_, err := GetKeychainEntry(ctx, service, account)
 	if err == nil {
 		return ErrKeychainEntryAlreadyExists
 	}
-	cmd := exec.Command(
+	cmd := exec.CommandContext(
+		ctx,
 		"secret-tool",
 		"store",
 		"--label",
@@ -42,8 +44,8 @@ func AddKeychainEntry(service, account, secret string) error {
 	return nil
 }
 
-func GetKeychainEntry(service, account string) (string, error) {
-	cmd := exec.Command("secret-tool", "lookup", "service", service, "account", account)
+func GetKeychainEntry(ctx context.Context, service, account string) (string, error) {
+	cmd := exec.CommandContext(ctx, "secret-tool", "lookup", "service", service, "account", account)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -60,8 +62,8 @@ func GetKeychainEntry(service, account string) (string, error) {
 	return string(output), nil
 }
 
-func DeleteKeychainEntry(service, account string) error {
-	cmd := exec.Command("secret-tool", "clear", "service", service, "account", account)
+func DeleteKeychainEntry(ctx context.Context, service, account string) error {
+	cmd := exec.CommandContext(ctx, "secret-tool", "clear", "service", service, "account", account)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

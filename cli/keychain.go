@@ -3,6 +3,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/flunderpero/cling-sync/lib"
 )
 
@@ -11,14 +13,14 @@ var (
 	ErrKeychainEntryAlreadyExists = lib.Errorf("keychain entry already exists")
 )
 
-func AddKeychainEntry(service, account, secret string) error {
+func AddKeychainEntry(ctx context.Context, service, account, secret string) error {
 	return lib.Errorf("not implemented")
 }
 
-func GetKeychainEntry(service, account string) (string, error) {
+func GetKeychainEntry(ctx context.Context, service, account string) (string, error) {
 	return "", lib.Errorf("not implemented")
 }
 
-func DeleteKeychainEntry(service, account string) error {
+func DeleteKeychainEntry(ctx context.Context, service, account string) error {
 	return lib.Errorf("not implemented")
 }

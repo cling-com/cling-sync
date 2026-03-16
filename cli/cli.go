@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -1007,10 +1008,14 @@ func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to create cipher")
 		}
-		err = AddKeychainEntry("com.cling.sync", string(workspace.RemoteRepository), encKeyStr)
+		err = AddKeychainEntry(context.Background(), "com.cling.sync", string(workspace.RemoteRepository), encKeyStr)
 		if errors.Is(err, ErrKeychainEntryAlreadyExists) {
 			// Use the existing key to encrypt the RepositoryKeys.
-			encKeyStr, err = GetKeychainEntry("com.cling.sync", string(workspace.RemoteRepository))
+			encKeyStr, err = GetKeychainEntry(
+				context.Background(),
+				"com.cling.sync",
+				string(workspace.RemoteRepository),
+			)
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to get encryption key from keychain")
 			}
@@ -1144,7 +1149,7 @@ func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Rep
 		return nil, err
 	}
 	if workspace.HasRepositoryKeys() {
-		encKeyStr, err := GetKeychainEntry("com.cling.sync", string(workspace.RemoteRepository))
+		encKeyStr, err := GetKeychainEntry(context.Background(), "com.cling.sync", string(workspace.RemoteRepository))
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to get encryption key from keychain")
 		}
