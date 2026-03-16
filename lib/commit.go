@@ -103,10 +103,12 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	}
 	defer sorted.Remove() //nolint:errcheck
 	if c.ensureDirs != nil {
-		sorted, err = c.appendEnsureDirs(sorted)
+		withEnsureDirs, err := c.appendEnsureDirs(sorted)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to append ensured dirs")
 		}
+		defer withEnsureDirs.Remove() //nolint:errcheck
+		sorted = withEnsureDirs
 	}
 	if sorted.Chunks() == 0 {
 		return RevisionId{}, ErrEmptyCommit
