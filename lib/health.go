@@ -48,7 +48,7 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 				break
 			}
 			if err != nil {
-				return WrapErrorf(err, "failed to read revision entry #%d or revision %s", entryCount, revisionId)
+				return WrapErrorf(err, "failed to read revision entry #%d of revision %s", entryCount, revisionId)
 			}
 			opts.Monitor.OnRevisionEntry(entry)
 			entryCount++

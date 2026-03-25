@@ -878,15 +878,17 @@ func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Verbose    bool
 		NoProgress bool
 		Data       bool
+		Repository string
 	}{}
 	flags := flag.NewFlagSet("check", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Data, "data", false, "Check all file data blocks of all paths in all revisions")
+	flags.StringVar(&args.Repository, "repository", "", "Check this repository instead of the workspace repository")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s check\n\n", appName)
-		fmt.Fprint(os.Stderr, "Check the health of the repository.\n")
+		fmt.Fprint(os.Stderr, "Check the health of a repository.\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -900,9 +902,21 @@ func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("too many positional arguments")
 	}
-	repository, err := openRepository(workspace, passphraseFromStdin)
-	if err != nil {
-		return err
+	var repository *lib.Repository
+	if args.Repository != "" {
+		storage, err := openStorage(args.Repository)
+		if err != nil {
+			return err
+		}
+		repository, err = openRepositoryWithPassphrase(storage, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+	} else {
+		repository, err = openRepository(workspace, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
 	}
 	monitor := NewHeathCheckMonitor(args.Verbose, args.NoProgress)
 	err = lib.CheckHealth(repository, lib.HealthCheckOptions{Monitor: monitor, DataBlocks: args.Data})
@@ -944,6 +958,116 @@ func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		monitor.MetadataBytes,
 		dataSize,
 	)
+	return nil
+}
+
+func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
+	workspace, err := openWorkspace()
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open workspace")
+	}
+	defer workspace.Close() //nolint:errcheck
+	args := struct {        //nolint:exhaustruct
+		Help       bool
+		Verbose    bool
+		NoProgress bool
+	}{}
+	flags := flag.NewFlagSet("sync-repo", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.BoolVar(&args.Verbose, "verbose", false, "Show detailed progress")
+	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s sync-repo [command]\n\n", appName)
+		fmt.Fprint(os.Stderr, "Sync this repository to another one.\n\n")
+		fmt.Fprint(os.Stderr, "Commands:\n")
+		fmt.Fprint(os.Stderr, "  init [dir]\n")
+		fmt.Fprint(os.Stderr, "        Initialize a new repository at `dir` that can then be used to sync\n")
+		fmt.Fprint(os.Stderr, "        this repository to.\n")
+		fmt.Fprint(os.Stderr, "  run   [repository]\n")
+		fmt.Fprintf(os.Stderr, "       Run the synchronization. All new data of this repository will be\n")
+		fmt.Fprintf(os.Stderr, "       copied to the target `repository`.\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	if len(flags.Args()) == 0 {
+		flags.Usage()
+		return lib.Errorf("missing command")
+	}
+	switch flags.Arg(0) {
+	case "init":
+		if len(flags.Args()) < 2 {
+			return lib.Errorf("missing target directory")
+		}
+		if len(flags.Args()) > 2 {
+			return lib.Errorf("too many positional arguments")
+		}
+		src, err := openRepositoryStorage(workspace)
+		if err != nil {
+			return err
+		}
+		toml, err := src.Open()
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to open source storage")
+		}
+		targetRepositoryPath, err := filepath.Abs(flags.Arg(1))
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
+		}
+		_, err = os.Stat(targetRepositoryPath)
+		if err == nil {
+			return lib.Errorf("target directory already exists")
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return lib.WrapErrorf(err, "failed to stat %s", targetRepositoryPath)
+		}
+		if err := os.MkdirAll(targetRepositoryPath, 0o700); err != nil {
+			return lib.WrapErrorf(err, "failed to create target directory %s", targetRepositoryPath)
+		}
+		storage, err := lib.NewFileStorage(lib.NewRealFS(targetRepositoryPath), lib.StoragePurposeRepository)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to create storage")
+		}
+		rootRevisionId := lib.RevisionId{}
+		if !rootRevisionId.IsRoot() {
+			return lib.Errorf("root revision ID is not zero")
+		}
+		if err := storage.Init(toml, lib.RepositoryConfigHeaderComment); err != nil {
+			return lib.WrapErrorf(err, "failed to initialize target repository")
+		}
+		if err := lib.WriteRef(storage, "head", rootRevisionId); err != nil {
+			return lib.WrapErrorf(err, "failed to write head reference")
+		}
+	case "run":
+		if len(flags.Args()) < 2 {
+			return lib.Errorf("missing target repository")
+		}
+		if len(flags.Args()) > 2 {
+			return lib.Errorf("too many positional arguments")
+		}
+		src, err := openRepository(workspace, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+		dst, err := openStorage(flags.Arg(1))
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to open target storage")
+		}
+		mon := NewSyncRepoMonitor(args.Verbose, args.NoProgress)
+		opts := lib.RepositorySyncOptions{mon}
+		if err := lib.SyncRepository(context.Background(), src, dst, opts); err != nil {
+			return lib.WrapErrorf(err, "failed to sync")
+		}
+		fmt.Println("Done.")
+	default:
+		return lib.Errorf("unknown command: %s", flags.Arg(0))
+	}
 	return nil
 }
 
@@ -1214,13 +1338,17 @@ func readPassphrase(passphraseFromStdin bool) ([]byte, error) {
 }
 
 func openRepositoryStorage(workspace *ws.Workspace) (lib.Storage, error) { //nolint:ireturn
-	if clingHTTP.IsHTTPStorageUIR(string(workspace.RemoteRepository)) {
+	return openStorage(string(workspace.RemoteRepository))
+}
+
+func openStorage(repository string) (lib.Storage, error) { //nolint:ireturn
+	if clingHTTP.IsHTTPStorageUIR(repository) {
 		return clingHTTP.NewHTTPStorageClient(
-			string(workspace.RemoteRepository),
+			repository,
 			clingHTTP.NewDefaultHTTPClient(http.DefaultClient),
 		), nil
 	}
-	storage, err := lib.NewFileStorage(lib.NewRealFS(string(workspace.RemoteRepository)), lib.StoragePurposeRepository)
+	storage, err := lib.NewFileStorage(lib.NewRealFS(repository), lib.StoragePurposeRepository)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
 	}
@@ -1269,6 +1397,7 @@ func main() { //nolint:funlen
 		fmt.Fprint(os.Stderr, "  security	  See and configure security settings\n")
 		fmt.Fprint(os.Stderr, "  serve        Serve a repository over HTTP\n")
 		fmt.Fprint(os.Stderr, "  status       Show repository status\n")
+		fmt.Fprint(os.Stderr, "  sync-repo    Sync repository to another repository")
 		fmt.Fprint(os.Stderr, "\nGlobal flags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nRun '%s <command> --help' for more information on a command.\n", appName)
@@ -1316,6 +1445,8 @@ func main() { //nolint:funlen
 		err = ServeCmd(argv)
 	case "status":
 		err = StatusCmd(argv, args.PassphraseFromStdin)
+	case "sync-repo":
+		err = SyncRepoCmd(argv, args.PassphraseFromStdin)
 	case "":
 		flag.Usage()
 		os.Exit(0)

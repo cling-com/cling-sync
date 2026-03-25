@@ -34,6 +34,31 @@ func (t Toml) GetIntValue(section string, key string) (int, bool) {
 	return 0, false
 }
 
+func (t Toml) Eq(other Toml) bool {
+	if t == nil || other == nil {
+		return t == nil && other == nil
+	}
+	if len(t) != len(other) {
+		return false
+	}
+	for section, kvs := range t {
+		otherKvs, ok := other[section]
+		if !ok {
+			return false
+		}
+		if len(kvs) != len(otherKvs) {
+			return false
+		}
+		for key, value := range kvs {
+			otherValue, ok := otherKvs[key]
+			if !ok || value != otherValue {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // Sections and keys within sections are sorted alphabetically.
 func WriteToml(dst io.Writer, headerComment string, toml Toml) error {
 	if headerComment != "" {

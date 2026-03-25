@@ -44,6 +44,66 @@ key3 = "value3"
 	})
 }
 
+func TestTomlEq(t *testing.T) {
+	t.Parallel()
+	t.Run("Nil", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		assert.Equal(true, Toml(nil).Eq(nil))
+		assert.Equal(false, Toml(nil).Eq(Toml{}))
+		assert.Equal(false, Toml{}.Eq(nil))
+	})
+
+	t.Run("Equal with different map order", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		a := Toml{
+			"section2": {
+				"key3": "value3",
+			},
+			"section1": {
+				"key2": "value2",
+				"key1": "value1",
+			},
+		}
+		b := Toml{
+			"section1": {
+				"key1": "value1",
+				"key2": "value2",
+			},
+			"section2": {
+				"key3": "value3",
+			},
+		}
+		assert.Equal(true, a.Eq(b))
+		assert.Equal(true, b.Eq(a))
+	})
+
+	t.Run("Different value", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		a := Toml{"section": {"key": "value1"}}
+		b := Toml{"section": {"key": "value2"}}
+		assert.Equal(false, a.Eq(b))
+	})
+
+	t.Run("Different key", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		a := Toml{"section": {"key1": "value"}}
+		b := Toml{"section": {"key2": "value"}}
+		assert.Equal(false, a.Eq(b))
+	})
+
+	t.Run("Different section", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		a := Toml{"section1": {"key": "value"}}
+		b := Toml{"section2": {"key": "value"}}
+		assert.Equal(false, a.Eq(b))
+	})
+}
+
 func TestRecoveryCode(t *testing.T) {
 	t.Parallel()
 	t.Run("Happy path", func(t *testing.T) {

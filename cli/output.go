@@ -399,6 +399,94 @@ func (m *HeathCheckMonitor) isProgress() bool {
 	return !m.Verbose && !m.NoProgress && IsTerm(os.Stderr)
 }
 
+type SyncRepoMonitor struct {
+	Verbose       bool
+	NoProgress    bool
+	Revisions     int
+	Paths         int
+	Blocks        int
+	Bytes         int64
+	startTime     time.Time
+	revisionEntry *lib.RevisionEntry
+}
+
+func NewSyncRepoMonitor(verbose, noProgress bool) *SyncRepoMonitor {
+	return &SyncRepoMonitor{ //nolint:exhaustruct
+		Verbose:    verbose,
+		NoProgress: noProgress,
+	}
+}
+
+func (m *SyncRepoMonitor) OnBeforeUpdateDstHead(newHead lib.RevisionId) {
+	clearLine()
+	fmt.Printf("Updating target repository head to %s\n", newHead)
+}
+
+func (m *SyncRepoMonitor) OnRevisionStart(revisionId lib.RevisionId) {
+	m.revisionEntry = nil
+	if m.startTime.IsZero() {
+		m.startTime = time.Now()
+	}
+	m.Revisions++
+	m.progress()
+	if !m.Verbose {
+		return
+	}
+	fmt.Printf("revision %s\n", revisionId)
+}
+
+func (m *SyncRepoMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
+	m.revisionEntry = entry
+	m.Paths++
+	m.progress()
+	if !m.Verbose {
+		return
+	}
+	fmt.Printf("  path     %s (%s)\n", entry.Path, entry.Type)
+}
+
+func (m *SyncRepoMonitor) OnCopyBlock(blockId lib.BlockId, existed bool, length int) {
+	if !existed {
+		m.Blocks += 1
+		m.Bytes += int64(length)
+	}
+	m.progress()
+	if !m.Verbose {
+		return
+	}
+	if m.revisionEntry != nil {
+		fmt.Print("  ")
+	}
+	fmt.Printf("  block  %s\n", blockId)
+}
+
+func (m *SyncRepoMonitor) Close() {
+	if !m.isProgress() {
+		return
+	}
+	clearLine()
+}
+
+func (m *SyncRepoMonitor) progress() {
+	if !m.isProgress() {
+		return
+	}
+	var sb strings.Builder
+	mbs := (float64(m.Bytes) / float64(time.Since(m.startTime).Seconds()))
+	fmt.Fprintf(&sb, "%d revisions, %d path entries, %d unique blocks, %s at %s/s",
+		m.Revisions,
+		m.Paths,
+		m.Blocks,
+		ws.FormatBytes(m.Bytes),
+		ws.FormatBytes(int64(mbs)))
+	clearLine()
+	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
+}
+
+func (m *SyncRepoMonitor) isProgress() bool {
+	return !m.Verbose && !m.NoProgress && IsTerm(os.Stderr)
+}
+
 func clearLine() {
 	cols, _, err := term.GetSize(int(os.Stderr.Fd())) //nolint:gosec
 	if err != nil {

@@ -12,11 +12,27 @@ import (
 )
 
 const (
-	MaxBlockSize              = 8 * 1024 * 1024
-	BlockHeaderSize           = 96
-	MaxEncryptedBlockDataSize = MaxBlockSize - BlockHeaderSize
-	MaxBlockDataSize          = MaxEncryptedBlockDataSize - TotalCipherOverhead
+	MaxBlockSize               = 8 * 1024 * 1024
+	BlockHeaderSize            = 96
+	MaxEncryptedBlockDataSize  = MaxBlockSize - BlockHeaderSize
+	MaxBlockDataSize           = MaxEncryptedBlockDataSize - TotalCipherOverhead
+	UpdateHeadRevisionLockName = "head"
 )
+
+//nolint:gochecknoglobals
+var RepositoryConfigHeaderComment = strings.Trim(`
+DO NOT DELETE OR CHANGE THIS FILE.
+
+This file contains the configuration of your cling repository including
+the master key information.
+You need your passphrase to unlock the repository so this file in itself
+is not enough to access your data. But without this file all your data is
+lost. Forever.
+
+So please back this file up. 
+Copy it to a secure place (a password manager might be a good choice) or 
+even print it out and keep it somewhere safe.
+`, "\n ")
 
 type BlockId Sha256Hmac
 
@@ -327,7 +343,7 @@ func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
 			return RevisionId{}, Errorf("block %s does not exist", blockId)
 		}
 	}
-	unlock, err := r.storage.Lock(context.Background(), "head")
+	unlock, err := r.storage.Lock(context.Background(), UpdateHeadRevisionLockName)
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to create lock")
 	}
@@ -475,20 +491,7 @@ func createRepositoryConfig(masterKeyInfo MasterKeyInfo) (Toml, string) {
 			"version": fmt.Sprintf("%d", StorageVersion),
 		},
 	}
-	headerComment := strings.Trim(`
-DO NOT DELETE OR CHANGE THIS FILE.
-
-This file contains the configuration of your cling repository including
-the master key information.
-You need your passphrase to unlock the repository so this file in itself
-is not enough to access your data. But without this file all your data is
-lost. Forever.
-
-So please back this file up. 
-Copy it to a secure place (a password manager might be a good choice) or 
-even print it out and keep it somewhere safe.
-`, "\n ")
-	return toml, headerComment
+	return toml, RepositoryConfigHeaderComment
 }
 
 func MarshalRepositoryKeys(keys *RepositoryKeys, w io.Writer) error {

@@ -164,7 +164,7 @@ func (a Assert) Calls(expected []MockCall, calls []MockCall, msg ...any) {
 		a.tb.Fatalf("%sexpected %d calls, got %d\n%s", details(msg), len(expected), len(calls), callsStr.String())
 	}
 	for i, call := range calls {
-		a.Equal(expected[i], call, msg...)
+		a.Equal(expected[i], call, msg...) //nolint:gosec
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -210,6 +211,54 @@ func TestHappyPath(t *testing.T) {
 		assert.Contains(check, "Repository is healthy")
 		assert.Contains(check, "5 revisions")
 	}
+}
+
+func TestSyncRepoHappyPath(t *testing.T) {
+	sut := NewSut(t)
+	assert := sut.assert
+
+	t.Log("Create repository history")
+	{
+		sut.Write("a.txt", "a")
+		sut.Write("dir/b.txt", "b")
+		sut.ClingSync("merge", "--no-progress", "--message", "first commit")
+
+		sut.Write("a.txt", "aa")
+		sut.Write("c.txt", "c")
+		sut.Rm("dir/b.txt")
+		sut.ClingSync("merge", "--no-progress", "--message", "second commit")
+	}
+
+	t.Log("Initialize sync target repository")
+	sut.ClingSync("sync-repo", "init", "../sync-target")
+
+	t.Log("Run repository sync")
+	sut.ClingSync("sync-repo", "run", "../sync-target")
+
+	srcStorage, err := lib.NewFileStorage(lib.NewRealFS("../repository"), lib.StoragePurposeRepository)
+	assert.NoError(err)
+	dstStorage, err := lib.NewFileStorage(lib.NewRealFS("../sync-target"), lib.StoragePurposeRepository)
+	assert.NoError(err)
+	srcRepo, err := lib.OpenRepository(srcStorage, []byte(passphrase))
+	assert.NoError(err)
+	dstRepo, err := lib.OpenRepository(dstStorage, []byte(passphrase))
+	assert.NoError(err)
+
+	assert.Equal(sut.RepositoryHead(), headFromRepository(t, dstRepo))
+	assertSameRepositoryHistory(t, srcRepo, dstRepo)
+	assertSameRepositoryFS(t, "../repository", "../sync-target")
+
+	t.Log("Add another commit")
+	{
+		sut.Write("a.txt", "aaa")
+		sut.Write("dir/d.txt", "d")
+		sut.ClingSync("merge", "--no-progress", "--message", "third commit")
+	}
+	t.Log("Run repository sync")
+	sut.ClingSync("sync-repo", "run", "../sync-target")
+	assert.Equal(sut.RepositoryHead(), headFromRepository(t, dstRepo))
+	assertSameRepositoryHistory(t, srcRepo, dstRepo)
+	assertSameRepositoryFS(t, "../repository", "../sync-target")
 }
 
 func TestChmodChtimeChown(t *testing.T) {
@@ -809,6 +858,97 @@ func (s *Sut) Touch(path string, mtime time.Time) {
 func gray(s string) string {
 	// todo: Ignore color codes in CI for example.
 	return "\033[90m" + s + "\033[0m"
+}
+
+func headFromRepository(t *testing.T, repo *lib.Repository) string {
+	t.Helper()
+	assert := lib.NewAssert(t)
+	head, err := repo.Head()
+	assert.NoError(err)
+	return head.String()
+}
+
+func assertSameRepositoryHistory(t *testing.T, src, dst *lib.Repository) {
+	t.Helper()
+	assert := lib.NewAssert(t)
+	srcRevisionId, err := src.Head()
+	assert.NoError(err)
+	dstRevisionId, err := dst.Head()
+	assert.NoError(err)
+	assert.Equal(srcRevisionId, dstRevisionId)
+	for !srcRevisionId.IsRoot() {
+		srcRevision, err := src.ReadRevision(srcRevisionId)
+		assert.NoError(err)
+		dstRevision, err := dst.ReadRevision(dstRevisionId)
+		assert.NoError(err)
+		assert.Equal(srcRevision, dstRevision)
+		srcRevisionId = srcRevision.Parent
+		dstRevisionId = dstRevision.Parent
+	}
+	assert.Equal(true, dstRevisionId.IsRoot())
+}
+
+func assertSameRepositoryFS(t *testing.T, srcRoot, dstRoot string) {
+	t.Helper()
+	assert := lib.NewAssert(t)
+	srcPaths := []string{}
+	dstPaths := []string{}
+	srcModes := map[string]os.FileMode{}
+	dstModes := map[string]os.FileMode{}
+	err := filepath.WalkDir(srcRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcRoot, path)
+		if err != nil {
+			return err
+		}
+		if rel == ".cling/repository/locks" {
+			return filepath.SkipDir
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		srcPaths = append(srcPaths, rel)
+		srcModes[rel] = info.Mode()
+		return nil
+	})
+	assert.NoError(err)
+	err = filepath.WalkDir(dstRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dstRoot, path)
+		if err != nil {
+			return err
+		}
+		if rel == ".cling/repository/locks" {
+			return filepath.SkipDir
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		dstPaths = append(dstPaths, rel)
+		dstModes[rel] = info.Mode()
+		return nil
+	})
+	assert.NoError(err)
+	sort.Strings(srcPaths)
+	sort.Strings(dstPaths)
+	assert.Equal(srcPaths, dstPaths)
+	for _, rel := range srcPaths {
+		assert.Equal(srcModes[rel], dstModes[rel], rel)
+		if srcModes[rel].IsDir() {
+			continue
+		}
+		srcData, err := os.ReadFile(filepath.Join(srcRoot, rel))
+		assert.NoError(err)
+		dstData, err := os.ReadFile(filepath.Join(dstRoot, rel))
+		assert.NoError(err)
+		assert.Equal(srcData, dstData, rel)
+	}
 }
 
 func head(s string) string {
