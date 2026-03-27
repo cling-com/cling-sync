@@ -139,16 +139,19 @@ func NewTestCpMonitor(exists CpOnExists) *TestCpMonitor {
 	return &TestCpMonitor{Exists: exists} //nolint:exhaustruct
 }
 
-func (m *TestCpMonitor) OnStart(entry *lib.RevisionEntry, targetPath string) {
+func (m *TestCpMonitor) OnStart(entry *lib.RevisionEntry, targetPath string) error {
 	m.OnStartCalls = append(m.OnStartCalls, entry)
+	return nil
 }
 
-func (m *TestCpMonitor) OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte) {
+func (m *TestCpMonitor) OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte) error {
 	m.OnWriteCalls = append(m.OnWriteCalls, entry)
+	return nil
 }
 
-func (m *TestCpMonitor) OnEnd(entry *lib.RevisionEntry, targetPath string) {
+func (m *TestCpMonitor) OnEnd(entry *lib.RevisionEntry, targetPath string) error {
 	m.OnEndCalls = append(m.OnEndCalls, entry)
+	return nil
 }
 
 func (m *TestCpMonitor) OnError(entry *lib.RevisionEntry, targetPath string, err error) CpOnError {
@@ -163,10 +166,12 @@ func (m *TestCpMonitor) OnExists(entry *lib.RevisionEntry, targetPath string) Cp
 
 type TestStagingMonitor struct{}
 
-func (m *TestStagingMonitor) OnStart(path lib.Path, dirEntry fs.DirEntry) {
+func (m *TestStagingMonitor) OnStart(path lib.Path, dirEntry fs.DirEntry) error {
+	return nil
 }
 
-func (m *TestStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) {
+func (m *TestStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) error {
+	return nil
 }
 
 func (m *TestStagingMonitor) Close() {
@@ -178,7 +183,8 @@ func (m *TestCommitMonitor) OnBeforeCommit() error {
 	return nil
 }
 
-func (m *TestCommitMonitor) OnStart(entry *lib.RevisionEntry) {
+func (m *TestCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
+	return nil
 }
 
 func (m *TestCommitMonitor) OnAddBlock(
@@ -186,10 +192,13 @@ func (m *TestCommitMonitor) OnAddBlock(
 	header *lib.BlockHeader,
 	existed bool,
 	dataSize int64,
-) {
+) error {
+	return nil
 }
 
-func (m *TestCommitMonitor) OnEnd(entry *lib.RevisionEntry) {}
+func (m *TestCommitMonitor) OnEnd(entry *lib.RevisionEntry) error {
+	return nil
+}
 
 type TestWorkspace struct {
 	*Workspace

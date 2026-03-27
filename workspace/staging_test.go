@@ -121,6 +121,28 @@ func TestStaging(t *testing.T) {
 			{"look/here/a.txt", 0o600, td.SHA256("a")},
 		}, wstd.StagingEntryInfos(finalized))
 	})
+
+	t.Run("Cancel", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("a.txt", "a")
+
+		mon := &cancelStagingMonitor{}
+		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, mon)
+		assert.ErrorIs(err, lib.ErrCancel)
+	})
+}
+
+type cancelStagingMonitor struct{}
+
+func (m *cancelStagingMonitor) OnStart(path lib.Path, dirEntry fs.DirEntry) error {
+	return lib.ErrCancel
+}
+
+func (m *cancelStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) error {
+	return nil
 }
 
 func TestStagingCache(t *testing.T) {

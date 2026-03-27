@@ -26,10 +26,10 @@ const (
 )
 
 type CpMonitor interface {
-	OnStart(entry *lib.RevisionEntry, targetPath string)
+	OnStart(entry *lib.RevisionEntry, targetPath string) error
 	OnExists(entry *lib.RevisionEntry, targetPath string) CpOnExists
-	OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte)
-	OnEnd(entry *lib.RevisionEntry, targetPath string)
+	OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte) error
+	OnEnd(entry *lib.RevisionEntry, targetPath string) error
 	OnError(entry *lib.RevisionEntry, targetPath string, err error) CpOnError
 }
 
@@ -40,7 +40,7 @@ type CpOptions struct {
 	RestorableMetadataFlag lib.RestorableMetadataFlag
 }
 
-func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.FS) error {
+func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.FS) error { //nolint:funlen
 	snapshot, err := lib.NewRevisionSnapshot(repository, opts.RevisionId, tmpFS)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
@@ -68,13 +68,17 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 			return lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
 		target := entry.Path.String()
-		mon.OnStart(entry, target)
+		if err := mon.OnStart(entry, target); err != nil {
+			return lib.WrapErrorf(err, "cp monitor start failed for %s", target)
+		}
 		if err := restore(entry, repository, targetFS, target, mon); err != nil {
 			return lib.WrapErrorf(err, "failed to copy %s", target)
 		}
 		if err := restoreFileMode(targetFS, target, entry.Metadata, opts.RestorableMetadataFlag); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				mon.OnEnd(entry, target)
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
 				continue
 			}
 			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", entry.Metadata.ModeAndPerm, target)
@@ -85,7 +89,9 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 			if mode&0o700 != 0o700 {
 				if err := targetFS.Chmod(target, mode|0o700); err != nil {
 					if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-						mon.OnEnd(entry, target)
+						if endErr := mon.OnEnd(entry, target); endErr != nil {
+							return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+						}
 						continue
 					}
 					return lib.WrapErrorf(err, "failed to change permissions of %s", target)
@@ -93,7 +99,9 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 				directories = append(directories, entry)
 			}
 		}
-		mon.OnEnd(entry, target)
+		if err := mon.OnEnd(entry, target); err != nil {
+			return lib.WrapErrorf(err, "cp monitor end failed for %s", target)
+		}
 	}
 	if err := restoreDirFileModes(); err != nil {
 		return lib.WrapErrorf(err, "failed to restore file mode for directories")
@@ -113,7 +121,9 @@ func restore( //nolint:funlen
 	if md.ModeAndPerm.IsDir() {
 		if err := targetFS.MkdirAll(target); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				mon.OnEnd(entry, target)
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
 				return nil
 			}
 			return lib.WrapErrorf(err, "failed to create directory %s", target)
@@ -121,7 +131,9 @@ func restore( //nolint:funlen
 	} else {
 		if err := targetFS.MkdirAll(filepath.Dir(target)); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				mon.OnEnd(entry, target)
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
 				return nil
 			}
 			return lib.WrapErrorf(err, "failed to create parent directory %s", target)
@@ -132,7 +144,9 @@ func restore( //nolint:funlen
 			case CpOnExistsOverwrite:
 				f, err = targetFS.OpenWrite(target)
 			case CpOnExistsIgnore:
-				mon.OnEnd(entry, target)
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
 				return nil
 			case CpOnExistsAbort:
 				return lib.WrapErrorf(err, "failed to open file %s for writing", target)
@@ -140,7 +154,9 @@ func restore( //nolint:funlen
 		}
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				mon.OnEnd(entry, target)
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
 				return nil
 			}
 			return lib.WrapErrorf(err, "failed to open file %s for writing", target)
@@ -150,30 +166,40 @@ func restore( //nolint:funlen
 			data, _, err := repository.ReadBlock(blockId)
 			if err != nil {
 				if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-					mon.OnEnd(entry, target)
+					if endErr := mon.OnEnd(entry, target); endErr != nil {
+						return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+					}
 					return nil
 				}
 				return lib.WrapErrorf(err, "failed to read block %s", blockId)
 			}
 			if _, err := f.Write(data); err != nil {
 				if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-					mon.OnEnd(entry, target)
+					if endErr := mon.OnEnd(entry, target); endErr != nil {
+						return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+					}
 					return nil
 				}
 				return lib.WrapErrorf(err, "failed to write block %s", blockId)
 			}
-			mon.OnWrite(entry, target, blockId, data)
+			if err := mon.OnWrite(entry, target, blockId, data); err != nil {
+				return lib.WrapErrorf(err, "cp monitor write failed for %s", target)
+			}
 		}
 		if err := f.Close(); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				mon.OnEnd(entry, target)
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
 				return nil
 			}
 			return lib.WrapErrorf(err, "failed to close file %s", target)
 		}
 		if err := targetFS.Chmod(target, md.ModeAndPerm.AsFileMode()); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				mon.OnEnd(entry, target)
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
 				return nil
 			}
 			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, target)

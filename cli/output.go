@@ -49,19 +49,25 @@ func (m *CommitMonitor) OnBeforeCommit() error {
 	return nil
 }
 
-func (m *CommitMonitor) OnStart(entry *lib.RevisionEntry) {
+func (m *CommitMonitor) OnStart(entry *lib.RevisionEntry) error {
 	if m.startTime.IsZero() {
 		m.startTime = time.Now()
 	}
 	m.paths += 1
 	m.progress()
 	if !m.Verbose {
-		return
+		return nil
 	}
 	fmt.Printf("%s\n", entry.Path)
+	return nil
 }
 
-func (m *CommitMonitor) OnAddBlock(entry *lib.RevisionEntry, header *lib.BlockHeader, existed bool, dataSize int64) {
+func (m *CommitMonitor) OnAddBlock(
+	entry *lib.RevisionEntry,
+	header *lib.BlockHeader,
+	existed bool,
+	dataSize int64,
+) error {
 	if existed {
 		m.rawBytesReused += dataSize
 	} else {
@@ -70,11 +76,11 @@ func (m *CommitMonitor) OnAddBlock(entry *lib.RevisionEntry, header *lib.BlockHe
 	}
 	m.progress()
 	if !m.Verbose {
-		return
+		return nil
 	}
 	if existed {
 		fmt.Printf("  block  %s %6s (old)\n", header.BlockId, ws.FormatBytes(dataSize))
-		return
+		return nil
 	}
 	if header.Flags&lib.BlockFlagDeflate == lib.BlockFlagDeflate {
 		fmt.Printf(
@@ -83,19 +89,20 @@ func (m *CommitMonitor) OnAddBlock(entry *lib.RevisionEntry, header *lib.BlockHe
 			ws.FormatBytes(dataSize),
 			float64(header.EncryptedDataSize-lib.TotalCipherOverhead)/float64(dataSize),
 		)
-		return
+		return nil
 	}
 	fmt.Printf("  block  %s %6s (new)\n", header.BlockId, ws.FormatBytes(dataSize))
+	return nil
 }
 
-func (m *CommitMonitor) OnEnd(entry *lib.RevisionEntry) {
+func (m *CommitMonitor) OnEnd(entry *lib.RevisionEntry) error {
 	m.progress()
 	if !m.Verbose {
-		return
+		return nil
 	}
 	if entry.Metadata.ModeAndPerm.IsDir() {
 		fmt.Printf("  %-6s (directory)\n", entry.Type)
-		return
+		return nil
 	}
 	fmt.Printf(
 		"  %-6s %s %6s\n",
@@ -103,6 +110,7 @@ func (m *CommitMonitor) OnEnd(entry *lib.RevisionEntry) {
 		hex.EncodeToString(entry.Metadata.FileHash[:]),
 		ws.FormatBytes(entry.Metadata.Size),
 	)
+	return nil
 }
 
 func (m *CommitMonitor) progress() {
@@ -133,39 +141,41 @@ func NewStagingMonitor(verbose, noProgress bool) *StagingMonitor {
 	}
 }
 
-func (m *StagingMonitor) OnStart(path lib.Path, dirEntry os.DirEntry) {
+func (m *StagingMonitor) OnStart(path lib.Path, dirEntry os.DirEntry) error {
 	if m.startTime.IsZero() {
 		m.startTime = time.Now()
 	}
 	m.paths++
 	m.progress()
 	if !m.Verbose {
-		return
+		return nil
 	}
 	fmt.Printf("%s\n", path)
+	return nil
 }
 
-func (m *StagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) {
+func (m *StagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) error {
 	if excluded {
 		if m.Verbose {
 			fmt.Printf("  excluded\n")
 		}
 		m.excluded++
 		m.progress()
-		return
+		return nil
 	}
 	if metadata != nil {
 		m.totalFileSizes += metadata.Size
 	}
 	m.progress()
 	if !m.Verbose {
-		return
+		return nil
 	}
 	if metadata != nil && metadata.ModeAndPerm.IsDir() {
 		fmt.Printf("  done  (directory)\n")
-		return
+		return nil
 	}
 	fmt.Printf("  done  %s %6s\n", hex.EncodeToString(metadata.FileHash[:]), ws.FormatBytes(metadata.Size))
+	return nil
 }
 
 // Clear the progress line.
@@ -217,7 +227,7 @@ func NewCpMonitor(cpOnExists ws.CpOnExists, verbose, ignoreErrors, noProgress bo
 	}
 }
 
-func (m *CpMonitor) OnStart(entry *lib.RevisionEntry, targetPath string) {
+func (m *CpMonitor) OnStart(entry *lib.RevisionEntry, targetPath string) error {
 	if m.startTime.IsZero() {
 		m.startTime = time.Now()
 	}
@@ -225,9 +235,10 @@ func (m *CpMonitor) OnStart(entry *lib.RevisionEntry, targetPath string) {
 	m.paths++
 	m.progress()
 	if !m.Verbose {
-		return
+		return nil
 	}
 	fmt.Printf("%s\n", targetPath)
+	return nil
 }
 
 func (m *CpMonitor) OnExists(entry *lib.RevisionEntry, targetPath string) ws.CpOnExists {
@@ -257,25 +268,27 @@ func (m *CpMonitor) OnError(entry *lib.RevisionEntry, targetPath string, err err
 	return ws.CpOnErrorIgnore
 }
 
-func (m *CpMonitor) OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte) {
+func (m *CpMonitor) OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte) error {
 	m.progress()
 	m.bytesWritten += int64(len(data))
 	if !m.Verbose {
-		return
+		return nil
 	}
 	fmt.Printf("  block %s %6s\n", blockId, ws.FormatBytes(int64(len(data))))
+	return nil
 }
 
-func (m *CpMonitor) OnEnd(entry *lib.RevisionEntry, targetPath string) {
+func (m *CpMonitor) OnEnd(entry *lib.RevisionEntry, targetPath string) error {
 	m.progress()
 	if !m.Verbose {
-		return
+		return nil
 	}
 	if entry.Metadata.ModeAndPerm.IsDir() {
 		fmt.Printf("  done  (directory)\n")
-		return
+		return nil
 	}
 	fmt.Printf("  done  %s %6s\n", hex.EncodeToString(entry.Metadata.FileHash[:]), ws.FormatBytes(entry.Metadata.Size))
+	return nil
 }
 
 // Clear the progress line.

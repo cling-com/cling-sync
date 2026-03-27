@@ -21,9 +21,9 @@ var (
 )
 
 type CommitMonitor interface {
-	OnStart(entry *lib.RevisionEntry)
-	OnAddBlock(entry *lib.RevisionEntry, header *lib.BlockHeader, existed bool, dataSize int64)
-	OnEnd(entry *lib.RevisionEntry)
+	OnStart(entry *lib.RevisionEntry) error
+	OnAddBlock(entry *lib.RevisionEntry, header *lib.BlockHeader, existed bool, dataSize int64) error
+	OnEnd(entry *lib.RevisionEntry) error
 	OnBeforeCommit() error
 }
 
@@ -213,12 +213,16 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
 		localPath, _ := entry.Path.TrimBase(m.ws.PathPrefix)
-		mon.OnStart(entry)
+		if err := mon.OnStart(entry); err != nil {
+			return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor start failed for %s", entry.Path)
+		}
 		if entry.Type == lib.RevisionEntryDelete {
 			if err := commit.Add(entry); err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add revision entry to commit")
 			}
-			mon.OnEnd(entry)
+			if err := mon.OnEnd(entry); err != nil {
+				return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor end failed for %s", entry.Path)
+			}
 			continue
 		}
 		stat, err := m.ws.FS.Stat(localPath.String())
@@ -241,14 +245,16 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 		if existsInRemote && entry.Metadata.FileHash == remoteEntry.Metadata.FileHash {
 			if entry.Metadata.IsEqualRestorableAttributes(remoteEntry.Metadata, m.opts.RestorableMetadataFlag) {
 				// The file did not change at all, we can skip it completely.
-				mon.OnEnd(entry)
+				if err := mon.OnEnd(entry); err != nil {
+					return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor end failed for %s", entry.Path)
+				}
 				continue
 			}
 			// Only metadata changed.
 			md = entry.Metadata
 			md.BlockIds = remoteEntry.Metadata.BlockIds
 		} else {
-			uploadedMD, err := AddFileToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon.OnAddBlock)
+			uploadedMD, err := AddFileToRepository(m.ws.FS, localPath, stat, m.repository, entry, mon)
 			if err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", localPath)
 			}
@@ -283,7 +289,9 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 		if err := commit.Add(entry); err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add revision entry to commit")
 		}
-		mon.OnEnd(entry)
+		if err := mon.OnEnd(entry); err != nil {
+			return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor end failed for %s", entry.Path)
+		}
 	}
 	// Make sure the path prefix exists in the repository after the commit.
 	if err := commit.EnsureDirExists(m.ws.PathPrefix, remoteRevision, m.remoteRevisionId); err != nil {
@@ -625,12 +633,16 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 }
 
 func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, target string) error { //nolint:funlen
-	mon.OnStart(entry, target)
+	if err := mon.OnStart(entry, target); err != nil {
+		return lib.WrapErrorf(err, "cp monitor start failed for %s", target)
+	}
 	md := entry.Metadata
 	if md.ModeAndPerm.IsDir() {
 		if err := m.ws.FS.MkdirAll(target); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				mon.OnEnd(entry, target)
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
 				return nil
 			}
 			return lib.WrapErrorf(err, "failed to create directory %s", target)
@@ -639,7 +651,9 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 	}
 	if err := m.ws.FS.MkdirAll(filepath.Dir(target)); err != nil {
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-			mon.OnEnd(entry, target)
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+			}
 			return nil
 		}
 		return lib.WrapErrorf(err, "failed to create parent directory %s", target)
@@ -648,7 +662,9 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 	f, err := m.ws.FS.OpenWrite(tmpPath)
 	if err != nil {
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-			mon.OnEnd(entry, target)
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+			}
 			return nil
 		}
 		return lib.WrapErrorf(err, "failed to open file %s for writing", target)
@@ -658,23 +674,31 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 		data, _, err := m.repository.ReadBlock(blockId)
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				mon.OnEnd(entry, target)
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
 				return nil
 			}
 			return lib.WrapErrorf(err, "failed to read block %s", blockId)
 		}
 		if _, err := f.Write(data); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				mon.OnEnd(entry, target)
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
 				return nil
 			}
 			return lib.WrapErrorf(err, "failed to write block %s", blockId)
 		}
-		mon.OnWrite(entry, target, blockId, data)
+		if err := mon.OnWrite(entry, target, blockId, data); err != nil {
+			return lib.WrapErrorf(err, "cp monitor write failed for %s", target)
+		}
 	}
 	if err := f.Close(); err != nil {
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-			mon.OnEnd(entry, target)
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+			}
 			return nil
 		}
 		return lib.WrapErrorf(err, "failed to close file %s", target)
@@ -682,19 +706,25 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 	if err := m.ws.FS.Rename(tmpPath, target); err != nil {
 		_ = m.ws.FS.Remove(tmpPath)
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-			mon.OnEnd(entry, target)
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+			}
 			return nil
 		}
 		return lib.WrapErrorf(err, "failed to rename %s to %s", tmpPath, target)
 	}
 	if err := m.ws.FS.Chmod(target, md.ModeAndPerm.AsFileMode()); err != nil {
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-			mon.OnEnd(entry, target)
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+			}
 			return nil
 		}
 		return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, target)
 	}
-	mon.OnEnd(entry, target)
+	if err := mon.OnEnd(entry, target); err != nil {
+		return lib.WrapErrorf(err, "cp monitor end failed for %s", target)
+	}
 	return nil
 }
 
@@ -705,7 +735,7 @@ func AddFileToRepository(
 	fileInfo fs.FileInfo,
 	repository *lib.Repository,
 	entry *lib.RevisionEntry,
-	onAddBlock func(entry *lib.RevisionEntry, header *lib.BlockHeader, existed bool, dataSize int64),
+	mon CommitMonitor,
 ) (lib.FileMetadata, error) {
 	if fileInfo.IsDir() {
 		return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil), nil
@@ -749,7 +779,9 @@ func AddFileToRepository(
 		if err != nil {
 			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to write block")
 		}
-		onAddBlock(entry, &blockHeader, existed, int64(len(data)))
+		if err := mon.OnAddBlock(entry, &blockHeader, existed, int64(len(data))); err != nil {
+			return lib.FileMetadata{}, lib.WrapErrorf(err, "commit monitor add block failed for %s", path)
+		}
 		blockIds = append(blockIds, blockHeader.BlockId)
 	}
 	return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256(fileHash.Sum(nil)), blockIds), nil

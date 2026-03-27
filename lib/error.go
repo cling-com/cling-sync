@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+var ErrCancel = Errorf("operation cancelled")
+
 type WrappedError struct {
 	Msg      string
 	err      error

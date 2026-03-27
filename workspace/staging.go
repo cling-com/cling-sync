@@ -20,8 +20,8 @@ const (
 )
 
 type StagingEntryMonitor interface {
-	OnStart(path lib.Path, dirEntry fs.DirEntry)
-	OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata)
+	OnStart(path lib.Path, dirEntry fs.DirEntry) error
+	OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) error
 }
 
 type Staging struct {
@@ -77,12 +77,16 @@ func NewStaging( //nolint:funlen
 			// todo: handle symlinks
 			return nil
 		}
-		mon.OnStart(localPath, d)
+		if err := mon.OnStart(localPath, d); err != nil {
+			return lib.WrapErrorf(err, "staging monitor start failed for %s", localPath)
+		}
 		// Even though files are filtered out in Staging.Add, we still
 		// want to eagerly exclude them to avoid unnecessary work (file hash).
 		// Especially, we want to skip directories if they are excluded.
 		if pathFilter != nil && !pathFilter.Include(localPath, d.IsDir()) {
-			mon.OnEnd(localPath, true, nil)
+			if err := mon.OnEnd(localPath, true, nil); err != nil {
+				return lib.WrapErrorf(err, "staging monitor end failed for %s", localPath)
+			}
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -92,15 +96,21 @@ func NewStaging( //nolint:funlen
 		stagingEntry, err := cache.Handle(localPath, repoPath, fileInfo)
 		if err != nil {
 			// todo: We should report the error to the monitor.
-			mon.OnEnd(localPath, false, nil)
+			if endErr := mon.OnEnd(localPath, false, nil); endErr != nil {
+				return lib.WrapErrorf(endErr, "staging monitor end failed for %s", localPath)
+			}
 			return lib.WrapErrorf(err, "failed to get metadata for %s", localPath)
 		}
 		if err := staging.add(stagingEntry); err != nil {
 			// todo: We should report the error to the monitor.
-			mon.OnEnd(localPath, false, stagingEntry.Metadata)
+			if endErr := mon.OnEnd(localPath, false, stagingEntry.Metadata); endErr != nil {
+				return lib.WrapErrorf(endErr, "staging monitor end failed for %s", localPath)
+			}
 			return lib.WrapErrorf(err, "failed to add path %s to staging (as %s)", localPath, repoPath)
 		}
-		mon.OnEnd(localPath, false, stagingEntry.Metadata)
+		if err := mon.OnEnd(localPath, false, stagingEntry.Metadata); err != nil {
+			return lib.WrapErrorf(err, "staging monitor end failed for %s", localPath)
+		}
 		return nil
 	})
 	if err != nil {

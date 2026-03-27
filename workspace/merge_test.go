@@ -820,6 +820,32 @@ func TestForceCommit(t *testing.T) {
 			{"b.txt", 0o600, 23, "from prefixed workspace"},
 		}, prefixW.Ls("."))
 	})
+
+	t.Run("Cancel", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		opts := wstd.MergeOptions()
+		opts.CommitMonitor = newCancelCommitMonitor()
+
+		_, err := Merge(w.Workspace, r.Repository, opts)
+		assert.ErrorIs(err, lib.ErrCancel)
+	})
+}
+
+type cancelCommitMonitor struct {
+	TestCommitMonitor
+}
+
+func newCancelCommitMonitor() *cancelCommitMonitor {
+	return &cancelCommitMonitor{TestCommitMonitor: TestCommitMonitor{}}
+}
+
+func (m *cancelCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
+	return lib.ErrCancel
 }
 
 type changeRemoteCommitMonitor struct {
@@ -830,9 +856,9 @@ type changeRemoteCommitMonitor struct {
 	committed  bool
 }
 
-func (m *changeRemoteCommitMonitor) OnStart(entry *lib.RevisionEntry) {
+func (m *changeRemoteCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
 	if m.committed {
-		return
+		return nil
 	}
 	m.committed = true
 	commit, err := lib.NewCommit(m.repository, td.NewFS(m.t))
@@ -841,4 +867,5 @@ func (m *changeRemoteCommitMonitor) OnStart(entry *lib.RevisionEntry) {
 	m.assert.NoError(err)
 	_, err = commit.Commit(td.CommitInfo())
 	m.assert.NoError(err)
+	return nil
 }

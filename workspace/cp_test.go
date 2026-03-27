@@ -99,6 +99,23 @@ func TestCp(t *testing.T) {
 		}, out.Ls("."))
 	})
 
+	t.Run("Cancel", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		out := td.NewTestFS(t, td.NewFS(t))
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "hello")
+		revID, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		opts := wstd.CpOptions(revID)
+		opts.Monitor = newCancelCpMonitor()
+		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
+		assert.ErrorIs(err, lib.ErrCancel)
+	})
+
 	t.Run("Chown", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
@@ -248,4 +265,24 @@ func TestCp(t *testing.T) {
 		cpMd.BirthtimeNSec = 0
 		assert.Equal(md, cpMd)
 	})
+}
+
+type cancelCpMonitor struct {
+	TestCpMonitor
+	cancelled bool
+}
+
+func newCancelCpMonitor() *cancelCpMonitor {
+	return &cancelCpMonitor{TestCpMonitor: *NewTestCpMonitor(CpOnExistsAbort), cancelled: false}
+}
+
+func (m *cancelCpMonitor) OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte) error {
+	if err := m.TestCpMonitor.OnWrite(entry, targetPath, blockId, data); err != nil {
+		return err
+	}
+	if !m.cancelled {
+		m.cancelled = true
+		return lib.ErrCancel
+	}
+	return nil
 }
