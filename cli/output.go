@@ -2,11 +2,9 @@
 package main
 
 import (
-	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
 	ws "github.com/flunderpero/cling-sync/workspace"
@@ -25,479 +23,153 @@ func PrintErr(msg string, args ...any) {
 	fmt.Fprintf(os.Stderr, s+msg+"\n", args...)
 }
 
-type CommitMonitor struct {
-	Verbose              bool
-	NoProgress           bool
-	startTime            time.Time
-	paths                int
-	rawBytesAdded        int64
-	compressedBytesAdded int64
-	rawBytesReused       int64
-}
-
-func NewCommitMonitor(verbose, noProgress bool) *CommitMonitor {
-	return &CommitMonitor{ //nolint:exhaustruct
-		Verbose:    verbose,
-		NoProgress: noProgress,
+func CLIMonitorMode(verbose, noProgress bool) ws.DefaultMonitorMode {
+	switch {
+	case verbose:
+		return ws.DefaultMonitorModeVerbose
+	case noProgress:
+		return ws.DefaultMonitorModeSilent
+	default:
+		return ws.DefaultMonitorModeProgress
 	}
 }
 
-func (m *CommitMonitor) OnBeforeCommit() error {
-	if m.Verbose {
-		fmt.Println("Committing")
-	}
-	return nil
+type (
+	cliStagingMonitor     struct{ *ws.DefaultStagingMonitor }
+	cliCommitMonitor      struct{ *ws.DefaultCommitMonitor }
+	cliHealthCheckMonitor struct{ *ws.DefaultHealthCheckMonitor }
+)
+
+type cliCpMonitor struct {
+	*ws.DefaultCpMonitor
+	emitPlain bool
 }
 
-func (m *CommitMonitor) OnStart(entry *lib.RevisionEntry) error {
-	if m.startTime.IsZero() {
-		m.startTime = time.Now()
-	}
-	m.paths += 1
-	m.progress()
-	if !m.Verbose {
-		return nil
-	}
-	fmt.Printf("%s\n", entry.Path)
-	return nil
+type cliSyncRepoMonitor struct {
+	*ws.DefaultSyncRepoMonitor
+	emitPlain bool
 }
 
-func (m *CommitMonitor) OnAddBlock(
-	entry *lib.RevisionEntry,
-	header *lib.BlockHeader,
-	existed bool,
-	dataSize int64,
-) error {
-	if existed {
-		m.rawBytesReused += dataSize
-	} else {
-		m.rawBytesAdded += dataSize
-		m.compressedBytesAdded += int64(header.EncryptedDataSize) - lib.TotalCipherOverhead
-	}
-	m.progress()
-	if !m.Verbose {
-		return nil
-	}
-	if existed {
-		fmt.Printf("  block  %s %6s (old)\n", header.BlockId, ws.FormatBytes(dataSize))
-		return nil
-	}
-	if header.Flags&lib.BlockFlagDeflate == lib.BlockFlagDeflate {
-		fmt.Printf(
-			"  block  %s %6s (new) (compressed: %.2f)\n",
-			header.BlockId,
-			ws.FormatBytes(dataSize),
-			float64(header.EncryptedDataSize-lib.TotalCipherOverhead)/float64(dataSize),
-		)
-		return nil
-	}
-	fmt.Printf("  block  %s %6s (new)\n", header.BlockId, ws.FormatBytes(dataSize))
-	return nil
+func NewCpMonitor(mode ws.DefaultMonitorMode, cpOnExists ws.CpOnExists, ignoreErrors bool) *cliCpMonitor {
+	monitor := &cliCpMonitor{DefaultCpMonitor: nil, emitPlain: false}
+	monitor.DefaultCpMonitor = ws.NewDefaultCpMonitor(mode, nil, monitor.emit, cpOnExists, ignoreErrors)
+	return monitor
 }
 
-func (m *CommitMonitor) OnEnd(entry *lib.RevisionEntry) error {
-	m.progress()
-	if !m.Verbose {
-		return nil
-	}
-	if entry.Metadata.ModeAndPerm.IsDir() {
-		fmt.Printf("  %-6s (directory)\n", entry.Type)
-		return nil
-	}
-	fmt.Printf(
-		"  %-6s %s %6s\n",
-		entry.Type,
-		hex.EncodeToString(entry.Metadata.FileHash[:]),
-		ws.FormatBytes(entry.Metadata.Size),
-	)
-	return nil
+func NewStatusMonitor(mode ws.DefaultMonitorMode) *cliStagingMonitor {
+	monitor := &cliStagingMonitor{DefaultStagingMonitor: nil}
+	monitor.DefaultStagingMonitor = ws.NewDefaultStagingMonitor(mode, nil, monitor.emit)
+	return monitor
 }
 
-func (m *CommitMonitor) progress() {
-	if m.Verbose || m.NoProgress || !IsTerm(os.Stderr) {
+func NewResetMonitors(mode ws.DefaultMonitorMode) (*cliStagingMonitor, *cliCpMonitor) {
+	return NewStatusMonitor(mode), NewCpMonitor(mode, ws.CpOnExistsAbort, false)
+}
+
+func NewMergeMonitors(mode ws.DefaultMonitorMode) (*cliStagingMonitor, *cliCpMonitor, *cliCommitMonitor) {
+	staging := NewStatusMonitor(mode)
+	cp := NewCpMonitor(mode, ws.CpOnExistsAbort, false)
+	commit := &cliCommitMonitor{DefaultCommitMonitor: nil}
+	commit.DefaultCommitMonitor = ws.NewDefaultCommitMonitor(mode, nil, commit.emit)
+	return staging, cp, commit
+}
+
+func NewHeathCheckMonitor(mode ws.DefaultMonitorMode) *cliHealthCheckMonitor {
+	monitor := &cliHealthCheckMonitor{DefaultHealthCheckMonitor: nil}
+	monitor.DefaultHealthCheckMonitor = ws.NewDefaultHealthCheckMonitor(mode, monitor.emit)
+	return monitor
+}
+
+func NewSyncRepoMonitor(mode ws.DefaultMonitorMode) *cliSyncRepoMonitor {
+	monitor := &cliSyncRepoMonitor{DefaultSyncRepoMonitor: nil, emitPlain: false}
+	monitor.DefaultSyncRepoMonitor = ws.NewDefaultSyncRepoMonitor(mode, monitor.emit)
+	return monitor
+}
+
+func (m *cliCpMonitor) OnError(entry *lib.RevisionEntry, targetPath string, err error) ws.CpOnError {
+	m.emitPlain = true
+	defer func() { m.emitPlain = false }()
+	return m.DefaultCpMonitor.OnError(entry, targetPath, err)
+}
+
+func (m *cliCpMonitor) emit(text string) {
+	if m.Mode == ws.DefaultMonitorModeProgress && !m.emitPlain {
+		clearLine()
+		fmt.Fprintf(os.Stderr, "\r%s", text)
 		return
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "adding %d paths", m.paths)
-	mbs := (float64(m.rawBytesAdded) / float64(time.Since(m.startTime).Seconds()))
-	fmt.Fprintf(&sb, " (%s at %s/s)", ws.FormatBytes(m.rawBytesAdded), ws.FormatBytes(int64(mbs)))
-	clearLine()
-	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
+	clearLineIfProgress(m.Mode)
+	fmt.Printf("%s\n", text)
 }
 
-type StagingMonitor struct {
-	Verbose        bool
-	NoProgress     bool
-	paths          int
-	excluded       int
-	totalFileSizes int64
-	startTime      time.Time
+func (m *cliCpMonitor) close() {
+	clearLineIfProgress(m.Mode)
 }
 
-func NewStagingMonitor(verbose, noProgress bool) *StagingMonitor {
-	return &StagingMonitor{ //nolint:exhaustruct
-		Verbose:    verbose,
-		NoProgress: noProgress,
+func (m *cliStagingMonitor) emit(text string) {
+	if m.Mode == ws.DefaultMonitorModeProgress {
+		clearLine()
+		fmt.Fprintf(os.Stderr, "\r%s", text)
+		return
 	}
+	fmt.Printf("%s\n", text)
 }
 
-func (m *StagingMonitor) OnStart(path lib.Path, dirEntry os.DirEntry) error {
-	if m.startTime.IsZero() {
-		m.startTime = time.Now()
-	}
-	m.paths++
-	m.progress()
-	if !m.Verbose {
-		return nil
-	}
-	fmt.Printf("%s\n", path)
-	return nil
+func (m *cliStagingMonitor) close() {
+	clearLineIfProgress(m.Mode)
 }
 
-func (m *StagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) error {
-	if excluded {
-		if m.Verbose {
-			fmt.Printf("  excluded\n")
-		}
-		m.excluded++
-		m.progress()
-		return nil
+func (m *cliCommitMonitor) emit(text string) {
+	if m.Mode == ws.DefaultMonitorModeProgress {
+		clearLine()
+		fmt.Fprintf(os.Stderr, "\r%s", text)
+		return
 	}
-	if metadata != nil {
-		m.totalFileSizes += metadata.Size
-	}
-	m.progress()
-	if !m.Verbose {
-		return nil
-	}
-	if metadata != nil && metadata.ModeAndPerm.IsDir() {
-		fmt.Printf("  done  (directory)\n")
-		return nil
-	}
-	fmt.Printf("  done  %s %6s\n", hex.EncodeToString(metadata.FileHash[:]), ws.FormatBytes(metadata.Size))
-	return nil
+	fmt.Printf("%s\n", text)
 }
 
-// Clear the progress line.
-func (m *StagingMonitor) Close() {
-	if !m.isProgress() {
+func (m *cliCommitMonitor) close() {
+	clearLineIfProgress(m.Mode)
+}
+
+func (m *cliHealthCheckMonitor) emit(text string) {
+	if m.Mode == ws.DefaultMonitorModeProgress {
+		clearLine()
+		fmt.Fprintf(os.Stderr, "\r%s", text)
+		return
+	}
+	fmt.Printf("%s\n", text)
+}
+
+func (m *cliHealthCheckMonitor) close() {
+	clearLineIfProgress(m.Mode)
+}
+
+func (m *cliSyncRepoMonitor) OnBeforeUpdateDstHead(newHead lib.RevisionId) {
+	m.emitPlain = true
+	defer func() { m.emitPlain = false }()
+	m.DefaultSyncRepoMonitor.OnBeforeUpdateDstHead(newHead)
+}
+
+func (m *cliSyncRepoMonitor) emit(text string) {
+	if m.Mode == ws.DefaultMonitorModeProgress && !m.emitPlain {
+		clearLine()
+		fmt.Fprintf(os.Stderr, "\r%s", text)
+		return
+	}
+	clearLineIfProgress(m.Mode)
+	fmt.Printf("%s\n", text)
+}
+
+func (m *cliSyncRepoMonitor) close() {
+	clearLineIfProgress(m.Mode)
+}
+
+func clearLineIfProgress(mode ws.DefaultMonitorMode) {
+	if mode != ws.DefaultMonitorModeProgress {
 		return
 	}
 	clearLine()
-}
-
-func (m *StagingMonitor) progress() {
-	if !m.isProgress() {
-		return
-	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "scanned %d paths", (m.paths - m.excluded))
-	if m.excluded > 0 {
-		fmt.Fprintf(&sb, " (%d excluded)", m.excluded)
-	}
-	mbs := (float64(m.totalFileSizes) / float64(time.Since(m.startTime).Seconds()))
-	fmt.Fprintf(&sb, " (%s at %s/s)", ws.FormatBytes(m.totalFileSizes), ws.FormatBytes(int64(mbs)))
-	clearLine()
-	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
-}
-
-func (m *StagingMonitor) isProgress() bool {
-	return !m.Verbose && !m.NoProgress && IsTerm(os.Stderr)
-}
-
-type CpMonitor struct {
-	Verbose      bool
-	IgnoreErrors bool
-	NoProgress   bool
-	cpOnExists   ws.CpOnExists
-	paths        int
-	excluded     int
-	bytesWritten int64
-	errors       int
-	ignoredError bool
-	startTime    time.Time
-}
-
-func NewCpMonitor(cpOnExists ws.CpOnExists, verbose, ignoreErrors, noProgress bool) *CpMonitor {
-	return &CpMonitor{ //nolint:exhaustruct
-		Verbose:      verbose,
-		IgnoreErrors: ignoreErrors,
-		NoProgress:   noProgress,
-		cpOnExists:   cpOnExists,
-	}
-}
-
-func (m *CpMonitor) OnStart(entry *lib.RevisionEntry, targetPath string) error {
-	if m.startTime.IsZero() {
-		m.startTime = time.Now()
-	}
-	m.ignoredError = false
-	m.paths++
-	m.progress()
-	if !m.Verbose {
-		return nil
-	}
-	fmt.Printf("%s\n", targetPath)
-	return nil
-}
-
-func (m *CpMonitor) OnExists(entry *lib.RevisionEntry, targetPath string) ws.CpOnExists {
-	if m.Verbose {
-		if m.cpOnExists == ws.CpOnExistsIgnore {
-			fmt.Printf("  skipping existing\n")
-		}
-	}
-	return m.cpOnExists
-}
-
-func (m *CpMonitor) OnError(entry *lib.RevisionEntry, targetPath string, err error) ws.CpOnError {
-	m.errors++
-	if !m.IgnoreErrors {
-		return ws.CpOnErrorAbort
-	}
-	m.ignoredError = true
-	if m.isProgress() {
-		fmt.Fprintf(os.Stderr, "\r")
-	}
-	if m.Verbose {
-		fmt.Printf("  ignoring error\n    %s\n", strings.ReplaceAll(err.Error(), "\n", "\n    "))
-	} else {
-		fmt.Printf("%s\n  %s\n", targetPath, strings.ReplaceAll(err.Error(), "\n", "\n  "))
-	}
-	m.progress()
-	return ws.CpOnErrorIgnore
-}
-
-func (m *CpMonitor) OnWrite(entry *lib.RevisionEntry, targetPath string, blockId lib.BlockId, data []byte) error {
-	m.progress()
-	m.bytesWritten += int64(len(data))
-	if !m.Verbose {
-		return nil
-	}
-	fmt.Printf("  block %s %6s\n", blockId, ws.FormatBytes(int64(len(data))))
-	return nil
-}
-
-func (m *CpMonitor) OnEnd(entry *lib.RevisionEntry, targetPath string) error {
-	m.progress()
-	if !m.Verbose {
-		return nil
-	}
-	if entry.Metadata.ModeAndPerm.IsDir() {
-		fmt.Printf("  done  (directory)\n")
-		return nil
-	}
-	fmt.Printf("  done  %s %6s\n", hex.EncodeToString(entry.Metadata.FileHash[:]), ws.FormatBytes(entry.Metadata.Size))
-	return nil
-}
-
-// Clear the progress line.
-func (m *CpMonitor) Close() {
-	if !m.isProgress() {
-		return
-	}
-	clearLine()
-}
-
-func (m *CpMonitor) progress() {
-	if !m.isProgress() {
-		return
-	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%d files copied", (m.paths - m.excluded))
-	if m.excluded > 0 {
-		fmt.Fprintf(&sb, " (+ %d excluded)", m.excluded)
-	}
-	if m.errors > 0 {
-		fmt.Fprintf(&sb, ", %d errors", m.errors)
-	}
-	mbs := (float64(m.bytesWritten) / float64(time.Since(m.startTime).Seconds()))
-	fmt.Fprintf(&sb, " (%s at %s/s)", ws.FormatBytes(m.bytesWritten), ws.FormatBytes(int64(mbs)))
-	clearLine()
-	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
-}
-
-func (m *CpMonitor) isProgress() bool {
-	return !m.Verbose && !m.NoProgress && IsTerm(os.Stderr)
-}
-
-type HeathCheckMonitor struct {
-	Verbose        bool
-	NoProgress     bool
-	Revisions      int
-	Paths          int
-	MetadataBytes  int64
-	MetadataBlocks int
-	DataBytes      int64
-	DataBlocks     int
-	startTime      time.Time
-	revisionEntry  *lib.RevisionEntry
-}
-
-func NewHeathCheckMonitor(verbose, noProgress bool) *HeathCheckMonitor {
-	return &HeathCheckMonitor{ //nolint:exhaustruct
-		Verbose:    verbose,
-		NoProgress: noProgress,
-	}
-}
-
-func (m *HeathCheckMonitor) OnRevisionStart(revisionId lib.RevisionId) {
-	m.revisionEntry = nil
-	if m.startTime.IsZero() {
-		m.startTime = time.Now()
-	}
-	m.Revisions++
-	m.progress()
-	if !m.Verbose {
-		return
-	}
-	fmt.Printf("revision %s\n", revisionId)
-}
-
-func (m *HeathCheckMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
-	m.revisionEntry = entry
-	m.Paths++
-	m.progress()
-	if !m.Verbose {
-		return
-	}
-	fmt.Printf("  path     %s (%s)\n", entry.Path, entry.Type)
-}
-
-func (m *HeathCheckMonitor) OnBlockOk(blockId lib.BlockId, duplicate bool, length int) {
-	if !duplicate {
-		if m.revisionEntry == nil {
-			m.MetadataBytes += int64(length)
-			m.MetadataBlocks++
-		} else {
-			m.DataBytes += int64(length)
-			m.DataBlocks++
-		}
-	}
-	m.progress()
-	if !m.Verbose {
-		return
-	}
-	if m.revisionEntry != nil {
-		fmt.Print("  ")
-	}
-	fmt.Printf("  block  %s\n", blockId)
-}
-
-func (m *HeathCheckMonitor) Close() {
-	if !m.isProgress() {
-		return
-	}
-	clearLine()
-}
-
-func (m *HeathCheckMonitor) progress() {
-	if !m.isProgress() {
-		return
-	}
-	var sb strings.Builder
-	totalBytes := m.MetadataBytes + m.DataBytes
-	mbs := (float64(totalBytes) / float64(time.Since(m.startTime).Seconds()))
-	fmt.Fprintf(&sb, "%d revisions, %d path entries, %d unique blocks, %s at %s/s",
-		m.Revisions,
-		m.Paths,
-		m.DataBlocks+m.MetadataBlocks,
-		ws.FormatBytes(totalBytes),
-		ws.FormatBytes(int64(mbs)))
-	clearLine()
-	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
-}
-
-func (m *HeathCheckMonitor) isProgress() bool {
-	return !m.Verbose && !m.NoProgress && IsTerm(os.Stderr)
-}
-
-type SyncRepoMonitor struct {
-	Verbose       bool
-	NoProgress    bool
-	Revisions     int
-	Paths         int
-	Blocks        int
-	Bytes         int64
-	startTime     time.Time
-	revisionEntry *lib.RevisionEntry
-}
-
-func NewSyncRepoMonitor(verbose, noProgress bool) *SyncRepoMonitor {
-	return &SyncRepoMonitor{ //nolint:exhaustruct
-		Verbose:    verbose,
-		NoProgress: noProgress,
-	}
-}
-
-func (m *SyncRepoMonitor) OnBeforeUpdateDstHead(newHead lib.RevisionId) {
-	clearLine()
-	fmt.Printf("Updating target repository head to %s\n", newHead)
-}
-
-func (m *SyncRepoMonitor) OnRevisionStart(revisionId lib.RevisionId) {
-	m.revisionEntry = nil
-	if m.startTime.IsZero() {
-		m.startTime = time.Now()
-	}
-	m.Revisions++
-	m.progress()
-	if !m.Verbose {
-		return
-	}
-	fmt.Printf("revision %s\n", revisionId)
-}
-
-func (m *SyncRepoMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
-	m.revisionEntry = entry
-	m.Paths++
-	m.progress()
-	if !m.Verbose {
-		return
-	}
-	fmt.Printf("  path     %s (%s)\n", entry.Path, entry.Type)
-}
-
-func (m *SyncRepoMonitor) OnCopyBlock(blockId lib.BlockId, existed bool, length int) {
-	if !existed {
-		m.Blocks += 1
-		m.Bytes += int64(length)
-	}
-	m.progress()
-	if !m.Verbose {
-		return
-	}
-	if m.revisionEntry != nil {
-		fmt.Print("  ")
-	}
-	fmt.Printf("  block  %s\n", blockId)
-}
-
-func (m *SyncRepoMonitor) Close() {
-	if !m.isProgress() {
-		return
-	}
-	clearLine()
-}
-
-func (m *SyncRepoMonitor) progress() {
-	if !m.isProgress() {
-		return
-	}
-	var sb strings.Builder
-	mbs := (float64(m.Bytes) / float64(time.Since(m.startTime).Seconds()))
-	fmt.Fprintf(&sb, "%d revisions, %d path entries, %d unique blocks, %s at %s/s",
-		m.Revisions,
-		m.Paths,
-		m.Blocks,
-		ws.FormatBytes(m.Bytes),
-		ws.FormatBytes(int64(mbs)))
-	clearLine()
-	fmt.Fprintf(os.Stderr, "\r%s", sb.String())
-}
-
-func (m *SyncRepoMonitor) isProgress() bool {
-	return !m.Verbose && !m.NoProgress && IsTerm(os.Stderr)
 }
 
 func clearLine() {

@@ -313,7 +313,7 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if args.Overwrite {
 		cpOnExists = ws.CpOnExistsOverwrite
 	}
-	mon := NewCpMonitor(cpOnExists, args.Verbose, args.IgnoreErrors, args.NoProgress)
+	mon := NewCpMonitor(CLIMonitorMode(args.Verbose, args.NoProgress), cpOnExists, args.IgnoreErrors)
 	revisionId, err := revisionId(repository, args.Revision)
 	if err != nil {
 		return err
@@ -332,18 +332,18 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		return err //nolint:wrapcheck
 	}
 	err = ws.Cp(repository, lib.NewRealFS(flags.Arg(1)), opts, tmpFS)
-	mon.Close()
-	if args.IgnoreErrors && mon.errors > 0 {
-		fmt.Printf("%d errors ignored\n", mon.errors)
+	mon.close()
+	if args.IgnoreErrors && mon.Errors > 0 {
+		fmt.Printf("%d errors ignored\n", mon.Errors)
 	}
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	mbs := (float64(mon.bytesWritten) / float64(time.Since(mon.startTime).Seconds()))
+	mbs := float64(mon.BytesWritten) / float64(time.Since(mon.StartTime).Seconds())
 	fmt.Printf(
 		"%d files copied (%s at %s/s)\n",
-		mon.paths,
-		ws.FormatBytes(mon.bytesWritten),
+		mon.Paths,
+		ws.FormatBytes(mon.BytesWritten),
 		ws.FormatBytes(int64(mbs)),
 	)
 	return nil
@@ -398,8 +398,7 @@ func ResetCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return err
 	}
-	stagingMonitor := NewStagingMonitor(args.Verbose, args.NoProgress)
-	cpMonitor := NewCpMonitor(ws.CpOnExistsAbort, args.Verbose, false, args.NoProgress)
+	stagingMonitor, cpMonitor := NewResetMonitors(CLIMonitorMode(args.Verbose, args.NoProgress))
 	restorableMetadataFlag := lib.RestorableMetadataAll
 	if !args.Chown {
 		restorableMetadataFlag ^= lib.RestorableMetadataOwnership
@@ -419,9 +418,12 @@ func ResetCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		UseStagingCache:        args.FastScan,
 	}
 	if err := ws.Reset(workspace, repository, opts); err != nil {
+		stagingMonitor.close()
+		cpMonitor.close()
 		return err //nolint:wrapcheck
 	}
-	stagingMonitor.Close()
+	stagingMonitor.close()
+	cpMonitor.close()
 	wsHead, err := workspace.Head()
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -487,9 +489,9 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return err
 	}
-	stagingMonitor := NewStagingMonitor(args.Verbose, args.NoProgress)
-	cpMonitor := NewCpMonitor(ws.CpOnExistsAbort, args.Verbose, false, args.NoProgress)
-	commitMonitor := NewCommitMonitor(args.Verbose, args.NoProgress)
+	stagingMonitor, cpMonitor, commitMonitor := NewMergeMonitors(
+		CLIMonitorMode(args.Verbose, args.NoProgress),
+	)
 	restorableMetadataFlag := lib.RestorableMetadataAll
 	if !args.Chown {
 		restorableMetadataFlag ^= lib.RestorableMetadataOwnership
@@ -515,7 +517,9 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	} else {
 		revisionId, err = ws.Merge(workspace, repository, opts)
 	}
-	stagingMonitor.Close()
+	stagingMonitor.close()
+	cpMonitor.close()
+	commitMonitor.close()
 	if errors.Is(err, ws.ErrUpToDate) {
 		fmt.Println("No changes")
 		return nil
@@ -541,21 +545,21 @@ To select remote changes, run `+"`"+`%s cp --overwrite <remote-path> .`+"`"+`
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	if commitMonitor.paths == 0 {
+	if commitMonitor.Paths == 0 {
 		fmt.Println("No local changes, workspace is up to date now")
 		return nil
 	}
 	compressionRatio := "n/a"
-	if commitMonitor.rawBytesAdded > 0 {
+	if commitMonitor.RawBytesAdded > 0 {
 		compressionRatio = fmt.Sprintf(
 			"%.2f",
-			float64(commitMonitor.compressedBytesAdded)/float64(commitMonitor.rawBytesAdded),
+			float64(commitMonitor.CompressedBytesAdded)/float64(commitMonitor.RawBytesAdded),
 		)
 	}
 	fmt.Printf(
 		"Revision %s (%s added, compressed: %s)\n",
 		revisionId,
-		ws.FormatBytes(commitMonitor.rawBytesAdded),
+		ws.FormatBytes(commitMonitor.RawBytesAdded),
 		compressionRatio,
 	)
 	return nil
@@ -637,7 +641,7 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	mon := NewStagingMonitor(args.Verbose, args.NoProgress)
+	mon := NewStatusMonitor(CLIMonitorMode(args.Verbose, args.NoProgress))
 	restorableMetadataFlag := lib.RestorableMetadataAll
 	if !args.Chown {
 		restorableMetadataFlag ^= lib.RestorableMetadataOwnership
@@ -655,7 +659,7 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		UseStagingCache:        args.FastScan,
 	}
 	result, err := ws.Status(workspace, repository, opts, tmpFS)
-	mon.Close()
+	mon.close()
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
@@ -919,9 +923,9 @@ func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 			return err
 		}
 	}
-	monitor := NewHeathCheckMonitor(args.Verbose, args.NoProgress)
+	monitor := NewHeathCheckMonitor(CLIMonitorMode(args.Verbose, args.NoProgress))
 	err = lib.CheckHealth(repository, lib.HealthCheckOptions{Monitor: monitor, DataBlocks: args.Data})
-	monitor.Close()
+	monitor.close()
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
@@ -1060,11 +1064,13 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to open target storage")
 		}
-		mon := NewSyncRepoMonitor(args.Verbose, args.NoProgress)
+		mon := NewSyncRepoMonitor(CLIMonitorMode(args.Verbose, args.NoProgress))
 		opts := lib.RepositorySyncOptions{mon}
 		if err := lib.SyncRepository(context.Background(), src, dst, opts); err != nil {
+			mon.close()
 			return lib.WrapErrorf(err, "failed to sync")
 		}
+		mon.close()
 		fmt.Println("Done.")
 	default:
 		return lib.Errorf("unknown command: %s", flags.Arg(0))
