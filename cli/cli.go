@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flunderpero/cling-sync/cli/keychain"
 	clingHTTP "github.com/flunderpero/cling-sync/http"
 	"github.com/flunderpero/cling-sync/lib"
 	ws "github.com/flunderpero/cling-sync/workspace"
@@ -1132,10 +1133,15 @@ func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to create cipher")
 		}
-		err = AddKeychainEntry(context.Background(), "com.cling.sync", string(workspace.RemoteRepository), encKeyStr)
-		if errors.Is(err, ErrKeychainEntryAlreadyExists) {
+		err = keychain.AddKeychainEntry(
+			context.Background(),
+			"com.cling.sync",
+			string(workspace.RemoteRepository),
+			encKeyStr,
+		)
+		if errors.Is(err, keychain.ErrKeychainEntryAlreadyExists) {
 			// Use the existing key to encrypt the RepositoryKeys.
-			encKeyStr, err = GetKeychainEntry(
+			encKeyStr, err = keychain.GetKeychainEntry(
 				context.Background(),
 				"com.cling.sync",
 				string(workspace.RemoteRepository),
@@ -1273,7 +1279,11 @@ func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Rep
 		return nil, err
 	}
 	if workspace.HasRepositoryKeys() {
-		encKeyStr, err := GetKeychainEntry(context.Background(), "com.cling.sync", string(workspace.RemoteRepository))
+		encKeyStr, err := keychain.GetKeychainEntry(
+			context.Background(),
+			"com.cling.sync",
+			string(workspace.RemoteRepository),
+		)
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to get encryption key from keychain")
 		}

@@ -1,6 +1,6 @@
 //go:build linux && !mock
 
-package main
+package keychain
 
 import (
 	"bytes"

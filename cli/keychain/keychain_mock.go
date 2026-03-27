@@ -1,6 +1,6 @@
 //go:build mock
 
-package main
+package keychain
 
 import (
 	"context"
@@ -75,5 +75,8 @@ func writeKeychainEntries(entries map[string]string) error {
 }
 
 func filename() string {
+	if filename, ok := os.LookupEnv("CLING_SYNC_MOCK_KEYCHAIN_FILE"); ok && filename != "" {
+		return filename
+	}
 	return os.TempDir() + "/mock_keychain.txt"
 }

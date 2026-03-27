@@ -1,7 +1,7 @@
 //go:build darwin && !mock
 
 //nolint:gocritic,govet
-package main
+package keychain
 
 /*
 #cgo LDFLAGS: -framework Security -framework CoreFoundation
