@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -74,7 +75,7 @@ func (f *LsFile) Format(format *LsFormat) string {
 	}
 	s := " " + path
 	if format.FileHash {
-		s = fmt.Sprintf("%s %s", s, f.Metadata.FileHash)
+		s = fmt.Sprintf("%s %s", s, hex.EncodeToString(f.Metadata.FileHash[:]))
 	}
 	if format.HumanReadableSize {
 		return fmt.Sprintf("%s %6s %s %s", mode, size, mtimeStr, s)
