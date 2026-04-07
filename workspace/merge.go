@@ -404,13 +404,8 @@ func (m *Merger) restoreDirFileModes() error {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", mode, path)
 			}
 		}
-		// Restore mtime.
-		if err := m.ws.FS.Chmtime(path, fileInfo.ModTime()); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return lib.WrapErrorf(err, "failed to restore mtime %s for %s", fileInfo.ModTime(), path)
-		}
+		// Restore mtime on a best-effort basis.
+		_ = m.ws.FS.Chmtime(path, fileInfo.ModTime())
 	}
 	m.directories = nil // Make sure the deferred function does not restore the file modes twice.
 	return nil
