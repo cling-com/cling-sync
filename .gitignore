@@ -1,4 +1,6 @@
 .spell
 .cling
+.clingignore
 .env
 cling-sync
+todo.md

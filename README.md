@@ -1,8 +1,7 @@
 # cling-sync: The Secure Forever Store
 
 > [!WARNING]
-> This project is still in development. The format on disk might change at any time and
-> there might be no way to convert data from one version to another. Also, expect some bugs.
+> This project is still in development.
 
 ## Synopsis
 
@@ -11,9 +10,34 @@ cling-sync is a _client-side encrypted_, _revisional_ archival storage system.
 The main goal is to provide a place where you can put all your data without worrying about
 losing it. Everything you put in once stays there forever.
 
+### Ways of "Losing Data"
+
+There are several ways to lose data.
+
+#### Physical
+
+A drive with important data gets corrupted or plainly lost. Syncing your data to multiple
+locations with the 2 + 1 rule helps: Two local copies at home, one remote.
+
+#### Accidental Deletion
+
+It happens all the time. Having backups helps but only if backups are strictly incremental.
+Otherwise the backup will also lose the data eventually. A revisional archival storage is designed
+to let you __easily__ recover lost or old data.
+
+#### Forgotten File Formats
+
+It might sound silly in today's day and age but file formats get forgotten all the time. Be it
+specific image formats or word processor files. A sister project (TBD) is aiming to conserve as
+many file formats as possible in a future proof manner.
+
+### Hidden In A Sea of Files
+
+Millions of files and unable to find the one you know is there or was there at some point.
+
 ### Terminology
 
-- **Repository**: The place where all data is stored after it has been encrypted.
+- **Repository**: The place where the encrypted data is stored.
 
 - **Workspace**: The local working copy of the repository files.
 
@@ -27,7 +51,7 @@ losing it. Everything you put in once stays there forever.
 ### Modification Tracking
 
 By default, only changes to the file contents are tracked. The file's metadata (ownership, mtime,
-and mode) are stored in the repository, but modifications to these metadata are not detected in
+and mode) are stored in the repository, but modifications to these attributes are not detected in
 consecutive merges unless the `--chown`, `--chmod`, or `--chtime` flags are used.
 
 When merging new files from the repository, mtime and mode are restored from the repository but not
@@ -35,14 +59,19 @@ ownership. This is because ownership is highly dependent on the user's environme
 and mode are not.
 
 This way of tracking modifications is best suited for the main use case of cling-sync: making sure
-user data is never lost without the complications of a "real" backup system.
+user data is never lost without.
+
+If you depend on accurate tracking of all metadata, make sure to always use `--chown`, `--chmod`, 
+and `--chtime` or look for a different solution.
 
 ## OS Support
 
-Currently, the main focus is on supporting MacOS and Linux. It should work on Windows, but is not
-tested at the moment.
+Currently, the main focus is on supporting MacOS and Linux. It should work partly on Windows, but 
+is not tested at the moment.
 
-The fact that everything but the CLI is written in plain Go (no CGO) and uses only the 
+There are clients for Android, iOS, and MacOS at: https://github.com/cling-com/cling-sync-clients 
+
+The fact that everything in this project is written in plain Go (no CGO) and uses only the 
 standard library with a few select `golang.org/x` dependencies should make it highly portable.
 
 ## Usage
@@ -60,6 +89,8 @@ Install [Go](https://go.dev/doc/install) version 1.26.1 or later and run:
 See `./cling-sync --help` for more information.
 
 ### Example Workflow
+
+This section describes the main features with use-cases.
 
 #### Initialize a new repository attached to the current directory
 
@@ -118,7 +149,7 @@ repository. If there are conflicts, the user is asked to resolve them.
 
     cling-sync reset head
 
-This will reset the workspace to the latest repository revision.
+This will reset the workspace to the latest repository revision discarding any local changes.
 
 #### Show the status of the workspace
 
@@ -148,6 +179,9 @@ This will start a HTTP server on port `4242` that serves the repository at `/pat
 
 This will attach the repository at `127.0.0.1:4242` to the workspace at `/path/to/workspace`.
 
+Note that this is HTTP only without any authorization. You should put a proxy like
+[Caddy](https://caddyserver.com/) in front of it.
+
 ### Ignore files
 
 cling-sync respects `.gitignore` and `.clingignore` files. The syntax is the same as for
@@ -162,7 +196,7 @@ cling-sync respects `.gitignore` and `.clingignore` files. The syntax is the sam
 
 ## Wasm Support
 
-Wasm support is a main focus of this project.
+Wasm support is a major focus of this project.
 
 Play around with the Wasm example included in this repository. First, serve a repository:
 
@@ -188,12 +222,15 @@ This reduces the binary size to about 600KB, which is okay for now.
 
 ## Cryptography
 
-The repository cryptography relies on these values you can find in `.cling/repository.txt`:
+The repository's cryptography relies on these values you can find in `.cling/repository.txt`:
 
 - An encrypted 32-byte **Key Encryption Key (KEK)** that is the root key used to derive all other
   _Data Encryption Keys (DEK)_.
 
 - A 32 byte **Block ID HMAC Key** that is used to sign the block id based on the content.
+
+- A 32 byte **GearCDC Seed** that is used to initialize the
+  [GearCDC](#data-deduplication-content-defined-chunking) algorithm.
 
 - A 32 byte **User Key Salt** that is used in the Key Derivation Function (KDF) to derive
   an encryption key to encrypt/decrypt the KEK.
@@ -205,8 +242,8 @@ All of these values are not strictly secret - without the passphrase, data canno
 | Purpose               | Algorithm                 | Notes                                      |
 | --------------------- | ------------------------- | ------------------------------------------ |
 | Key derivation        | Argon2id                  | 5 iterations, 64MB RAM, 1 thread           |
-| Encryption (all data) | XChaCha20-Poly1305 (AEAD) | Nonce-misuse resistant; 24B nonce, 16B tag |
-| Block ID generation   | HMAC-SHA256               | Uses per-repo secret HMAC key              |
+| Encryption (all data) | XChaCha20-Poly1305 (AEAD) | nonce-misuse resistant; 24B nonce, 16B tag |
+| Block ID generation   | HMAC-SHA256               | per-repository secret HMAC key             |
 
 ### User Authentication / KEK Encryption
 
@@ -216,15 +253,13 @@ The flow to arrive at the KEK:
 
 - The **Argon2id KDF** is used to derive a key from the _passphrase_ and the _User Key Salt_.
 
-- That key is then used to decrypt the encrypted KEK.
-
-- The KEK is then used to decrypt the encrypted _Block ID HMAC Key_.
+- That key is then used to decrypt the encrypted _KEK_, _Block ID HMAC Key_, and _GearCDC Seed_.
 
 ### Blocks
 
 #### Block IDs
 
-A block ID is calculated like this: `HMAC(SHA256(blockContent), BlockIDHMACKey)` where `BlockIDHMACKey`
+A block ID is calculated as `HMAC(SHA256(blockContent), BlockIDHMACKey)` where `BlockIDHMACKey`
 is the _Block ID HMAC Key_ stored in `.cling/repository.txt`.
 
 This makes blocks content addressable, but you cannot make any assumptions about the content of a
@@ -239,17 +274,20 @@ and stored alongside the random nonce used in the block header (see below).
 #### Data Deduplication (Content-Defined Chunking)
 
 If only a part of a file is modified, only that part (more or less) is stored in the repository.
-Block boundaries are not fixed, but are calculated using the [GearCDC](https://joshleeb.com/posts/gear-hashing.html)
-algorithm.
+Block boundaries are not fixed, but are calculated using the 
+[GearCDC](https://joshleeb.com/posts/gear-hashing.html) algorithm.
 Basically, the algorithm keeps a rolling hash of the content to detect a "good boundary" so that a
 block is at best around 2-4MB in size. Because this is based on the actual content, even changes in
 the middle of a file are detected and at some point, the algorithm will detect the boundaries of
 blocks that were not changed.
 This also means that for files smaller than the average block size, deduplication is not effective.
 
+To make the boundaries unpredictable and thus increase protection against fingerprinting attacks,
+the GearCDC algorithm is seeded with a random number unique to each repository.
+
 #### Compression
 
-A block may be compressed if it is at least 1KB in size and the first 1KB "looks" compressable,
+A block may be compressed if it is at least 1KB in size and the first 1KB "looks" compressible,
 i.e. the entropy of the data is low enough. If the compression ratio of the whole block is below 5%,
 the block is stored uncompressed.
 

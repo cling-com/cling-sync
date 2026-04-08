@@ -758,7 +758,7 @@ func AddFileToRepository(
 	}
 	defer f.Close() //nolint:errcheck
 	// Read blocks and add them to the repository.
-	cdc := NewGearCDCWithDefaults(f)
+	cdc := lib.NewGearCDCWithDefaults(f, repository.GearCDCTable())
 	for {
 		data, err := cdc.Read()
 		if errors.Is(err, io.EOF) {

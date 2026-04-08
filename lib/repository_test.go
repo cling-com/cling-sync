@@ -69,7 +69,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert.Equal(repo1.kekCipher, repo2.kekCipher)
 	})
 
-	for _, tamper := range []string{"UserKeySalt", "EncryptedKEK", "EncryptedBlockIdHmacKey"} {
+	for _, tamper := range []string{"UserKeySalt", "EncryptedKEK", "EncryptedBlockIdHmacKey", "EncryptedGearCDCSeed"} {
 		t.Run(fmt.Sprintf("Tampering with %s is detected", tamper), func(t *testing.T) {
 			t.Parallel()
 			assert := NewAssert(t)
@@ -92,6 +92,11 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 				masterKeyInfo.EncryptedBlockIdHmacKey[0] ^= 1
 				toml["encryption"]["encrypted-block-id-hmac"] = FormatRecoveryCode(
 					masterKeyInfo.EncryptedBlockIdHmacKey[:],
+				)
+			case "EncryptedGearCDCSeed":
+				masterKeyInfo.EncryptedGearCDCSeed[0] ^= 1
+				toml["encryption"]["encrypted-gear-cdc-seed"] = FormatRecoveryCode(
+					masterKeyInfo.EncryptedGearCDCSeed[:],
 				)
 			default:
 				panic("invalid tamper")

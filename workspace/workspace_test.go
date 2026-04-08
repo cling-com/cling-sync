@@ -112,9 +112,12 @@ func TestReadWriteDeleteRepositoryKeys(t *testing.T) { //nolint:tparallel
 	assert.NoError(err)
 	blockIdHmacKey, err := lib.NewRawKey()
 	assert.NoError(err)
+	gearCDCSeed, err := lib.NewRawKey()
+	assert.NoError(err)
 	keys := &lib.RepositoryKeys{
 		KEK:            kek,
 		BlockIdHmacKey: blockIdHmacKey,
+		GearCDCSeed:    gearCDCSeed,
 	}
 	encKey, err := lib.NewRawKey()
 	assert.NoError(err)

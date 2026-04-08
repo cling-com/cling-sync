@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -71,20 +72,23 @@ type MasterKeyInfo struct {
 	EncryptedKEK            EncryptedKey
 	UserKeySalt             Salt
 	EncryptedBlockIdHmacKey EncryptedKey
+	EncryptedGearCDCSeed    EncryptedKey
 }
 
 type RepositoryKeys struct {
 	KEK            RawKey
 	BlockIdHmacKey RawKey
+	GearCDCSeed    RawKey
 }
 
 type Repository struct {
 	storage        Storage
 	kekCipher      cipher.AEAD
 	blockIdHmacKey RawKey
+	gearCDCTable   GearCDCTable
 }
 
-func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) {
+func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) { //nolint:funlen
 	userKeySalt, err := NewSalt()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to generate random user key salt")
@@ -125,11 +129,28 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 			len(encryptedBlockIdHmacKey),
 		)
 	}
+	gearCDCSeed, err := NewRawKey()
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to generate random GearCDC seed")
+	}
+	encryptedGearCDCSeed := make([]byte, EncryptedKeySize)
+	encryptedGearCDCSeed, err = Encrypt(gearCDCSeed[:], cipher, userKeySalt[:], encryptedGearCDCSeed)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to encrypt GearCDC seed with user-key")
+	}
+	if len(encryptedGearCDCSeed) != EncryptedKeySize {
+		return nil, Errorf(
+			"encrypted GearCDC seed has wrong size, want %d, got %d",
+			EncryptedKeySize,
+			len(encryptedGearCDCSeed),
+		)
+	}
 	masterKeyInfo := MasterKeyInfo{
 		EncryptionVersion,
 		EncryptedKey(encryptedKEK),
 		userKeySalt,
 		EncryptedKey(encryptedBlockIdHmacKey),
+		EncryptedKey(encryptedGearCDCSeed),
 	}
 	toml, headerComment := createRepositoryConfig(masterKeyInfo)
 	if err := storage.Init(toml, headerComment); err != nil {
@@ -158,7 +179,18 @@ func OpenRepositoryWithKeys(storage Storage, keys *RepositoryKeys) (*Repository,
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from KEK")
 	}
-	return &Repository{storage, kekCipher, keys.BlockIdHmacKey}, nil
+	var gearCDCTable GearCDCTable
+	if !slices.ContainsFunc(keys.GearCDCSeed[:], func(x byte) bool { return x != 0 }) {
+		// All zero GearCDCSeed means we have to fall back to the constant seed
+		// we used back in the early days.
+		gearCDCTable = version1GearCDCTable
+	} else {
+		gearCDCTable, err = NewGearCDCTable(keys.GearCDCSeed)
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to create GearCDCTable")
+		}
+	}
+	return &Repository{storage, kekCipher, keys.BlockIdHmacKey, gearCDCTable}, nil
 }
 
 // Read the encrypted keys from the storage config (`repository.toml`) and decrypt them.
@@ -201,10 +233,25 @@ func DecryptRepositoryKeys(storage Storage, passphrase []byte) (*RepositoryKeys,
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt block id HMAC key with user-key")
 	}
+	gearCDCSeed := make([]byte, RawKeySize)
+	gearCDCSeed, err = Decrypt(
+		masterKeyInfo.EncryptedGearCDCSeed[:],
+		cipher,
+		masterKeyInfo.UserKeySalt[:],
+		gearCDCSeed,
+	)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to decrypt gear-cdc seed with user-key")
+	}
 	return &RepositoryKeys{
 		KEK:            RawKey(kek),
 		BlockIdHmacKey: RawKey(blockIdHmacKey),
+		GearCDCSeed:    RawKey(gearCDCSeed),
 	}, nil
+}
+
+func (r *Repository) GearCDCTable() GearCDCTable {
+	return r.gearCDCTable
 }
 
 // Return `true` if the block already existed.
@@ -447,7 +494,8 @@ func parseRepositoryConfig(toml Toml) (*MasterKeyInfo, error) {
 	masterKeyInfo := &MasterKeyInfo{ //nolint:exhaustruct
 		EncryptionVersion: uint16(i),
 	}
-	parseRecoveryCode := func(section string, key string, expectedLen int) ([]byte, error) {
+	parseRecoveryCode := func(key string, expectedLen int) ([]byte, error) {
+		section := "encryption"
 		v, ok := toml.GetValue(section, key)
 		if !ok {
 			return nil, Errorf("missing key `%s.%s` in repository config", section, key)
@@ -461,21 +509,26 @@ func parseRepositoryConfig(toml Toml) (*MasterKeyInfo, error) {
 		}
 		return c, nil
 	}
-	c, err := parseRecoveryCode("encryption", "encrypted-kek", EncryptedKeySize)
+	c, err := parseRecoveryCode("encrypted-kek", EncryptedKeySize)
 	if err != nil {
 		return nil, err
 	}
 	masterKeyInfo.EncryptedKEK = EncryptedKey(c)
-	c, err = parseRecoveryCode("encryption", "user-key-salt", SaltSize)
+	c, err = parseRecoveryCode("user-key-salt", SaltSize)
 	if err != nil {
 		return nil, err
 	}
 	masterKeyInfo.UserKeySalt = Salt(c)
-	c, err = parseRecoveryCode("encryption", "encrypted-block-id-hmac", EncryptedKeySize)
+	c, err = parseRecoveryCode("encrypted-block-id-hmac", EncryptedKeySize)
 	if err != nil {
 		return nil, err
 	}
 	masterKeyInfo.EncryptedBlockIdHmacKey = EncryptedKey(c)
+	c, err = parseRecoveryCode("encrypted-gear-cdc-seed", EncryptedKeySize)
+	if err != nil {
+		return nil, err
+	}
+	masterKeyInfo.EncryptedGearCDCSeed = EncryptedKey(c)
 	return masterKeyInfo, nil
 }
 
@@ -486,6 +539,7 @@ func createRepositoryConfig(masterKeyInfo MasterKeyInfo) (Toml, string) {
 			"encrypted-kek":           FormatRecoveryCode(masterKeyInfo.EncryptedKEK[:]),
 			"user-key-salt":           FormatRecoveryCode(masterKeyInfo.UserKeySalt[:]),
 			"encrypted-block-id-hmac": FormatRecoveryCode(masterKeyInfo.EncryptedBlockIdHmacKey[:]),
+			"encrypted-gear-cdc-seed": FormatRecoveryCode(masterKeyInfo.EncryptedGearCDCSeed[:]),
 		},
 		"storage": {
 			"version": fmt.Sprintf("%d", StorageVersion),
@@ -499,6 +553,7 @@ func MarshalRepositoryKeys(keys *RepositoryKeys, w io.Writer) error {
 	bw.Write(EncryptionVersion)
 	bw.Write(keys.KEK[:])
 	bw.Write(keys.BlockIdHmacKey[:])
+	bw.Write(keys.GearCDCSeed[:])
 	return bw.Err
 }
 
@@ -510,14 +565,18 @@ func UnmarshalRepositoryKeys(r io.Reader) (*RepositoryKeys, error) {
 		return nil, WrapErrorf(br.Err, "failed to parse repository keys")
 	}
 	if version != EncryptionVersion {
+		// todo: Return a fixed error we can react to.
 		return nil, Errorf("unsupported repository keys version %d, want %d", version, EncryptionVersion)
 	}
 	var kek RawKey
 	br.Read(&kek)
 	var blockIdHmacKey RawKey
 	br.Read(&blockIdHmacKey)
+	var gearCDCSeed RawKey
+	br.Read(&gearCDCSeed)
 	return &RepositoryKeys{
 		KEK:            kek,
 		BlockIdHmacKey: blockIdHmacKey,
+		GearCDCSeed:    gearCDCSeed,
 	}, nil
 }
