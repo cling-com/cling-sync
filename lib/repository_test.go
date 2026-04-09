@@ -40,12 +40,12 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		masterKeyInfo, err := parseRepositoryConfig(toml)
 		assert.NoError(err)
 		// Decrypt KEK "by hand".
-		userKey, err := DeriveUserKey(userPassphrase, masterKeyInfo.UserKeySalt)
+		userKey, err := DeriveUserKey(userPassphrase, masterKeyInfo.Argon2id)
 		assert.NoError(err)
 		cipher, err := NewCipher(userKey)
 		assert.NoError(err)
 		kek := make([]byte, RawKeySize)
-		_, err = Decrypt(masterKeyInfo.EncryptedKEK[:], cipher, masterKeyInfo.UserKeySalt[:], kek)
+		_, err = Decrypt(masterKeyInfo.EncryptedKEK[:], cipher, masterKeyInfo.Argon2id.Salt[:], kek)
 		assert.NoError(err)
 		repo2, err := OpenRepository(storage, userPassphrase)
 		assert.NoError(err)
@@ -83,8 +83,8 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 			assert.NoError(err)
 			switch tamper {
 			case "UserKeySalt":
-				masterKeyInfo.UserKeySalt[0] ^= 1
-				toml["encryption"]["user-key-salt"] = FormatRecoveryCode(masterKeyInfo.UserKeySalt[:])
+				masterKeyInfo.Argon2id.Salt[0] ^= 1
+				toml["encryption"]["user-key-salt"] = FormatRecoveryCode(masterKeyInfo.Argon2id.Salt[:])
 			case "EncryptedKEK":
 				masterKeyInfo.EncryptedKEK[0] ^= 1
 				toml["encryption"]["encrypted-kek"] = FormatRecoveryCode(masterKeyInfo.EncryptedKEK[:])

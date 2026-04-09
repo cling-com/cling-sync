@@ -64,7 +64,7 @@ func NewWorkspace(
 		toml["remote"]["path-prefix"] = pathPrefix.String() + "/"
 	}
 	headerComment := strings.Trim(`
-DO NOT DELETE OR CHANGE THIS FILE.
+DO NOT DELETE OR MODIFY THIS FILE.
 
 This file contains the configuration of your cling workspace.
 `, "\n ")

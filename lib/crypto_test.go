@@ -60,14 +60,33 @@ func TestEncryptDecrypt(t *testing.T) {
 func TestDeriveUserKey(t *testing.T) {
 	t.Parallel()
 	t.Run("Happy path", func(t *testing.T) {
-		assert := NewAssert(t)
 		t.Parallel()
+		assert := NewAssert(t)
 		salt := [32]byte([]byte("0123456789abcdef0123456789abcdef"))
+		argon2id := NewArgon2id(salt)
 		passphrase := []byte("This is a test.")
-		key, err := DeriveUserKey(passphrase, salt)
+		key, err := DeriveUserKey(passphrase, argon2id)
 		assert.NoError(err)
-		key2, err := DeriveUserKey(passphrase, salt)
+		key2, err := DeriveUserKey(passphrase, argon2id)
 		assert.NoError(err)
 		assert.Equal(key, key2)
+	})
+}
+
+func TestMarshalArgon2id(t *testing.T) {
+	t.Parallel()
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		s := "$argon2id$v=19$m=65536,t=16,p=2$MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+		argon2id, err := UnmarshalArgon2idConfig(s)
+		assert.NoError(err)
+		assert.Equal(Argon2id{
+			Time:        16,
+			Memory:      65536,
+			Parallelism: 2,
+			Salt:        [32]byte([]byte("0123456789abcdef0123456789abcdef")),
+		}, argon2id)
+		assert.Equal(s, argon2id.Marshal())
 	})
 }

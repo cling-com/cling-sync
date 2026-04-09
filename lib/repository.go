@@ -22,7 +22,7 @@ const (
 
 //nolint:gochecknoglobals
 var RepositoryConfigHeaderComment = strings.Trim(`
-DO NOT DELETE OR CHANGE THIS FILE.
+DO NOT DELETE OR MODIFY THIS FILE.
 
 This file contains the configuration of your cling repository including
 the master key information.
@@ -70,7 +70,7 @@ var (
 type MasterKeyInfo struct {
 	EncryptionVersion       uint16
 	EncryptedKEK            EncryptedKey
-	UserKeySalt             Salt
+	Argon2id                Argon2id
 	EncryptedBlockIdHmacKey EncryptedKey
 	EncryptedGearCDCSeed    EncryptedKey
 }
@@ -93,7 +93,8 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to generate random user key salt")
 	}
-	userKey, err := DeriveUserKey(passphrase, userKeySalt)
+	argon2id := NewArgon2id(userKeySalt)
+	userKey, err := DeriveUserKey(passphrase, argon2id)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to derive user-key from passphrase")
 	}
@@ -148,7 +149,7 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 	masterKeyInfo := MasterKeyInfo{
 		EncryptionVersion,
 		EncryptedKey(encryptedKEK),
-		userKeySalt,
+		argon2id,
 		EncryptedKey(encryptedBlockIdHmacKey),
 		EncryptedKey(encryptedGearCDCSeed),
 	}
@@ -210,7 +211,7 @@ func DecryptRepositoryKeys(storage Storage, passphrase []byte) (*RepositoryKeys,
 			EncryptionVersion,
 		)
 	}
-	userKey, err := DeriveUserKey(passphrase, masterKeyInfo.UserKeySalt)
+	userKey, err := DeriveUserKey(passphrase, masterKeyInfo.Argon2id)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to derive user-key from passphrase")
 	}
@@ -219,7 +220,7 @@ func DecryptRepositoryKeys(storage Storage, passphrase []byte) (*RepositoryKeys,
 		return nil, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from user-key")
 	}
 	kek := make([]byte, RawKeySize)
-	kek, err = Decrypt(masterKeyInfo.EncryptedKEK[:], cipher, masterKeyInfo.UserKeySalt[:], kek)
+	kek, err = Decrypt(masterKeyInfo.EncryptedKEK[:], cipher, masterKeyInfo.Argon2id.Salt[:], kek)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt KEK with user-key")
 	}
@@ -227,7 +228,7 @@ func DecryptRepositoryKeys(storage Storage, passphrase []byte) (*RepositoryKeys,
 	blockIdHmacKey, err = Decrypt(
 		masterKeyInfo.EncryptedBlockIdHmacKey[:],
 		cipher,
-		masterKeyInfo.UserKeySalt[:],
+		masterKeyInfo.Argon2id.Salt[:],
 		blockIdHmacKey,
 	)
 	if err != nil {
@@ -237,7 +238,7 @@ func DecryptRepositoryKeys(storage Storage, passphrase []byte) (*RepositoryKeys,
 	gearCDCSeed, err = Decrypt(
 		masterKeyInfo.EncryptedGearCDCSeed[:],
 		cipher,
-		masterKeyInfo.UserKeySalt[:],
+		masterKeyInfo.Argon2id.Salt[:],
 		gearCDCSeed,
 	)
 	if err != nil {
@@ -509,16 +510,20 @@ func parseRepositoryConfig(toml Toml) (*MasterKeyInfo, error) {
 		}
 		return c, nil
 	}
-	c, err := parseRecoveryCode("encrypted-kek", EncryptedKeySize)
+	c, err := parseRecoveryCode("encrypted-key-encryption-key", EncryptedKeySize)
 	if err != nil {
 		return nil, err
 	}
 	masterKeyInfo.EncryptedKEK = EncryptedKey(c)
-	c, err = parseRecoveryCode("user-key-salt", SaltSize)
+	passphraseDerivation, ok := toml.GetValue("encryption", "passphrase-derivation")
+	if !ok {
+		return nil, Errorf("missing key `encryption.passphrase-derivation`")
+	}
+	argon2id, err := UnmarshalArgon2idConfig(passphraseDerivation)
 	if err != nil {
 		return nil, err
 	}
-	masterKeyInfo.UserKeySalt = Salt(c)
+	masterKeyInfo.Argon2id = argon2id
 	c, err = parseRecoveryCode("encrypted-block-id-hmac", EncryptedKeySize)
 	if err != nil {
 		return nil, err
@@ -535,11 +540,11 @@ func parseRepositoryConfig(toml Toml) (*MasterKeyInfo, error) {
 func createRepositoryConfig(masterKeyInfo MasterKeyInfo) (Toml, string) {
 	toml := Toml{
 		"encryption": {
-			"version":                 fmt.Sprintf("%d", masterKeyInfo.EncryptionVersion),
-			"encrypted-kek":           FormatRecoveryCode(masterKeyInfo.EncryptedKEK[:]),
-			"user-key-salt":           FormatRecoveryCode(masterKeyInfo.UserKeySalt[:]),
-			"encrypted-block-id-hmac": FormatRecoveryCode(masterKeyInfo.EncryptedBlockIdHmacKey[:]),
-			"encrypted-gear-cdc-seed": FormatRecoveryCode(masterKeyInfo.EncryptedGearCDCSeed[:]),
+			"version":                      fmt.Sprintf("%d", masterKeyInfo.EncryptionVersion),
+			"passphrase-derivation":        masterKeyInfo.Argon2id.Marshal(),
+			"encrypted-key-encryption-key": FormatRecoveryCode(masterKeyInfo.EncryptedKEK[:]),
+			"encrypted-block-id-hmac":      FormatRecoveryCode(masterKeyInfo.EncryptedBlockIdHmacKey[:]),
+			"encrypted-gear-cdc-seed":      FormatRecoveryCode(masterKeyInfo.EncryptedGearCDCSeed[:]),
 		},
 		"storage": {
 			"version": fmt.Sprintf("%d", StorageVersion),

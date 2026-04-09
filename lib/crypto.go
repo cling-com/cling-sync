@@ -5,8 +5,12 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
 	"golang.org/x/crypto/argon2"
 	cha "golang.org/x/crypto/chacha20poly1305"
@@ -58,9 +62,8 @@ func NewSalt() (Salt, error) {
 }
 
 // Derive the user's UserKey from the given passphrase using Argon2id.
-func DeriveUserKey(passphrase []byte, salt Salt) (RawKey, error) {
-	// Exceeding OWASP recommendations of 12MB RAM, 3 iterations, 1 thread.
-	key := argon2.IDKey(passphrase, salt[:], 5, 65535, 1, RawKeySize)
+func DeriveUserKey(passphrase []byte, argon2id Argon2id) (RawKey, error) {
+	key := argon2.IDKey(passphrase, argon2id.Salt[:], argon2id.Time, argon2id.Memory, argon2id.Parallelism, RawKeySize)
 	return RawKey(key), nil
 }
 
@@ -147,4 +150,91 @@ func CheckPassphraseStrength(phrase []byte) error {
 	}
 	// todo: Implement more checks?
 	return nil
+}
+
+type Argon2id struct {
+	Time        uint32
+	Memory      uint32
+	Parallelism uint8
+	Salt        Salt
+}
+
+// todo: measure on a phone or raspberry.
+// Create a default Argon2id config with time=4, memory=128MiB, parallelism=2.
+func NewArgon2id(salt Salt) Argon2id {
+	return Argon2id{Time: 4, Memory: 128 * 1024, Parallelism: 2, Salt: salt}
+}
+
+func (a Argon2id) Marshal() string {
+	return fmt.Sprintf(
+		"$argon2id$v=19$m=%d,t=%d,p=%d$%s",
+		a.Memory,
+		a.Time,
+		a.Parallelism,
+		base64.RawStdEncoding.EncodeToString(a.Salt[:]),
+	)
+}
+
+// Parse the PHC password format but we expect a strict format like this:
+//
+// $argon2id$v=19$m=<memory>,t=<time>,p=<parallelism>$<salt>
+//
+// Needs to at least meet OWASP recommendations of 12MB RAM, 3 iterations, 1 thread.
+//
+// PHC format: https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md
+func UnmarshalArgon2idConfig(s string) (Argon2id, error) {
+	parts := strings.Split(s, "$")
+	if len(parts) != 5 {
+		return Argon2id{}, Errorf("expecting 4 parts")
+	}
+	if parts[0] != "" || parts[1] != "argon2id" || parts[2] != "v=19" {
+		return Argon2id{}, Errorf("expecting argon2id, version 19")
+	}
+	params := strings.Split(parts[3], ",")
+	if len(params) != 3 {
+		return Argon2id{}, Errorf("expecting 3 parameters")
+	}
+	parseParam := func(s string, param string) (uint32, error) {
+		s, ok := strings.CutPrefix(s, param+"=")
+		if !ok {
+			return 0, Errorf("expected parameter %s", param)
+		}
+		i, err := strconv.Atoi(s)
+		if err != nil || i < 0 || i >= 1<<32 {
+			return 0, Errorf("invalid value for parameter %s", param)
+		}
+		return uint32(i), nil
+	}
+	memory, err := parseParam(params[0], "m")
+	if err != nil {
+		return Argon2id{}, err
+	}
+	time, err := parseParam(params[1], "t")
+	if err != nil {
+		return Argon2id{}, err
+	}
+	parallelism, err := parseParam(params[2], "p")
+	if err != nil {
+		return Argon2id{}, err
+	}
+	// We use `RawStdEncoding` because the PHC "standard" says that base64 padding is omitted.
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil || len(salt) != 32 {
+		return Argon2id{}, WrapErrorf(err, "invalid salt")
+	}
+	if parallelism < 1 || parallelism > 255 {
+		return Argon2id{}, Errorf("parallelism must be at least 1")
+	}
+	if memory < 12*1024 {
+		return Argon2id{}, Errorf("memory must be at least 12MiB")
+	}
+	if time < 3 {
+		return Argon2id{}, Errorf("time must be at least 3")
+	}
+	return Argon2id{
+		Time:        time,
+		Memory:      memory,
+		Parallelism: uint8(parallelism),
+		Salt:        Salt(salt),
+	}, nil
 }
