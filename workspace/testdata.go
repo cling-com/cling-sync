@@ -112,8 +112,9 @@ func (wstd WorkspaceTestData) ResetOptions(revisionId lib.RevisionId, force bool
 func (wstd WorkspaceTestData) StagingEntryInfos(temp *lib.Temp[StagingEntry]) []TestStagingEntryInfo {
 	infos := []TestStagingEntryInfo{}
 	r := temp.Reader(nil)
+	buf := lib.BlockBuf{}
 	for {
-		entry, err := r.Read()
+		entry, err := r.Read(buf)
 		if errors.Is(err, io.EOF) {
 			break
 		}

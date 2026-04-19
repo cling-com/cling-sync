@@ -195,9 +195,10 @@ func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:f
 			reject(js.ValueOf(err.Error()))
 			return
 		}
+		buf := lib.BlockBuf{}
 		filter := lib.NewPathInclusionFilter([]string{path})
 		r := snapshot.Reader(lib.RevisionEntryPathFilter(filter))
-		file, err := r.Read()
+		file, err := r.Read(buf)
 		if errors.Is(err, io.EOF) {
 			reject(js.ValueOf(fmt.Sprintf("file not found: %s", path)))
 			return
@@ -217,7 +218,7 @@ func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:f
 		data := bytes.NewBuffer(nil)
 		data.Grow(int(file.Metadata.Size))
 		for _, blockId := range file.Metadata.BlockIds {
-			block, _, err := repository.ReadBlock(blockId)
+			block, _, err := repository.ReadBlock(blockId, buf)
 			if err != nil {
 				reject(js.ValueOf(err.Error()))
 				return

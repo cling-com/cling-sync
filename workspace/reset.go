@@ -57,7 +57,16 @@ func Reset(ws *Workspace, repository *lib.Repository, opts *ResetOptions) error 
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to build remote changes")
 	}
-	merger := &Merger{ws, wsHead, opts.RevisionId, tempFS, repository, make(map[string]fs.FileInfo), &mergeOptions}
+	merger := &Merger{
+		ws,
+		wsHead,
+		opts.RevisionId,
+		tempFS,
+		repository,
+		make(map[string]fs.FileInfo),
+		&mergeOptions,
+		lib.BlockBuf{},
+	}
 	defer merger.restoreDirFileModes() //nolint:errcheck
 	if err := merger.copyRepositoryFiles(remoteRevision.Source, staging, localChanges); err != nil {
 		return lib.WrapErrorf(err, "failed to copy remote files")

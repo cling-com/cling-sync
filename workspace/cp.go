@@ -59,8 +59,9 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 		return nil
 	}
 	defer restoreDirFileModes() //nolint:errcheck
+	buf := lib.BlockBuf{}
 	for {
-		entry, err := reader.Read()
+		entry, err := reader.Read(buf)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -71,7 +72,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 		if err := mon.OnStart(entry, target); err != nil {
 			return lib.WrapErrorf(err, "cp monitor start failed for %s", target)
 		}
-		if err := restore(entry, repository, targetFS, target, mon); err != nil {
+		if err := restore(entry, repository, targetFS, target, buf, mon); err != nil {
 			return lib.WrapErrorf(err, "failed to copy %s", target)
 		}
 		if err := restoreFileMode(targetFS, target, entry.Metadata, opts.RestorableMetadataFlag); err != nil {
@@ -115,6 +116,7 @@ func restore( //nolint:funlen
 	repository *lib.Repository,
 	targetFS lib.FS,
 	target string,
+	buf lib.BlockBuf,
 	mon CpMonitor,
 ) error {
 	md := entry.Metadata
@@ -163,7 +165,7 @@ func restore( //nolint:funlen
 		}
 		defer f.Close() //nolint:errcheck
 		for _, blockId := range entry.Metadata.BlockIds {
-			data, _, err := repository.ReadBlock(blockId)
+			data, _, err := repository.ReadBlock(blockId, buf)
 			if err != nil {
 				if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 					if endErr := mon.OnEnd(entry, target); endErr != nil {

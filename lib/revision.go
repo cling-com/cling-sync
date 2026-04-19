@@ -158,7 +158,7 @@ func UnmarshalRevisionEntry(r io.Reader) (*RevisionEntry, error) {
 }
 
 type RevisionEntryReader interface {
-	Read() (*RevisionEntry, error)
+	Read(buf BlockBuf) (*RevisionEntry, error)
 }
 
 type RevisionReader struct {
@@ -178,13 +178,13 @@ func NewRevisionReader(repository *Repository, revision *Revision) *RevisionRead
 }
 
 // Return `io.EOF` if we are done.
-func (rr *RevisionReader) Read() (*RevisionEntry, error) {
+func (rr *RevisionReader) Read(buf BlockBuf) (*RevisionEntry, error) {
 	if rr.current == nil {
 		if rr.blockIndex >= len(rr.revision.Blocks) {
 			return nil, io.EOF
 		}
 		blockId := rr.revision.Blocks[rr.blockIndex]
-		data, _, err := rr.repository.ReadBlock(blockId)
+		data, _, err := rr.repository.ReadBlock(blockId, buf)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read block %s", blockId)
 		}
@@ -196,7 +196,7 @@ func (rr *RevisionReader) Read() (*RevisionEntry, error) {
 		if errors.Is(err, io.EOF) {
 			// Go to next block.
 			rr.current = nil
-			return rr.Read()
+			return rr.Read(buf)
 		}
 		return nil, WrapErrorf(err, "failed to unmarshal revision entry")
 	}

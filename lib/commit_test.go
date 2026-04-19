@@ -203,14 +203,15 @@ func TestCommitEnsureDirExists(t *testing.T) {
 }
 
 func readRevision(repo *Repository, revisionId RevisionId) (*Revision, []*RevisionEntry, error) {
-	revision, err := repo.ReadRevision(revisionId)
+	buf := BlockBuf{}
+	revision, err := repo.ReadRevision(revisionId, buf)
 	if err != nil {
 		return nil, nil, err
 	}
 	rr := NewRevisionReader(repo, &revision)
 	entries := []*RevisionEntry{}
 	for {
-		entry, err := rr.Read()
+		entry, err := rr.Read(buf)
 		if errors.Is(err, io.EOF) {
 			break
 		}

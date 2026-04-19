@@ -14,8 +14,9 @@ func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS
 	// Build a list of all revisions.
 	revisions := make([]*Revision, 0)
 	r := revisionId
+	buf := BlockBuf{}
 	for !r.IsRoot() {
-		revision, err := repository.ReadRevision(r)
+		revision, err := repository.ReadRevision(r, buf)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read revision: %s", r)
 		}
@@ -23,7 +24,7 @@ func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS
 		r = revision.Parent
 	}
 	tempWriter := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
-	if err := revisionNWayMerge(repository, revisions, tempWriter); err != nil {
+	if err := revisionNWayMerge(repository, revisions, tempWriter, buf); err != nil {
 		return nil, WrapErrorf(err, "failed to revision n-way merge revisions")
 	}
 	// todo: we don't need to call `tempWriter.Finalize()` because the entries
@@ -39,12 +40,13 @@ func revisionNWayMerge(
 	repository *Repository,
 	revisions []*Revision,
 	tempWriter *TempWriter[RevisionEntry],
+	buf BlockBuf,
 ) error {
 	readers := make([]*RevisionReader, len(revisions))
 	heap := []*RevisionEntry{}
 	for i, revision := range revisions {
 		readers[i] = NewRevisionReader(repository, revision)
-		re, err := readers[i].Read()
+		re, err := readers[i].Read(buf)
 		if err != nil {
 			return WrapErrorf(err, "failed to read revision")
 		}
@@ -72,7 +74,7 @@ func revisionNWayMerge(
 				if newest == nil {
 					newest = re
 				}
-				re, err := readers[i].Read()
+				re, err := readers[i].Read(buf)
 				if errors.Is(err, io.EOF) {
 					heap[i] = nil
 					continue

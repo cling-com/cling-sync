@@ -148,7 +148,8 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(false, existed)
 
-		readData, readHeader, err := r.ReadBlock(writeHeader.BlockId)
+		buf := BlockBuf{}
+		readData, readHeader, err := r.ReadBlock(writeHeader.BlockId, buf)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 		assert.Equal(writeHeader, readHeader)
@@ -198,7 +199,8 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		_, header, err := r.WriteBlock(writeData)
 		assert.NoError(err)
 		assert.Equal(MaxEncryptedBlockDataSize, int(header.EncryptedDataSize))
-		readData, _, err := r.ReadBlock(header.BlockId)
+		buf := BlockBuf{}
+		readData, _, err := r.ReadBlock(header.BlockId, buf)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 
@@ -235,7 +237,8 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Equal(header.Flags&BlockFlagDeflate, BlockFlagDeflate)
 		assert.Less(int(header.EncryptedDataSize), len(writeData)/5, "data should be very compressible")
 
-		readData, _, err := r.ReadBlock(header.BlockId)
+		buf := BlockBuf{}
+		readData, _, err := r.ReadBlock(header.BlockId, buf)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 	})
@@ -255,7 +258,8 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Equal(uint64(0), header.Flags&BlockFlagDeflate)
 		assert.Equal(int(header.EncryptedDataSize), len(writeData)+TotalCipherOverhead)
 
-		readData, _, err := r.ReadBlock(header.BlockId)
+		buf := BlockBuf{}
+		readData, _, err := r.ReadBlock(header.BlockId, buf)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 	})
@@ -279,7 +283,8 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Equal(uint64(0), header.Flags&BlockFlagDeflate)
 		assert.Equal(int(header.EncryptedDataSize), len(writeData)+TotalCipherOverhead)
 
-		readData, _, err := r.ReadBlock(header.BlockId)
+		buf := BlockBuf{}
+		readData, _, err := r.ReadBlock(header.BlockId, buf)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 	})
@@ -307,7 +312,8 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		revisionId, err := r.WriteRevision(&revision)
 		assert.NoError(err)
 
-		readRevision, err := r.ReadRevision(revisionId)
+		buf := BlockBuf{}
+		readRevision, err := r.ReadRevision(revisionId, buf)
 		assert.NoError(err)
 		assert.Equal(revision, readRevision)
 	})
@@ -342,7 +348,8 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		head := r.Head()
 		assert.Equal(true, head.IsRoot())
 
-		_, err := r.ReadRevision(head)
+		buf := BlockBuf{}
+		_, err := r.ReadRevision(head, buf)
 		assert.Error(err, "root revision cannot be read")
 	})
 }

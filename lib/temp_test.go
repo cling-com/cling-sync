@@ -376,8 +376,9 @@ func readAllRevsisionTemp(t *testing.T, sut *Temp[RevisionEntry], pathFilter Pat
 	assert := NewAssert(t)
 	merged := []*RevisionEntry{}
 	tempReader := sut.Reader(RevisionEntryPathFilter(pathFilter))
+	buf := BlockBuf{}
 	for {
-		entry, err := tempReader.Read()
+		entry, err := tempReader.Read(buf)
 		if errors.Is(err, io.EOF) {
 			break
 		}

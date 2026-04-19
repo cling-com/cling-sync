@@ -26,14 +26,15 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 	if err != nil {
 		return WrapErrorf(err, "failed to get head revision")
 	}
+	blockBuf := BlockBuf{}
 	for !revisionId.IsRoot() {
 		opts.Monitor.OnRevisionStart(revisionId)
-		revision, err := repository.ReadRevision(revisionId)
+		revision, err := repository.ReadRevision(revisionId, blockBuf)
 		if err != nil {
 			return WrapErrorf(err, "failed to read revision %s", revisionId)
 		}
 		for _, blockId := range revision.Blocks {
-			length, duplicate, err := VerifyBlock(repository, blocksSeen, nil, blockId)
+			length, duplicate, err := VerifyBlock(repository, blocksSeen, nil, blockId, blockBuf)
 			if err != nil {
 				return WrapErrorf(err, "failed to check block %s of revision %s", blockId, revisionId)
 			}
@@ -43,7 +44,7 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 		var lastEntry *RevisionEntry
 		entryCount := 0
 		for {
-			entry, err := reader.Read()
+			entry, err := reader.Read(blockBuf)
 			if errors.Is(err, io.EOF) {
 				break
 			}
@@ -60,7 +61,7 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 				var fileSize int64 = 0
 				fileHash := sha256.New()
 				for _, blockId := range entry.Metadata.BlockIds {
-					length, duplicate, err := VerifyBlock(repository, blocksSeen, fileHash, blockId)
+					length, duplicate, err := VerifyBlock(repository, blocksSeen, fileHash, blockId, blockBuf)
 					if err != nil {
 						return WrapErrorf(
 							err,
@@ -101,9 +102,10 @@ func VerifyBlock(
 	seen map[BlockId]bool,
 	fileHash hash.Hash,
 	blockId BlockId,
+	buf BlockBuf,
 ) (int, bool, error) {
 	duplicate := seen[blockId]
-	data, header, err := repository.ReadBlock(blockId)
+	data, header, err := repository.ReadBlock(blockId, buf)
 	if err != nil {
 		return 0, false, WrapErrorf(err, "failed to read block %s", blockId)
 	}

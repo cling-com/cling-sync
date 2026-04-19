@@ -61,7 +61,7 @@ type TempReader[T any] struct {
 	unmarshal    func(r io.Reader) (*T, error)
 }
 
-func (tr *TempReader[T]) Read() (*T, error) {
+func (tr *TempReader[T]) Read(buf BlockBuf) (*T, error) {
 	for {
 		if tr.current == nil || tr.currentIndex == len(tr.current) {
 			if tr.chunkIndex == tr.chunks {

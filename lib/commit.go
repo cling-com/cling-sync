@@ -167,8 +167,9 @@ func (c *Commit) appendEnsureDirs(sorted *Temp[RevisionEntry]) (*Temp[RevisionEn
 		}
 	}
 	r := sorted.Reader(nil)
+	buf := BlockBuf{}
 	for {
-		entry, err := r.Read()
+		entry, err := r.Read(buf)
 		if errors.Is(err, io.EOF) {
 			break
 		}

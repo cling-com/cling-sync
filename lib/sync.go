@@ -49,8 +49,9 @@ func SyncRepository( //nolint:funlen
 	// of revisions of the source repository and find the base.
 	revisionsToSync := map[RevisionId]*Revision{}
 	baseRefId := srcRevisionId
+	buf := BlockBuf{}
 	for {
-		revision, err := src.ReadRevision(baseRefId)
+		revision, err := src.ReadRevision(baseRefId, buf)
 		if err != nil {
 			return WrapErrorf(err, "failed to read revision %s", baseRefId)
 		}
@@ -86,7 +87,7 @@ func SyncRepository( //nolint:funlen
 		reader := NewRevisionReader(src, revision)
 		entryCount := 0
 		for {
-			entry, err := reader.Read()
+			entry, err := reader.Read(buf)
 			if errors.Is(err, io.EOF) {
 				break
 			}

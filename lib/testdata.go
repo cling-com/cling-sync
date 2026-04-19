@@ -440,8 +440,9 @@ func (r *TestRepository) RevisionSnapshot(revisionId RevisionId, pathFilter Path
 	defer snapshot.Remove() //nolint:errcheck
 	reader := snapshot.Reader(RevisionEntryPathFilter(pathFilter))
 	entries := []*RevisionEntry{}
+	buf := BlockBuf{}
 	for {
-		entry, err := reader.Read()
+		entry, err := reader.Read(buf)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -455,13 +456,14 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 	r.t.Helper()
 	entries := r.RevisionSnapshot(revisionId, pathFilter)
 	actual := make([]TestFileInfo, len(entries))
+	blockBuf := BlockBuf{}
 	for i, entry := range entries {
 		content := ""
 		if entry.Type != RevisionEntryDelete && entry.Metadata.ModeAndPerm.IsRegular() {
 			// Rebuild the content from the repository.
 			buf := bytes.NewBuffer([]byte{})
 			for _, blockId := range entry.Metadata.BlockIds {
-				data, _, err := r.ReadBlock(blockId)
+				data, _, err := r.ReadBlock(blockId, blockBuf)
 				r.assert.NoError(err)
 				buf.Write(data)
 			}
@@ -480,7 +482,7 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 func (r *TestRepository) RevisionEntryReaderInfos(reader RevisionEntryReader) []TestRevisionEntryInfo {
 	infos := []TestRevisionEntryInfo{}
 	for {
-		entry, err := reader.Read()
+		entry, err := reader.Read(BlockBuf{})
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -497,7 +499,7 @@ func (r *TestRepository) RevisionEntryReaderInfos(reader RevisionEntryReader) []
 
 func (r *TestRepository) RevisionInfos(revisionId RevisionId) []TestRevisionEntryInfo {
 	r.t.Helper()
-	revision, err := r.ReadRevision(revisionId)
+	revision, err := r.ReadRevision(revisionId, BlockBuf{})
 	r.assert.NoError(err)
 	return r.RevisionEntryReaderInfos(NewRevisionReader(r.Repository, &revision))
 }

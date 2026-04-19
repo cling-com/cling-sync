@@ -320,8 +320,7 @@ func (r *Repository) WriteBlock(data []byte) (bool, BlockHeader, error) {
 	return false, block.Header, nil
 }
 
-func (r *Repository) ReadBlock(blockId BlockId) ([]byte, BlockHeader, error) {
-	buf := BlockBuf{}
+func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error) {
 	encryptedData, header, err := r.storage.ReadBlock(blockId, buf)
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block %s", blockId)
@@ -361,11 +360,11 @@ func (r *Repository) Head() (RevisionId, error) {
 }
 
 // Return `ErrRootRevision` if revisionId is the root revisionId.
-func (r *Repository) ReadRevision(revisionId RevisionId) (Revision, error) {
+func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision, error) {
 	if revisionId.IsRoot() {
 		return Revision{}, ErrRootRevision
 	}
-	data, _, err := r.ReadBlock(BlockId(revisionId))
+	data, _, err := r.ReadBlock(BlockId(revisionId), buf)
 	if err != nil {
 		return Revision{}, WrapErrorf(err, "failed to read revision %s", revisionId)
 	}

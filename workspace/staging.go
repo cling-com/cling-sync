@@ -176,10 +176,11 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	}
 	var stg *StagingEntry
 	var rev *lib.RevisionEntry
+	buf := lib.BlockBuf{}
 	for {
 		if stg == nil {
 			// Read the next staging entry.
-			stg, err = stgReader.Read()
+			stg, err = stgReader.Read(buf)
 			if errors.Is(err, io.EOF) {
 				// Write a delete for all remaining revision snapshot entries.
 				for {
@@ -189,7 +190,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 							return nil, err
 						}
 					}
-					rev, err = revReader.Read()
+					rev, err = revReader.Read(buf)
 					if errors.Is(err, io.EOF) {
 						break
 					}
@@ -205,7 +206,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 		}
 		if rev == nil {
 			// Read the next revision snapshot entry.
-			rev, err = revReader.Read()
+			rev, err = revReader.Read(buf)
 			if errors.Is(err, io.EOF) {
 				// Write an add for all remaining staging entries.
 				for {
@@ -214,7 +215,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 							return nil, err
 						}
 					}
-					stg, err = stgReader.Read()
+					stg, err = stgReader.Read(buf)
 					if errors.Is(err, io.EOF) {
 						break
 					}

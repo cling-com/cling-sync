@@ -65,6 +65,7 @@ type Merger struct {
 	repository       *lib.Repository
 	directories      map[string]fs.FileInfo
 	opts             *MergeOptions
+	blockBuf         lib.BlockBuf
 }
 
 // Merge the changes from the repository into the workspace and vice versa.
@@ -91,7 +92,7 @@ func Merge(ws *Workspace, repository *lib.Repository, opts *MergeOptions) (lib.R
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
-	merger := Merger{ws, wsHead, head, tempFS, repository, make(map[string]fs.FileInfo), opts}
+	merger := Merger{ws, wsHead, head, tempFS, repository, make(map[string]fs.FileInfo), opts, lib.BlockBuf{}}
 	conflicts, err := merger.findConflicts(localChanges.Source, remoteRevision, wsRevision)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to find conflicts")
@@ -153,7 +154,16 @@ func ForceCommit(ws *Workspace, repository *lib.Repository, opts *ForceCommitOpt
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
-	merger := &Merger{ws, wsHead, head, tempFS, repository, make(map[string]fs.FileInfo), &opts.MergeOptions}
+	merger := &Merger{
+		ws,
+		wsHead,
+		head,
+		tempFS,
+		repository,
+		make(map[string]fs.FileInfo),
+		&opts.MergeOptions,
+		lib.BlockBuf{},
+	}
 	newHead, err := merger.commitLocalChanges(
 		localChanges.Source,
 		remoteRevision,
@@ -205,7 +215,7 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 	}
 	r := localChanges.Reader(nil)
 	for {
-		entry, err := r.Read()
+		entry, err := r.Read(m.blockBuf)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -317,7 +327,7 @@ func (m *Merger) findConflicts(
 	r := localChanges.Reader(nil)
 	conflicts := MergeConflictsError{}
 	for {
-		localChange, err := r.Read()
+		localChange, err := r.Read(m.blockBuf)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -442,7 +452,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 ) error {
 	r := remoteRevision.Reader(lib.RevisionEntryPathFilter(m.ws.PathPrefix.AsFilter()))
 	for {
-		remoteEntry, err := r.Read()
+		remoteEntry, err := r.Read(m.blockBuf)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -666,7 +676,7 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 	}
 	defer f.Close() //nolint:errcheck
 	for _, blockId := range entry.Metadata.BlockIds {
-		data, _, err := m.repository.ReadBlock(blockId)
+		data, _, err := m.repository.ReadBlock(blockId, m.blockBuf)
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {
