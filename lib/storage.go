@@ -26,6 +26,8 @@ const (
 	StoragePurposeWorkspace  StoragePurpose = "workspace"
 )
 
+type BlockBuf [MaxBlockSize]byte
+
 var (
 	ErrStorageNotFound      = Errorf("storage not found")
 	ErrStorageAlreadyExists = Errorf("storage already exists")
@@ -39,7 +41,7 @@ type Storage interface {
 	HasBlock(blockId BlockId) (bool, error)
 
 	// Return `ErrBlockNotFound` if the block does not exist.
-	ReadBlock(blockId BlockId) ([]byte, BlockHeader, error)
+	ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error)
 
 	// Return `ErrBlockNotFound` if the block does not exist.
 	ReadBlockHeader(blockId BlockId) (BlockHeader, error)
@@ -185,7 +187,7 @@ func (s *FileStorage) WriteBlock(block Block) (bool, error) {
 }
 
 // Return `ErrBlockNotFound` if the block does not exist.
-func (s *FileStorage) ReadBlock(blockId BlockId) ([]byte, BlockHeader, error) {
+func (s *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error) {
 	path := s.blockPath(blockId)
 	file, err := s.FS.OpenRead(path)
 	if err != nil {
@@ -195,27 +197,22 @@ func (s *FileStorage) ReadBlock(blockId BlockId) ([]byte, BlockHeader, error) {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to open block file %s", path)
 	}
 	defer file.Close() //nolint:errcheck
-	headerBytes := make([]byte, BlockHeaderSize)
-	hearderRead, err := io.ReadFull(file, headerBytes)
+	headerBytes, err := buf.ReadHeader(file)
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block header of %s", path)
-	}
-	if hearderRead < BlockHeaderSize {
-		return nil, BlockHeader{}, Errorf("failed to read block header of %s - not enough bytes read", path)
 	}
 	header, err := UnmarshalBlockHeader(blockId, bytes.NewBuffer(headerBytes))
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block header of %s", path)
 	}
-	data := make([]byte, header.EncryptedDataSize)
-	bytesRead, err := io.ReadFull(file, data)
+	data, err := buf.ReadData(file)
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block data %s", blockId)
 	}
-	if int(header.EncryptedDataSize) != bytesRead {
+	if int(header.EncryptedDataSize) != len(data) {
 		return nil, BlockHeader{}, Errorf(
 			"read %d bytes, expected %d",
-			bytesRead,
+			len(data),
 			header.EncryptedDataSize,
 		)
 	}
@@ -314,6 +311,28 @@ func (s *FileStorage) Lock(ctx context.Context, name string) (func() error, erro
 		return nil, WrapErrorf(err, "failed to create lock file %s", path)
 	}
 	return unlock, nil
+}
+
+// Read exactly `BlockHeaderSize` bytes.
+func (b BlockBuf) ReadHeader(src io.Reader) ([]byte, error) {
+	header := b[0:BlockHeaderSize]
+	if _, err := io.ReadFull(src, header); err != nil {
+		return nil, WrapErrorf(err, "failed to read block header")
+	}
+	return header, nil
+}
+
+// Read at most `len(b)-BlockHeaderSize` bytes.
+func (b BlockBuf) ReadData(src io.Reader) ([]byte, error) {
+	data := b[BlockHeaderSize:]
+	n, err := io.ReadFull(src, data)
+	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return data[0:n], nil
+		}
+		return nil, WrapErrorf(err, "failed to read block data")
+	}
+	return data[0:n], nil
 }
 
 func (s *FileStorage) blockPath(blockId BlockId) string {

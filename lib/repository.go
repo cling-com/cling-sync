@@ -321,7 +321,8 @@ func (r *Repository) WriteBlock(data []byte) (bool, BlockHeader, error) {
 }
 
 func (r *Repository) ReadBlock(blockId BlockId) ([]byte, BlockHeader, error) {
-	encryptedData, header, err := r.storage.ReadBlock(blockId)
+	buf := BlockBuf{}
+	encryptedData, header, err := r.storage.ReadBlock(blockId, buf)
 	if err != nil {
 		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block %s", blockId)
 	}

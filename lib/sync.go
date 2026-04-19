@@ -64,11 +64,12 @@ func SyncRepository( //nolint:funlen
 		}
 	}
 	blocksSeen := make(map[BlockId]bool)
+	blockBuf := BlockBuf{}
 	copyBlock := func(blockId BlockId) error {
 		if _, ok := blocksSeen[blockId]; ok {
 			return nil
 		}
-		data, header, err := src.storage.ReadBlock(blockId)
+		data, header, err := src.storage.ReadBlock(blockId, blockBuf)
 		if err != nil {
 			return WrapErrorf(err, "failed to read block %s", blockId)
 		}
