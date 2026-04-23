@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/bits"
 	"slices"
 	"strings"
 )
@@ -249,6 +250,10 @@ func (r *Repository) GearCDCTable() GearCDCTable {
 
 // If `dataBytesWritten` is nil then the block already existed. Otherwise it returns the
 // size of `data` after being compressed (if applicable).
+// Padding is added to the block (using Padmé: https://lbarman.ch/blog/padme) to obfuscate
+// its size.
+//
+//nolint:funlen
 func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten *int, err error) {
 	if len(data) > MaxBlockDataSize {
 		return BlockId{}, nil, Errorf("data size %d exceeds maximum block size %d", len(data), MaxBlockDataSize)
@@ -261,6 +266,7 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to read header of block %s", blockId)
 	}
+
 	// Compress data if possible.
 	var header BlockHeader
 	if IsCompressible(data) {
@@ -274,6 +280,12 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 			data = compressed
 		}
 	}
+
+	// Add padding.
+	encryptedDataSize := len(data)
+	paddedSize := min(MaxBlockDataSize, Padme(uint64(encryptedDataSize)))
+	data = append(data, make([]byte, paddedSize-uint64(encryptedDataSize))...)
+
 	// Encrypt data.
 	dek, err := NewRawKey()
 	if err != nil {
@@ -288,13 +300,14 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 		)
 	}
 	blockData := make([]byte, len(data)+TotalCipherOverhead+BlockHeaderSize)
-	encryptedData, err := Encrypt(data, dekCypher, nil, blockData[BlockHeaderSize:])
+	_, err = Encrypt(data, dekCypher, nil, blockData[BlockHeaderSize:])
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to encrypt data with DEK for block %s", blockId)
 	}
+
 	// Encrypt header.
 	header.DEK = dek
-	header.EncryptedDataSize = uint32(len(encryptedData)) //nolint:gosec
+	header.EncryptedDataSize = uint32(encryptedDataSize) //nolint:gosec
 	headerData := RawBlockHeader{}
 	if err := MarshalBlockHeader(&header, &headerData); err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to marshal block header %s", blockId)
@@ -303,6 +316,7 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to encrypt block header with KEK for block %s", blockId)
 	}
+
 	// Write block.
 	exists, err := r.storage.WriteBlock(blockId, blockData)
 	if err != nil {
@@ -311,8 +325,7 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 	if exists {
 		return blockId, nil, nil
 	}
-	size := len(data)
-	return blockId, &size, nil
+	return blockId, &encryptedDataSize, nil
 }
 
 func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
@@ -337,17 +350,11 @@ func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
 			blockId,
 		)
 	}
-	if int(header.EncryptedDataSize)+BlockHeaderSize > len(buf) {
-		return nil, Errorf("block data size exceeds block limit for block %s", blockId)
-	}
-	data, err := DecryptInPlace(
-		encryptedBlock[BlockHeaderSize:BlockHeaderSize+header.EncryptedDataSize],
-		dekCypher,
-		nil,
-	)
+	data, err := DecryptInPlace(encryptedBlock[BlockHeaderSize:], dekCypher, nil)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt data with DEK for block %s", blockId)
 	}
+	data = data[:header.EncryptedDataSize]
 	if header.Flags&BlockFlagDeflate != 0 {
 		data, err = Decompress(data)
 		if err != nil {
@@ -585,4 +592,17 @@ func UnmarshalRepositoryKeys(r io.Reader) (*RepositoryKeys, error) {
 		BlockIdHmacKey: blockIdHmacKey,
 		GearCDCSeed:    gearCDCSeed,
 	}, nil
+}
+
+// Return the number of bytes to pad the given input size
+// according to: https://lbarman.ch/blog/padme
+func Padme(l uint64) uint64 {
+	if l < 2 {
+		return l
+	}
+	e := bits.Len64(l) - 1
+	s := bits.Len(uint(e)) //nolint:gosec
+	lastBits := e - s
+	bitMask := (uint64(1) << lastBits) - 1
+	return (l + bitMask) &^ bitMask
 }

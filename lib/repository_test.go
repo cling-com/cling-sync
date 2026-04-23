@@ -202,24 +202,28 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		writeData := make([]byte, 256)
+		writeData := make([]byte, 275)
 		_, _ = rand.Read(writeData)
 
 		blockId, bytesWritten, err := r.WriteBlock(writeData)
 		assert.NoError(err)
-		assert.NotNil(bytesWritten)
+		assert.Equal(len(writeData), *bytesWritten)
 
 		path := r.Storage.blockPath(blockId)
 		r.Chmod(path, 0o600)
 		onDisk, err := ReadFile(r.Storage.FS, path)
 		assert.NoError(err)
 
-		protectedLen := BlockHeaderSize + *bytesWritten + TotalCipherOverhead
-		assert.Equal(protectedLen, len(onDisk))
+		// Make sure we picked `len(writeData)` so that padding is added.
+		assert.Greater(Padme(uint64(len(writeData))), uint64(len(writeData)))
+		assert.Equal(
+			Padme(uint64(len(writeData)))+BlockHeaderSize+TotalCipherOverhead,
+			uint64(len(onDisk)),
+		)
 
 		buf := BlockBuf{}
 		prev := -1
-		for i := range protectedLen {
+		for i := range onDisk {
 			// Restore the previous flip and confirm the block reads again.
 			if prev >= 0 {
 				onDisk[prev] ^= 1
@@ -331,7 +335,8 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.NotNil(bytesWritten)
 		stat := r.Stat(r.Storage.blockPath(blockId))
 		assert.Less(*bytesWritten, len(writeData)/5, "data should be compressed")
-		assert.Equal(stat.Size()-BlockHeaderSize-TotalCipherOverhead, int64(*bytesWritten))
+		expectedSize := Padme(uint64(*bytesWritten)) + BlockHeaderSize + TotalCipherOverhead
+		assert.Equal(int64(expectedSize), stat.Size())
 
 		buf := BlockBuf{}
 		readData, err := r.ReadBlock(blockId, buf)
@@ -450,6 +455,27 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		_, err := r.ReadRevision(head, buf)
 		assert.Error(err, "root revision cannot be read")
 	})
+}
+
+func TestPadme(t *testing.T) {
+	t.Parallel()
+	// Reference values taken from https://lbarman.ch/blog/padme/
+	cases := []struct {
+		l, want uint64
+	}{
+		{0, 0}, // l < 2: returned unchanged
+		{1, 1}, // l < 2: returned unchanged
+		{2, 2}, // smallest value that hits the formula
+		{100, 104},
+		{900, 928},
+		{1024, 1024}, // exact power of 2 is unchanged
+		{1025, 1088}, // just past a power of 2 rounds up
+		{1_000_000, 1_015_808},
+	}
+	assert := NewAssert(t)
+	for _, c := range cases {
+		assert.Equal(c.want, Padme(c.l), "Padme(%d)", c.l)
+	}
 }
 
 func BenchmarkWriteBlock(b *testing.B) {
