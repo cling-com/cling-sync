@@ -224,8 +224,8 @@ This reduces the binary size to about 600KB, which is okay for now.
 
 The repository's cryptography relies on these values you can find in `.cling/repository.txt`:
 
-- An encrypted 32-byte **Key Encryption Key (KEK)** that is the root key used to derive all other
-  _Data Encryption Keys (DEK)_.
+- An encrypted 32-byte **Key Encryption Key (KEK)** that is used to encrypt each block's
+  header (which holds the per-block random _Data Encryption Key (DEK)_).
 
 - A 32 byte **Block ID HMAC Key** that is used to sign the block id based on the content.
 
@@ -241,7 +241,7 @@ All of these values are not strictly secret - without the passphrase, data canno
 
 | Purpose               | Algorithm                 | Notes                                      |
 | --------------------- | ------------------------- | ------------------------------------------ |
-| Key derivation        | Argon2id                  | 5 iterations, 64MB RAM, 1 thread           |
+| Key derivation        | Argon2id                  | default: 4 iterations, 128MB, 2 threads    |
 | Encryption (all data) | XChaCha20-Poly1305 (AEAD) | nonce-misuse resistant; 24B nonce, 16B tag |
 | Block ID generation   | HMAC-SHA256               | per-repository secret HMAC key             |
 
@@ -259,7 +259,7 @@ The flow to arrive at the KEK:
 
 #### Block IDs
 
-A block ID is calculated as `HMAC(SHA256(blockContent), BlockIDHMACKey)` where `BlockIDHMACKey`
+A block ID is calculated as `HMAC-SHA256(BlockIDHMACKey, blockContent)` where `BlockIDHMACKey`
 is the _Block ID HMAC Key_ stored in `.cling/repository.txt`.
 
 This makes blocks content addressable, but you cannot make any assumptions about the content of a
@@ -268,8 +268,9 @@ block based on its block id.
 #### Data Encryption
 
 File contents and all metadata are stored in blocks of up to _8MB_ in size. Each block is encrypted
-with a unique, random 32 byte _Data Encryption Key (DEK)_. That _DEK_ is encrypted with the _KEK_
-and stored alongside the random nonce used in the block header (see below).
+with a unique, random 32 byte _Data Encryption Key (DEK)_. The _DEK_ itself lives inside the block
+header, which is encrypted as a whole with the _KEK_ using the block ID as the AEAD associated
+data (see the block layout below).
 
 #### Data Deduplication (Content-Defined Chunking)
 
@@ -288,10 +289,21 @@ the GearCDC algorithm is seeded with a random number unique to each repository.
 #### Compression
 
 A block may be compressed if it is at least 1KB in size and the first 1KB "looks" compressible,
-i.e. the entropy of the data is low enough. If the compression ratio of the whole block is below 5%,
+i.e. the entropy of the data is low enough. If compressing the whole block saves less than 5%,
 the block is stored uncompressed.
 
 The compression algorithm is [Deflate](https://en.wikipedia.org/wiki/DEFLATE) with level 6. 
+
+#### Padding
+
+After compression, block data is padded up to the next
+[Padmé](https://lbarman.ch/blog/padme/) boundary, capped at the maximum block data size. The
+padding is added before encryption, so it is covered by the block's AEAD, and the unpadded
+length is stored in the encrypted header and used to strip padding on read. Together with the
+random GearCDC seed this makes it harder for an attacker with filesystem-level access to the
+repository to fingerprint known file contents by exact on-disk block sizes or deterministic
+block boundaries. It does not hide the total repository size, the number of blocks, or access
+patterns, and it is not a defense once the KEK is compromised.
 
 ## File Formats
 
@@ -304,7 +316,7 @@ All integer types are written as little-endian, and all strings are UTF-8 encode
 | Size (bytes) | Type       | Field             | Description                                    |
 | ------------ | ---------- | ----------------- | ---------------------------------------------- |
 | 2            | uint16     | _format version_  | Serialization format version (`0x01`)          |
-| 4            | uint64     | ModeAndPerm       | File mode and permission flags (see below)     |
+| 4            | uint32     | ModeAndPerm       | File mode and permission flags (see below)     |
 | _(12)_       | _timespec_ | **MTime**         | File modification time                         |
 | 8            | int64      | - MTimeSec        | File modification time (seconds since epoch)   |
 | 4            | int32      | - MTimeNsec       | File modification time (nanoseconds)           |
@@ -324,17 +336,29 @@ All integer types are written as little-endian, and all strings are UTF-8 encode
 
 ### Block
 
-`Block` is serialized to:
+A block is separated into a header and data section. Each section is encrypted using XChaCha20-Poly1305
+with a random nonce and the block id as associated data.
 
-| Size (bytes) | Type   | Field            | Description                                 |
-| ------------ | ------ | ---------------- | ------------------------------------------- |
-| _(96)_       |        | **Header**       | Header of the block                         |
-| 2            | uint16 | _format version_ | Serialization format version (`0x01`)       |
-| 8            | uint64 | Flags            | Flags for the block (see below)             |
-| 72           | EncKey | EncryptedDEK     | Block's encryption key (encrypted with KEK) |
-| 4            | uint32 | DataSize         | Size of the following data (N)              |
-| 10           |        | _padding_        | Header padding to 96 bytes                  |
-| N            | uint8  | **Data**         | Encrypted data of the block                 |
+| Size (bytes) | Type    | Field               | Description                                    |
+| ------------ | ------- | ------------------- | ---------------------------------------------- |
+| _(86)_       |         | **Header**          | KEK-AEAD-encrypted block header                |
+| 24           |         | - AEAD nonce        | Random XChaCha20-Poly1305 nonce                |
+| 2            | uint16  | - _Format version_  | Serialization format version (`0x01`)          |
+| 8            | uint64  | - Flags             | Flags for the block (see below)                |
+| 32           | RawKey  | - DEK               | Per-block random data encryption key           |
+| 4            | uint32  | - EncryptedDataSize | Unpadded data size (`N`)                       |
+| 16           |         | - AEAD tag          | AEAD authentication tag                        |
+| _(N+P+40)_   |         | **Data**            | DEK-AEAD-encrypted block data                  |
+| 24           |         | - AEAD nonce        | Random XChaCha20-Poly1305 nonce                |
+| N            | uint8   | - data              | The unpadded block data                        |
+| P            | uint8   | - padding           | Padding (see [Padding](#padding))              |
+| 16           |         | - AEAD tag          | AEAD authentication tag                        |
+
+Block flags:
+
+| Bit | Name             | Description                                          |
+| --- | ---------------- | ---------------------------------------------------- |
+| 0   | BlockFlagDeflate | Data is Deflate-compressed before encryption         |
 
 ## Development
 
