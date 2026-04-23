@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	MaxBlockSize               = 8 * 1024 * 1024
-	BlockHeaderSize            = 96
+	// Unencrypted header size.
+	RawBlockHeaderSize = 46
+	// Encrypted and padded header size.
+	BlockHeaderSize            = 86
 	MaxEncryptedBlockDataSize  = MaxBlockSize - BlockHeaderSize
 	MaxBlockDataSize           = MaxEncryptedBlockDataSize - TotalCipherOverhead
 	UpdateHeadRevisionLockName = "head"
@@ -35,27 +37,17 @@ Copy it to a secure place (a password manager might be a good choice) or
 even print it out and keep it somewhere safe.
 `, "\n ")
 
-type BlockId Sha256Hmac
-
-func (id BlockId) String() string {
-	return hex.EncodeToString(id[:])
-}
-
 const (
 	BlockFlagDeflate uint64 = 1
 )
 
 type BlockHeader struct {
-	BlockId           BlockId
 	Flags             uint64 // See `BlockFlag` constants.
-	EncryptedDEK      EncryptedKey
+	DEK               RawKey
 	EncryptedDataSize uint32
 }
 
-type Block struct {
-	Header        BlockHeader
-	EncryptedData []byte
-}
+type RawBlockHeader [RawBlockHeaderSize]byte
 
 const (
 	EncryptionVersion uint16 = 1
@@ -255,24 +247,26 @@ func (r *Repository) GearCDCTable() GearCDCTable {
 	return r.gearCDCTable
 }
 
-// Return `true` if the block already existed.
-func (r *Repository) WriteBlock(data []byte) (bool, BlockHeader, error) {
+// If `dataBytesWritten` is nil then the block already existed. Otherwise it returns the
+// size of `data` after being compressed (if applicable).
+func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten *int, err error) {
 	if len(data) > MaxBlockDataSize {
-		return false, BlockHeader{}, Errorf("data size %d exceeds maximum block size %d", len(data), MaxBlockDataSize)
+		return BlockId{}, nil, Errorf("data size %d exceeds maximum block size %d", len(data), MaxBlockDataSize)
 	}
-	blockId := BlockId(CalculateHmac(data, r.blockIdHmacKey))
-	readHeader, err := r.storage.ReadBlockHeader(blockId)
-	if err == nil {
-		return true, readHeader, nil
-	} else if !errors.Is(err, ErrBlockNotFound) {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to read header of block %s", blockId)
+	blockId = BlockId(CalculateHmac(data, r.blockIdHmacKey))
+	ok, err := r.storage.HasBlock(blockId)
+	if ok {
+		return blockId, nil, nil
+	}
+	if err != nil {
+		return blockId, nil, WrapErrorf(err, "failed to read header of block %s", blockId)
 	}
 	// Compress data if possible.
 	var header BlockHeader
 	if IsCompressible(data) {
 		compressed, err := Compress(data)
 		if err != nil {
-			return false, BlockHeader{}, WrapErrorf(err, "failed to compress data")
+			return blockId, nil, WrapErrorf(err, "failed to compress data of block %s", blockId)
 		}
 		compressionRatio := float64(len(compressed)) / float64(len(data))
 		if compressionRatio < 0.95 {
@@ -283,72 +277,84 @@ func (r *Repository) WriteBlock(data []byte) (bool, BlockHeader, error) {
 	// Encrypt data.
 	dek, err := NewRawKey()
 	if err != nil {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to generate random DEK for block %s", blockId)
-	}
-	header.BlockId = blockId
-	_, err = Encrypt(dek[:], r.kekCipher, blockId[:], header.EncryptedDEK[:])
-	if err != nil {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to encrypt DEK with KEK for block %s", blockId)
+		return blockId, nil, WrapErrorf(err, "failed to generate random DEK for block %s", blockId)
 	}
 	dekCypher, err := NewCipher(dek)
 	if err != nil {
-		return false, BlockHeader{}, WrapErrorf(
+		return blockId, nil, WrapErrorf(
 			err,
 			"failed to create a XChaCha20Poly1305 cipher from DEK for block %s",
 			blockId,
 		)
 	}
-	encryptedData := make([]byte, len(data)+TotalCipherOverhead)
-	encryptedData, err = Encrypt(data, dekCypher, nil, encryptedData)
+	blockData := make([]byte, len(data)+TotalCipherOverhead+BlockHeaderSize)
+	encryptedData, err := Encrypt(data, dekCypher, nil, blockData[BlockHeaderSize:])
 	if err != nil {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to encrypt data with DEK for block %s", blockId)
+		return blockId, nil, WrapErrorf(err, "failed to encrypt data with DEK for block %s", blockId)
 	}
+	// Encrypt header.
+	header.DEK = dek
 	header.EncryptedDataSize = uint32(len(encryptedData)) //nolint:gosec
-	block := Block{Header: header, EncryptedData: encryptedData}
-	// Write block.
-	exists, err := r.storage.WriteBlock(block)
+	headerData := RawBlockHeader{}
+	if err := MarshalBlockHeader(&header, &headerData); err != nil {
+		return blockId, nil, WrapErrorf(err, "failed to marshal block header %s", blockId)
+	}
+	_, err = Encrypt(headerData[:], r.kekCipher, blockId[:], blockData[:BlockHeaderSize])
 	if err != nil {
-		return false, BlockHeader{}, WrapErrorf(err, "failed to write block %s", blockId)
+		return blockId, nil, WrapErrorf(err, "failed to encrypt block header with KEK for block %s", blockId)
+	}
+	// Write block.
+	exists, err := r.storage.WriteBlock(blockId, blockData)
+	if err != nil {
+		return blockId, nil, WrapErrorf(err, "failed to write block %s", blockId)
 	}
 	if exists {
-		header, err := r.storage.ReadBlockHeader(blockId)
-		if err != nil {
-			return false, BlockHeader{}, WrapErrorf(err, "failed to read header of existing block %s", blockId)
-		}
-		return true, header, nil
+		return blockId, nil, nil
 	}
-	return false, block.Header, nil
+	size := len(data)
+	return blockId, &size, nil
 }
 
-func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, BlockHeader, error) {
-	encryptedData, header, err := r.storage.ReadBlock(blockId, buf)
+func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
+	encryptedBlock, err := r.storage.ReadBlock(blockId, buf)
 	if err != nil {
-		return nil, BlockHeader{}, WrapErrorf(err, "failed to read block %s", blockId)
+		return nil, WrapErrorf(err, "failed to read block %s", blockId)
 	}
-	dek := make([]byte, RawKeySize)
-	dek, err = Decrypt(header.EncryptedDEK[:], r.kekCipher, blockId[:], dek)
+	rawHeader := encryptedBlock[:BlockHeaderSize]
+	rawHeader, err = DecryptInPlace(rawHeader, r.kekCipher, blockId[:])
 	if err != nil {
-		return nil, BlockHeader{}, WrapErrorf(err, "failed to decrypt DEK with KEK for block %s", blockId)
+		return nil, WrapErrorf(err, "failed to decrypt block header with KEK for block %s", blockId)
 	}
-	dekCypher, err := NewCipher(RawKey(dek))
+	header, err := UnmarshalBlockHeader(RawBlockHeader(rawHeader))
 	if err != nil {
-		return nil, BlockHeader{}, WrapErrorf(
+		return nil, WrapErrorf(err, "failed to unmarshal block header for block %s", blockId)
+	}
+	dekCypher, err := NewCipher(header.DEK)
+	if err != nil {
+		return nil, WrapErrorf(
 			err,
 			"failed to create a XChaCha20Poly1305 cipher from DEK for block %s",
 			blockId,
 		)
 	}
-	data, err := DecryptInPlace(encryptedData, dekCypher, nil)
+	if int(header.EncryptedDataSize)+BlockHeaderSize > len(buf) {
+		return nil, Errorf("block data size exceeds block limit for block %s", blockId)
+	}
+	data, err := DecryptInPlace(
+		encryptedBlock[BlockHeaderSize:BlockHeaderSize+header.EncryptedDataSize],
+		dekCypher,
+		nil,
+	)
 	if err != nil {
-		return nil, BlockHeader{}, WrapErrorf(err, "failed to decrypt data with DEK for block %s", blockId)
+		return nil, WrapErrorf(err, "failed to decrypt data with DEK for block %s", blockId)
 	}
 	if header.Flags&BlockFlagDeflate != 0 {
 		data, err = Decompress(data)
 		if err != nil {
-			return nil, BlockHeader{}, WrapErrorf(err, "failed to decompress data")
+			return nil, WrapErrorf(err, "failed to decompress data")
 		}
 	}
-	return data, header, nil
+	return data, nil
 }
 
 func (r *Repository) Head() (RevisionId, error) {
@@ -364,7 +370,7 @@ func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision
 	if revisionId.IsRoot() {
 		return Revision{}, ErrRootRevision
 	}
-	data, _, err := r.ReadBlock(BlockId(revisionId), buf)
+	data, err := r.ReadBlock(BlockId(revisionId), buf)
 	if err != nil {
 		return Revision{}, WrapErrorf(err, "failed to read revision %s", revisionId)
 	}
@@ -412,11 +418,11 @@ func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
 	if err := MarshalRevision(revision, revBuf); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to marshal revision")
 	}
-	_, blockHeader, err := r.WriteBlock(revBuf.Bytes())
+	blockId, _, err := r.WriteBlock(revBuf.Bytes())
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write revision block")
 	}
-	revisionId := RevisionId(blockHeader.BlockId)
+	revisionId := RevisionId(blockId)
 	if err := WriteRef(r.storage, "head", revisionId); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write head reference")
 	}
@@ -449,20 +455,17 @@ func ReadRef(storage Storage, name string) (RevisionId, error) {
 	return RevisionId(data), nil
 }
 
-func MarshalBlockHeader(header *BlockHeader, w io.Writer) error {
-	bw := NewBinaryWriter(w)
+func MarshalBlockHeader(header *BlockHeader, target *RawBlockHeader) error {
+	bw := NewBinaryWriter(NewFixedBufWriter(target[:]))
 	bw.Write(StorageVersion)
 	bw.Write(header.Flags)
-	bw.Write(header.EncryptedDEK)
+	bw.Write(header.DEK)
 	bw.Write(header.EncryptedDataSize)
-	bw.Write([10]byte{}) // padding
 	return bw.Err
 }
 
-// `BlockHeader.BlockId` is not written in `MarshalBlockHeader` because it is always implied.
-// That's why we need to pass the `BlockId` here.
-func UnmarshalBlockHeader(blockId BlockId, r io.Reader) (BlockHeader, error) {
-	br := NewBinaryReader(r)
+func UnmarshalBlockHeader(data RawBlockHeader) (BlockHeader, error) {
+	br := NewBinaryReader(bytes.NewBuffer(data[:]))
 	var version uint16
 	br.Read(&version)
 	if br.Err == nil && version != StorageVersion {
@@ -470,10 +473,8 @@ func UnmarshalBlockHeader(blockId BlockId, r io.Reader) (BlockHeader, error) {
 	}
 	var header BlockHeader
 	br.Read(&header.Flags)
-	br.Read(&header.EncryptedDEK)
+	br.Read(&header.DEK)
 	br.Read(&header.EncryptedDataSize)
-	br.Skip(10) // padding
-	header.BlockId = blockId
 	return header, br.Err
 }
 

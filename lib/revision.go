@@ -184,7 +184,7 @@ func (rr *RevisionReader) Read(buf BlockBuf) (*RevisionEntry, error) {
 			return nil, io.EOF
 		}
 		blockId := rr.revision.Blocks[rr.blockIndex]
-		data, _, err := rr.repository.ReadBlock(blockId, buf)
+		data, err := rr.repository.ReadBlock(blockId, buf)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read block %s", blockId)
 		}

@@ -109,14 +109,14 @@ func TestSyncRepository(t *testing.T) {
 		src := td.NewTestRepository(t, td.NewFS(t))
 		dst := cloneRepository(t, src)
 
-		_, blockHeader, err := src.WriteBlock([]byte("shared"))
+		blockId, _, err := src.WriteBlock([]byte("shared"))
 		assert.NoError(err)
 		entry1 := td.RevisionEntry("a.txt", RevisionEntryAdd)
-		entry1.Metadata.BlockIds = []BlockId{blockHeader.BlockId}
+		entry1.Metadata.BlockIds = []BlockId{blockId}
 		entry1.Metadata.Size = 6
 		entry1.Metadata.FileHash = td.SHA256("shared")
 		entry2 := td.RevisionEntry("b.txt", RevisionEntryAdd)
-		entry2.Metadata.BlockIds = []BlockId{blockHeader.BlockId}
+		entry2.Metadata.BlockIds = []BlockId{blockId}
 		entry2.Metadata.Size = 6
 		entry2.Metadata.FileHash = td.SHA256("shared")
 		commit, err := NewCommit(src.Repository, td.NewFS(t))
@@ -131,7 +131,7 @@ func TestSyncRepository(t *testing.T) {
 		assert.NoError(err)
 
 		assert.Equal(3, monitor.CountCalls("OnCopyBlock"))
-		assert.Equal(1, monitor.CountBlockCopies(blockHeader.BlockId))
+		assert.Equal(1, monitor.CountBlockCopies(blockId))
 	})
 
 	t.Run("Fails when destination head is not in source history", func(t *testing.T) {
@@ -171,12 +171,12 @@ func testEntry(t *testing.T, r *TestRepository, path, content string) (*Revision
 	t.Helper()
 	assert := NewAssert(t)
 	entry := td.RevisionEntry(path, RevisionEntryAdd)
-	_, blockHeader, err := r.WriteBlock([]byte(content))
+	blockId, _, err := r.WriteBlock([]byte(content))
 	assert.NoError(err)
-	entry.Metadata.BlockIds = []BlockId{blockHeader.BlockId}
+	entry.Metadata.BlockIds = []BlockId{blockId}
 	entry.Metadata.Size = int64(len(content))
 	entry.Metadata.FileHash = td.SHA256(content)
-	return entry, blockHeader.BlockId
+	return entry, blockId
 }
 
 func assertSameHistory(t *testing.T, src, dst *TestRepository) {

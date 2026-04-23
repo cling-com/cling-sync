@@ -213,3 +213,15 @@ func TestBinaryReader(t *testing.T) {
 		assert.Equal("", s)
 	})
 }
+
+func TestFixedBufWriter(t *testing.T) {
+	t.Parallel()
+	t.Run("Writing past the buffer returns io.ErrShortBuffer", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewFixedBufWriter(make([]byte, 4))
+		n, err := sut.Write([]byte("abcde"))
+		assert.ErrorIs(err, io.ErrShortBuffer)
+		assert.Equal(0, n)
+	})
+}

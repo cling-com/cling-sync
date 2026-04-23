@@ -70,15 +70,15 @@ func SyncRepository( //nolint:funlen
 		if _, ok := blocksSeen[blockId]; ok {
 			return nil
 		}
-		data, header, err := src.storage.ReadBlock(blockId, blockBuf)
+		data, err := src.storage.ReadBlock(blockId, blockBuf)
 		if err != nil {
 			return WrapErrorf(err, "failed to read block %s", blockId)
 		}
-		existed, err := dst.WriteBlock(Block{header, data})
+		existed, err := dst.WriteBlock(blockId, data)
 		if err != nil {
 			return WrapErrorf(err, "failed to write block %s", blockId)
 		}
-		opts.Monitor.OnCopyBlock(blockId, existed, BlockHeaderSize+len(data))
+		opts.Monitor.OnCopyBlock(blockId, existed, len(data))
 		blocksSeen[blockId] = true
 		return nil
 	}

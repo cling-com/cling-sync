@@ -91,39 +91,41 @@ func (m *DefaultCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
 
 func (m *DefaultCommitMonitor) OnAddBlock(
 	entry *lib.RevisionEntry,
-	header *lib.BlockHeader,
-	existed bool,
-	dataSize int64,
+	blockId lib.BlockId,
+	dataSize int,
+	dataBytesWritten *int,
 ) error {
 	if err := m.cancel(); err != nil {
 		return err
 	}
+	existed := dataBytesWritten == nil
+	isCompressed := dataBytesWritten != nil && dataSize != *dataBytesWritten
 	if existed {
-		m.RawBytesReused += dataSize
+		m.RawBytesReused += int64(dataSize)
 	} else {
-		m.RawBytesAdded += dataSize
-		m.CompressedBytesAdded += int64(header.EncryptedDataSize) - lib.TotalCipherOverhead
+		m.RawBytesAdded += int64(dataSize)
+		m.CompressedBytesAdded += int64(*dataBytesWritten)
 	}
 	m.emitProgress()
 	if m.Mode != DefaultMonitorModeVerbose {
 		return nil
 	}
 	if existed {
-		m.emit(fmt.Sprintf("  block  %s %6s (old)", header.BlockId, FormatBytes(dataSize)))
+		m.emit(fmt.Sprintf("  block  %s %6s (old)", blockId, FormatBytes(int64(dataSize))))
 		return nil
 	}
-	if header.Flags&lib.BlockFlagDeflate == lib.BlockFlagDeflate {
+	if isCompressed {
 		m.emit(
 			fmt.Sprintf(
 				"  block  %s %6s (new) (compressed: %.2f)",
-				header.BlockId,
-				FormatBytes(dataSize),
-				float64(header.EncryptedDataSize-lib.TotalCipherOverhead)/float64(dataSize),
+				blockId,
+				FormatBytes(int64(dataSize)),
+				float64(*dataBytesWritten)/float64(dataSize),
 			),
 		)
 		return nil
 	}
-	m.emit(fmt.Sprintf("  block  %s %6s (new)", header.BlockId, FormatBytes(dataSize)))
+	m.emit(fmt.Sprintf("  block  %s %6s (new)", blockId, FormatBytes(int64(dataSize))))
 	return nil
 }
 

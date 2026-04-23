@@ -277,3 +277,22 @@ func (br *BinaryReader) ReadLen() int {
 	}
 	return int(l)
 }
+
+// Hard fail if trying to write beyond the length of the underlying buffer.
+type FixedBufWriter struct {
+	buf []byte
+	n   int
+}
+
+func NewFixedBufWriter(buf []byte) *FixedBufWriter {
+	return &FixedBufWriter{buf, 0}
+}
+
+func (w *FixedBufWriter) Write(p []byte) (int, error) {
+	if len(p) > len(w.buf)-w.n {
+		return 0, io.ErrShortBuffer
+	}
+	n := copy(w.buf[w.n:], p)
+	w.n += n
+	return n, nil
+}

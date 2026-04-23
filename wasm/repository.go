@@ -218,7 +218,7 @@ func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:f
 		data := bytes.NewBuffer(nil)
 		data.Grow(int(file.Metadata.Size))
 		for _, blockId := range file.Metadata.BlockIds {
-			block, _, err := repository.ReadBlock(blockId, buf)
+			block, err := repository.ReadBlock(blockId, buf)
 			if err != nil {
 				reject(js.ValueOf(err.Error()))
 				return

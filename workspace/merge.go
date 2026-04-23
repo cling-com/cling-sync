@@ -22,7 +22,9 @@ var (
 
 type CommitMonitor interface {
 	OnStart(entry *lib.RevisionEntry) error
-	OnAddBlock(entry *lib.RevisionEntry, header *lib.BlockHeader, existed bool, dataSize int64) error
+	// bytesWritten: if nil, the block already existed; otherwise, the total block size (including
+	// header) written.
+	OnAddBlock(entry *lib.RevisionEntry, blockId lib.BlockId, dataSize int, bytesWritten *int) error
 	OnEnd(entry *lib.RevisionEntry) error
 	OnBeforeCommit() error
 }
@@ -676,7 +678,7 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 	}
 	defer f.Close() //nolint:errcheck
 	for _, blockId := range entry.Metadata.BlockIds {
-		data, _, err := m.repository.ReadBlock(blockId, m.blockBuf)
+		data, err := m.repository.ReadBlock(blockId, m.blockBuf)
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {
@@ -780,14 +782,14 @@ func AddFileToRepository(
 		if _, err := fileHash.Write(data); err != nil {
 			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to update file hash")
 		}
-		existed, blockHeader, err := repository.WriteBlock(data)
+		blockId, bytesWritten, err := repository.WriteBlock(data)
 		if err != nil {
 			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to write block")
 		}
-		if err := mon.OnAddBlock(entry, &blockHeader, existed, int64(len(data))); err != nil {
+		if err := mon.OnAddBlock(entry, blockId, len(data), bytesWritten); err != nil {
 			return lib.FileMetadata{}, lib.WrapErrorf(err, "commit monitor add block failed for %s", path)
 		}
-		blockIds = append(blockIds, blockHeader.BlockId)
+		blockIds = append(blockIds, blockId)
 	}
 	return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256(fileHash.Sum(nil)), blockIds), nil
 }

@@ -190,9 +190,9 @@ func (m *TestCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
 
 func (m *TestCommitMonitor) OnAddBlock(
 	entry *lib.RevisionEntry,
-	header *lib.BlockHeader,
-	existed bool,
-	dataSize int64,
+	blockId lib.BlockId,
+	dataSize int,
+	dataBytesWritten *int,
 ) error {
 	return nil
 }

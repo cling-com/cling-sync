@@ -105,12 +105,9 @@ func VerifyBlock(
 	buf BlockBuf,
 ) (int, bool, error) {
 	duplicate := seen[blockId]
-	data, header, err := repository.ReadBlock(blockId, buf)
+	data, err := repository.ReadBlock(blockId, buf)
 	if err != nil {
 		return 0, false, WrapErrorf(err, "failed to read block %s", blockId)
-	}
-	if header.BlockId != blockId {
-		return 0, false, Errorf("block id mismatch: want %s, got %s", blockId, header.BlockId)
 	}
 	if fileHash != nil {
 		if _, err := fileHash.Write(data); err != nil {

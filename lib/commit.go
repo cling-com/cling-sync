@@ -120,11 +120,11 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to read sorted chunk file")
 		}
-		_, blockHeader, err := c.repository.WriteBlock(buf)
+		blockId, _, err := c.repository.WriteBlock(buf)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to write block")
 		}
-		blockIds = append(blockIds, blockHeader.BlockId)
+		blockIds = append(blockIds, blockId)
 	}
 	now := time.Now()
 	revision := &Revision{

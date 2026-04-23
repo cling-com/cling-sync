@@ -70,7 +70,7 @@ func TestCommit(t *testing.T) {
 		assert.NoError(err)
 
 		// Change the head.
-		_, blockHeader, err := r.WriteBlock([]byte{1, 2, 3})
+		blockId, _, err := r.WriteBlock([]byte{1, 2, 3})
 		assert.NoError(err)
 		_, err = r.WriteRevision(&Revision{
 			TimestampSec:  123456789,
@@ -78,7 +78,7 @@ func TestCommit(t *testing.T) {
 			Message:       "test message",
 			Author:        "test author",
 			Parent:        head,
-			Blocks:        []BlockId{blockHeader.BlockId},
+			Blocks:        []BlockId{blockId},
 		})
 		assert.NoError(err)
 

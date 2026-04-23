@@ -2,7 +2,6 @@ package lib
 
 import (
 	"bytes"
-	"encoding/binary"
 	"io"
 	"io/fs"
 	"path/filepath"
@@ -176,38 +175,26 @@ func TestFileStorageMultiPurpose(t *testing.T) {
 
 	t.Run("Read and write block", func(t *testing.T) { //nolint:paralleltest
 		// Write a block with the same block id for each purpose.
-		repoBlock := Block{
-			Header: BlockHeader{
-				BlockId:           td.BlockId("1"),
-				Flags:             0,
-				EncryptedDEK:      td.EncryptedKey("1"),
-				EncryptedDataSize: 0, // is set below
-			},
-			EncryptedData: []byte("repository data"),
-		}
-		repoBlock.Header.EncryptedDataSize = uint32(len(repoBlock.EncryptedData))
-		workspaceBlock := repoBlock
-		workspaceBlock.EncryptedData = []byte("workspace data")
-		workspaceBlock.Header.EncryptedDataSize = uint32(len(workspaceBlock.EncryptedData))
+		repoBlock := []byte("a repo block")
+		workspaceBlock := []byte("a workspace block")
+		blockId := td.BlockId("1")
 
-		ok, err := repo.WriteBlock(repoBlock)
+		ok, err := repo.WriteBlock(blockId, repoBlock)
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
-		ok, err = workspace.WriteBlock(workspaceBlock)
+		ok, err = workspace.WriteBlock(blockId, workspaceBlock)
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
 		buf := BlockBuf{}
-		data, header, err := repo.ReadBlock(repoBlock.Header.BlockId, buf)
+		data, err := repo.ReadBlock(blockId, buf)
 		assert.NoError(err)
-		assert.Equal(repoBlock.Header, header)
-		assert.Equal(repoBlock.EncryptedData, data)
+		assert.Equal(repoBlock, data)
 
-		data, header, err = workspace.ReadBlock(workspaceBlock.Header.BlockId, buf)
+		data, err = workspace.ReadBlock(blockId, buf)
 		assert.NoError(err)
-		assert.Equal(workspaceBlock.Header, header)
-		assert.Equal(workspaceBlock.EncryptedData, data)
+		assert.Equal(workspaceBlock, data)
 	})
 }
 
@@ -221,82 +208,49 @@ func TestFileStorageBlocks(t *testing.T) {
 		err = sut.Init(nil, "")
 		assert.NoError(err)
 
-		block := Block{
-			Header: BlockHeader{
-				EncryptedDEK:      td.EncryptedKey("1"),
-				BlockId:           td.BlockId("1"),
-				Flags:             0xffffffffffffffff,
-				EncryptedDataSize: 0, // is set below
-			},
-			EncryptedData: []byte("block 1 data"),
-		}
-		block.Header.EncryptedDataSize = uint32(len(block.EncryptedData))
-		ok, err := sut.HasBlock(block.Header.BlockId)
+		blockId := td.BlockId("1")
+		data := []byte("block 1 data")
+		ok, err := sut.HasBlock(blockId)
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
 		// Write the block and verify its format on disk.
-		existed, err := sut.WriteBlock(block)
+		existed, err := sut.WriteBlock(blockId, data)
 		assert.NoError(err)
 		assert.Equal(false, existed)
 
 		// Verify size and permissions.
-		stat, err := sut.FS.Stat(sut.blockPath(block.Header.BlockId))
+		stat, err := sut.FS.Stat(sut.blockPath(blockId))
 		assert.NoError(err)
-		assert.Equal(int64(len(block.EncryptedData))+BlockHeaderSize, stat.Size())
+		assert.Equal(int64(len(data)), stat.Size())
 		assert.Equal(fs.FileMode(0o400), stat.Mode().Perm())
 
-		f, err := sut.FS.OpenRead(sut.blockPath(block.Header.BlockId))
+		f, err := sut.FS.OpenRead(sut.blockPath(blockId))
 		assert.NoError(err)
 		defer f.Close() //nolint:errcheck
-		// Read header.
-		// We don't use the const `BlockHeaderSize` here so the test
-		// also acts as a kind of regression test.
-		headerBuf := make([]byte, 96)
-		_, err = f.Read(headerBuf)
+		onDisk, err := io.ReadAll(f)
 		assert.NoError(err)
-		header := bytes.NewReader(headerBuf)
-		var storageVersion uint16
-		err = binary.Read(header, binary.LittleEndian, &storageVersion)
-		assert.NoError(err)
-		assert.Equal(StorageVersion, storageVersion)
-		var flags uint64
-		err = binary.Read(header, binary.LittleEndian, &flags)
-		assert.NoError(err)
-		assert.Equal(block.Header.Flags, flags)
-		var encryptedDEK EncryptedKey
-		err = binary.Read(header, binary.LittleEndian, &encryptedDEK)
-		assert.NoError(err)
-		assert.Equal(block.Header.EncryptedDEK, encryptedDEK)
-		var dataSize uint32
-		err = binary.Read(header, binary.LittleEndian, &dataSize)
-		assert.NoError(err)
-		assert.Equal(len(block.EncryptedData), int(dataSize))
-		// Read data.
-		data, err := io.ReadAll(f)
-		assert.NoError(err)
-		assert.Equal(block.EncryptedData, data)
+		assert.Equal(data, onDisk)
 		_ = f.Close()
 
 		// Now `HasBlock` should return `true`.
-		ok, err = sut.HasBlock(block.Header.BlockId)
+		ok, err = sut.HasBlock(blockId)
 		assert.NoError(err)
 		assert.Equal(true, ok)
 
 		// Read back the whole block with `ReadBlock`.
 		buf := BlockBuf{}
-		readData, readHeader, err := sut.ReadBlock(block.Header.BlockId, buf)
+		readData, err := sut.ReadBlock(blockId, buf)
 		assert.NoError(err)
-		assert.Equal(block.Header, readHeader)
-		assert.Equal(block.EncryptedData, readData)
+		assert.Equal(data, readData)
 
 		// Write the block again - it should be seen as already existing.
-		existed, err = sut.WriteBlock(block)
+		existed, err = sut.WriteBlock(blockId, data)
 		assert.NoError(err)
 		assert.Equal(true, existed)
 	})
 
-	t.Run("ReadBlock and ReadBlockHeader not found", func(t *testing.T) {
+	t.Run("ReadBlock not found", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
@@ -305,55 +259,23 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.NoError(err)
 
 		buf := BlockBuf{}
-		_, _, err = sut.ReadBlock(td.BlockId("1"), buf)
-		assert.ErrorIs(err, ErrBlockNotFound)
-
-		_, err = sut.ReadBlockHeader(td.BlockId("1"))
+		_, err = sut.ReadBlock(td.BlockId("1"), buf)
 		assert.ErrorIs(err, ErrBlockNotFound)
 	})
 
-	t.Run("WriteBlock: Block.Data length must not exceed limits", func(t *testing.T) {
+	t.Run("WriteBlock: data length must not exceed limits", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
 		assert.NoError(err)
 		err = sut.Init(nil, "")
 		assert.NoError(err)
-		block := Block{
-			Header: BlockHeader{
-				EncryptedDEK:      td.EncryptedKey("1"),
-				BlockId:           td.BlockId("1"),
-				Flags:             0,
-				EncryptedDataSize: 0, // is set below
-			},
-			EncryptedData: make([]byte, MaxEncryptedBlockDataSize+1),
-		}
-		block.Header.EncryptedDataSize = uint32(len(block.EncryptedData))
-		_, err = sut.WriteBlock(block)
-		assert.Error(err, "block data too large")
-		_, err = sut.FS.Stat(sut.blockPath(block.Header.BlockId))
+		blockId := td.BlockId("1")
+		data := make([]byte, MaxBlockSize+1)
+		_, err = sut.WriteBlock(blockId, data)
+		assert.Error(err, "is too large")
+		_, err = sut.FS.Stat(sut.blockPath(blockId))
 		assert.ErrorIs(err, fs.ErrNotExist)
-	})
-}
-
-func TestBlockHeaderMarshalUnmarshal(t *testing.T) {
-	t.Parallel()
-	t.Run("Happy path", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		header := BlockHeader{
-			EncryptedDEK:      td.EncryptedKey("1"),
-			BlockId:           td.BlockId("1"),
-			Flags:             0,
-			EncryptedDataSize: 1234,
-		}
-		buf := new(bytes.Buffer)
-		err := binary.Write(buf, binary.LittleEndian, header)
-		assert.NoError(err)
-		var header2 BlockHeader
-		err = binary.Read(buf, binary.LittleEndian, &header2)
-		assert.NoError(err)
-		assert.Equal(header, header2)
 	})
 }
 
@@ -367,7 +289,7 @@ func TestBlockBuf(t *testing.T) {
 		buf := BlockBuf{}
 		src := bytes.NewReader([]byte("hello"))
 
-		data, err := buf.ReadData(src)
+		data, err := buf.Read(src)
 		assert.NoError(err)
 		assert.Equal([]byte("hello"), data)
 		assert.Equal(0, src.Len())

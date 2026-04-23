@@ -463,7 +463,7 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 			// Rebuild the content from the repository.
 			buf := bytes.NewBuffer([]byte{})
 			for _, blockId := range entry.Metadata.BlockIds {
-				data, _, err := r.ReadBlock(blockId, blockBuf)
+				data, err := r.ReadBlock(blockId, blockBuf)
 				r.assert.NoError(err)
 				buf.Write(data)
 			}

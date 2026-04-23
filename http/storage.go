@@ -101,56 +101,22 @@ func (c *HTTPStorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
 	return resp.StatusCode == http.StatusOK, nil
 }
 
-func (c *HTTPStorageClient) ReadBlock(blockId lib.BlockId, buf lib.BlockBuf) ([]byte, lib.BlockHeader, error) {
+func (c *HTTPStorageClient) ReadBlock(blockId lib.BlockId, buf lib.BlockBuf) ([]byte, error) {
 	resp, err := c.request(context.Background(), http.MethodGet, "/storage/block/"+blockId.String(), nil, 404)
 	if err != nil {
-		return nil, lib.BlockHeader{}, lib.WrapErrorf(err, "failed to read block")
+		return nil, lib.WrapErrorf(err, "failed to read block")
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, lib.BlockHeader{}, lib.ErrBlockNotFound
+		return nil, lib.ErrBlockNotFound
 	}
-	header, err := lib.UnmarshalBlockHeader(blockId, bytes.NewReader(resp.Body))
-	if err != nil {
-		return nil, lib.BlockHeader{}, lib.WrapErrorf(err, "failed to unmarshal block header")
-	}
-	data := resp.Body[lib.BlockHeaderSize:]
-	if len(data) != int(header.EncryptedDataSize) {
-		return nil, lib.BlockHeader{}, lib.Errorf(
-			"read %d bytes, expected %d",
-			len(data),
-			header.EncryptedDataSize,
-		)
-	}
-	return data, header, nil
+	return resp.Body, nil
 }
 
-func (c *HTTPStorageClient) ReadBlockHeader(blockId lib.BlockId) (lib.BlockHeader, error) {
-	resp, err := c.request(context.Background(), http.MethodGet, "/storage/block/"+blockId.String()+"/header", nil, 404)
-	if err != nil {
-		return lib.BlockHeader{}, lib.WrapErrorf(err, "failed to read block header")
+func (c *HTTPStorageClient) WriteBlock(blockId lib.BlockId, data []byte) (bool, error) {
+	if len(data) > lib.MaxBlockSize {
+		return false, lib.Errorf("block %s is too large: %d", blockId, len(data))
 	}
-	if resp.StatusCode == http.StatusNotFound {
-		return lib.BlockHeader{}, lib.ErrBlockNotFound
-	}
-	body := bytes.NewReader(resp.Body)
-	header, err := lib.UnmarshalBlockHeader(blockId, body)
-	if err != nil {
-		return lib.BlockHeader{}, lib.WrapErrorf(err, "failed to unmarshal block header")
-	}
-	return header, nil
-}
-
-func (c *HTTPStorageClient) WriteBlock(block lib.Block) (bool, error) {
-	headerBytes := bytes.NewBuffer(nil)
-	if err := lib.MarshalBlockHeader(&block.Header, headerBytes); err != nil {
-		return false, lib.WrapErrorf(err, "failed to marshal block header")
-	}
-	r := io.MultiReader(headerBytes, bytes.NewReader(block.EncryptedData))
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return false, lib.WrapErrorf(err, "failed to read block data")
-	}
-	resp, err := c.request(context.Background(), http.MethodPut, "/storage/block/"+block.Header.BlockId.String(), body)
+	resp, err := c.request(context.Background(), http.MethodPut, "/storage/block/"+blockId.String(), data)
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to write block")
 	}
@@ -319,7 +285,6 @@ func (s *HTTPStorageServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /storage/open", s.Open)
 	mux.HandleFunc("HEAD /storage/block/{id}", s.HasBlock)
 	mux.HandleFunc("GET /storage/block/{id}", s.ReadBlock)
-	mux.HandleFunc("GET /storage/block/{id}/header", s.ReadBlockHeader)
 	mux.HandleFunc("PUT /storage/block/{id}", s.WriteBlock)
 	mux.HandleFunc("HEAD /storage/control/{section}/{name}", s.HasControlFile)
 	mux.HandleFunc("GET /storage/control/{section}/{name}", s.ReadControlFile)
@@ -362,10 +327,7 @@ func (s *HTTPStorageServer) HasBlock(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Return the block with the given ID.
-// The response body is binary:
-//   - `lib.BlockHeaderSize` bytes: the block header (see `lib.UnmarshalBlockHeader`)
-//   - encrypted block data
+// Return the block with the given ID. The response body is the opaque block bytes as stored.
 func (s *HTTPStorageServer) ReadBlock(w http.ResponseWriter, r *http.Request) {
 	hexId := r.PathValue("id")
 	id, err := hex.DecodeString(hexId)
@@ -374,7 +336,7 @@ func (s *HTTPStorageServer) ReadBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	buf := lib.BlockBuf{}
-	data, header, err := s.Storage.ReadBlock(lib.BlockId(id), buf)
+	data, err := s.Storage.ReadBlock(lib.BlockId(id), buf)
 	if err != nil {
 		if errors.Is(err, lib.ErrBlockNotFound) {
 			w.WriteHeader(http.StatusNotFound)
@@ -384,65 +346,31 @@ func (s *HTTPStorageServer) ReadBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)+lib.BlockHeaderSize))
-	if err := lib.MarshalBlockHeader(&header, w); err != nil {
-		s.error(lib.WrapErrorf(err, "failed to marshal block header"), w, http.StatusInternalServerError)
-		return
-	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	if _, err := w.Write(data); err != nil {
 		s.error(lib.WrapErrorf(err, "failed to write block data"), w, http.StatusInternalServerError)
 		return
 	}
 }
 
-func (s *HTTPStorageServer) ReadBlockHeader(w http.ResponseWriter, r *http.Request) {
-	hexId := r.PathValue("id")
-	id, err := hex.DecodeString(hexId)
-	if err != nil {
-		s.error(lib.WrapErrorf(err, "invalid block ID"), w, http.StatusBadRequest)
-		return
-	}
-	header, err := s.Storage.ReadBlockHeader(lib.BlockId(id))
-	if err != nil {
-		if errors.Is(err, lib.ErrBlockNotFound) {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		s.error(lib.WrapErrorf(err, "failed to read block header"), w, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.Itoa(lib.BlockHeaderSize))
-	if err := lib.MarshalBlockHeader(&header, w); err != nil {
-		s.error(lib.WrapErrorf(err, "failed to marshal block header"), w, http.StatusInternalServerError)
-		return
-	}
-}
-
-// Write a block. The request body must be binary:
-//   - `lib.BlockHeaderSize` bytes: the block header (see `lib.UnmarshalBlockHeader`)
-//   - encrypted block data
+// Write a block. The request body is the opaque block bytes as produced by the client.
 //
 // Return `200 OK` if the block already existed.
 // Return `201 Created` if the block was written.
 func (s *HTTPStorageServer) WriteBlock(w http.ResponseWriter, r *http.Request) {
 	hexId := r.PathValue("id")
-	id, err := hex.DecodeString(hexId)
+	blockIdBytes, err := hex.DecodeString(hexId)
 	if err != nil {
 		s.error(lib.WrapErrorf(err, "invalid block ID"), w, http.StatusBadRequest)
 		return
 	}
-	header, err := lib.UnmarshalBlockHeader(lib.BlockId(id), r.Body)
-	if err != nil {
-		s.error(lib.WrapErrorf(err, "failed to unmarshal block header"), w, http.StatusBadRequest)
-		return
-	}
+	blockId := lib.BlockId(blockIdBytes)
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		s.error(lib.WrapErrorf(err, "failed to read block data"), w, http.StatusBadRequest)
 		return
 	}
-	exists, err := s.Storage.WriteBlock(lib.Block{Header: header, EncryptedData: data})
+	exists, err := s.Storage.WriteBlock(blockId, data)
 	if err != nil {
 		s.error(lib.WrapErrorf(err, "failed to write block"), w, http.StatusInternalServerError)
 		return

@@ -4,6 +4,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -69,31 +70,13 @@ func TestHTTPStorageClient(t *testing.T) {
 		blockId := td.BlockId("1")
 
 		buf := lib.BlockBuf{}
-		_, _, err := client.ReadBlock(blockId, buf)
+		_, err := client.ReadBlock(blockId, buf)
 		assert.ErrorIs(err, lib.ErrBlockNotFound)
 
-		header := testWriteBlock(t, storage, blockId, []byte("abcd"))
-		data, readHeader, err := client.ReadBlock(blockId, buf)
+		testWriteBlock(t, storage, blockId, []byte("abcd"))
+		data, err := client.ReadBlock(blockId, buf)
 		assert.NoError(err)
-		assert.Equal(header, readHeader)
 		assert.Equal([]byte("abcd"), data)
-	})
-
-	t.Run("ReadBlockHeader", func(t *testing.T) {
-		t.Parallel()
-		assert := lib.NewAssert(t)
-		storage, srv := newSut(t)
-		defer srv.Close()
-		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
-
-		blockId := td.BlockId("1")
-		_, err := client.ReadBlockHeader(blockId)
-		assert.ErrorIs(err, lib.ErrBlockNotFound)
-
-		header := testWriteBlock(t, storage, blockId, []byte("abcd"))
-		readHeader, err := client.ReadBlockHeader(blockId)
-		assert.NoError(err)
-		assert.Equal(header, readHeader)
 	})
 
 	t.Run("WriteBlock", func(t *testing.T) {
@@ -104,30 +87,46 @@ func TestHTTPStorageClient(t *testing.T) {
 		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 
 		blockId := td.BlockId("1")
-		block := lib.Block{
-			Header: lib.BlockHeader{
-				EncryptedDEK:      td.EncryptedKey("1"),
-				BlockId:           blockId,
-				Flags:             0,
-				EncryptedDataSize: 5,
-			},
-			EncryptedData: []byte("abcde"),
-		}
-		ok, err := client.WriteBlock(block)
+		data := []byte("abcde")
+		ok, err := client.WriteBlock(blockId, data)
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
 		buf := lib.BlockBuf{}
-		data, readHeader, err := storage.ReadBlock(blockId, buf)
+		readData, err := storage.ReadBlock(blockId, buf)
 		assert.NoError(err)
-		assert.Equal(block.Header, readHeader)
-		assert.Equal(block.EncryptedData, data)
+		assert.Equal(data, readData)
 
 		// Write the same block again, it should go through but
 		// return `true` (i.e. block existed before).
-		ok, err = client.WriteBlock(block)
+		ok, err = client.WriteBlock(blockId, data)
 		assert.NoError(err)
 		assert.Equal(true, ok)
+	})
+
+	t.Run("WriteBlock rejects bodies larger than MaxBlockSize", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		_, srv := newSut(t)
+		defer srv.Close()
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
+		_, err := client.WriteBlock(td.BlockId("1"), make([]byte, lib.MaxBlockSize+1))
+		assert.Error(err, "is too large")
+	})
+
+	t.Run("WriteBlock/ReadBlock a MaxBlockSize block", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		storage, srv := newSut(t)
+		defer srv.Close()
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
+		blockId := td.BlockId("1")
+		data := make([]byte, lib.MaxBlockSize)
+		_, _ = rand.Read(data)
+		testWriteBlock(t, storage, blockId, data)
+		readData, err := client.ReadBlock(blockId, lib.BlockBuf{})
+		assert.NoError(err)
+		assert.Equal(data, readData)
 	})
 
 	t.Run("HasControlFile", func(t *testing.T) {
@@ -299,26 +298,7 @@ func TestHTTPStorageServer(t *testing.T) {
 		resp, err = http.Get(srv.URL + "/storage/block/" + blockId.String())
 		assert.NoError(err)
 		assert.Equal(200, resp.StatusCode)
-		assert.Equal(strconv.Itoa(lib.BlockHeaderSize+4), resp.Header.Get("Content-Length"))
-		assert.Equal("application/octet-stream", resp.Header.Get("Content-Type"))
-	})
-
-	t.Run("ReadBlockHeader", func(t *testing.T) {
-		t.Parallel()
-		assert := lib.NewAssert(t)
-		storage, srv := newSut(t)
-		defer srv.Close()
-		blockId := td.BlockId("1")
-		testWriteBlock(t, storage, blockId, []byte("abcd"))
-
-		resp, err := http.Get(srv.URL + "/storage/block/" + td.BlockId("not_found").String() + "/header")
-		assert.NoError(err)
-		assert.Equal(404, resp.StatusCode)
-
-		resp, err = http.Get(srv.URL + "/storage/block/" + blockId.String() + "/header")
-		assert.NoError(err)
-		assert.Equal(200, resp.StatusCode)
-		assert.Equal(strconv.Itoa(lib.BlockHeaderSize), resp.Header.Get("Content-Length"))
+		assert.Equal(strconv.Itoa(4), resp.Header.Get("Content-Length"))
 		assert.Equal("application/octet-stream", resp.Header.Get("Content-Type"))
 	})
 
@@ -329,36 +309,19 @@ func TestHTTPStorageServer(t *testing.T) {
 		defer srv.Close()
 
 		blockId := td.BlockId("1")
-		header := lib.BlockHeader{
-			EncryptedDEK:      td.EncryptedKey("1"),
-			BlockId:           blockId,
-			Flags:             lib.BlockFlagDeflate,
-			EncryptedDataSize: 8,
-		}
 		data := []byte("abcdefgh")
-		buf := bytes.NewBuffer(nil)
-		err := lib.MarshalBlockHeader(&header, buf)
-		assert.NoError(err)
-		_, err = buf.Write(data)
-		assert.NoError(err)
-		req, err := http.NewRequest(http.MethodPut, srv.URL+"/storage/block/"+blockId.String(), buf)
+		req, err := http.NewRequest(http.MethodPut, srv.URL+"/storage/block/"+blockId.String(), bytes.NewReader(data))
 		assert.NoError(err)
 		resp, err := http.DefaultClient.Do(req)
 		assert.NoError(err)
 		assert.Equal(201, resp.StatusCode)
 		blockBuf := lib.BlockBuf{}
-		data, readHeader, err := storage.ReadBlock(blockId, blockBuf)
+		readData, err := storage.ReadBlock(blockId, blockBuf)
 		assert.NoError(err)
-		assert.Equal(header, readHeader)
-		assert.Equal([]byte("abcdefgh"), data)
+		assert.Equal(data, readData)
 
 		// Write the same block again, it should go through but return `200 OK`.
-		buf = bytes.NewBuffer(nil)
-		err = lib.MarshalBlockHeader(&header, buf)
-		assert.NoError(err)
-		_, err = buf.Write(data)
-		assert.NoError(err)
-		req, err = http.NewRequest(http.MethodPut, srv.URL+"/storage/block/"+blockId.String(), buf)
+		req, err = http.NewRequest(http.MethodPut, srv.URL+"/storage/block/"+blockId.String(), bytes.NewReader(data))
 		assert.NoError(err)
 		resp, err = http.DefaultClient.Do(req)
 		assert.NoError(err)
@@ -461,18 +424,11 @@ func TestHTTPStorageServer(t *testing.T) {
 	})
 }
 
-func testWriteBlock(t *testing.T, storage *lib.FileStorage, blockId lib.BlockId, data []byte) lib.BlockHeader {
+func testWriteBlock(t *testing.T, storage *lib.FileStorage, blockId lib.BlockId, data []byte) {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	header := lib.BlockHeader{
-		EncryptedDEK:      td.EncryptedKey(blockId.String()),
-		BlockId:           blockId,
-		Flags:             0,
-		EncryptedDataSize: uint32(len(data)),
-	}
-	_, err := storage.WriteBlock(lib.Block{Header: header, EncryptedData: data})
+	_, err := storage.WriteBlock(blockId, data)
 	assert.NoError(err)
-	return header
 }
 
 func testStorage(t *testing.T) *lib.FileStorage {
