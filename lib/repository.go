@@ -300,7 +300,7 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 		)
 	}
 	blockData := make([]byte, len(data)+TotalCipherOverhead+BlockHeaderSize)
-	_, err = Encrypt(data, dekCypher, nil, blockData[BlockHeaderSize:])
+	_, err = Encrypt(data, dekCypher, blockId[:], blockData[BlockHeaderSize:])
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to encrypt data with DEK for block %s", blockId)
 	}
@@ -350,7 +350,7 @@ func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
 			blockId,
 		)
 	}
-	data, err := DecryptInPlace(encryptedBlock[BlockHeaderSize:], dekCypher, nil)
+	data, err := DecryptInPlace(encryptedBlock[BlockHeaderSize:], dekCypher, blockId[:])
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt data with DEK for block %s", blockId)
 	}
