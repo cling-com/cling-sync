@@ -19,7 +19,7 @@ func (f *LsFile) String() string {
 	mtime := time.Unix(f.Metadata.MTimeSec, int64(f.Metadata.MTimeNSec)).Format(time.RFC3339)
 	return fmt.Sprintf(
 		"%s %12d %s %s",
-		f.Metadata.ModeAndPerm.String(),
+		f.Metadata.FileMode.String(),
 		f.Metadata.Size,
 		mtime,
 		f.Path,
@@ -64,14 +64,14 @@ func (f *LsFile) Format(format *LsFormat) string {
 	} else {
 		path = f.Path.Base().String()
 	}
-	if f.Metadata.ModeAndPerm.IsDir() {
+	if f.Metadata.FileMode.IsDir() {
 		path += "/"
 	}
 	var mode string
 	if format.FullMode {
-		mode = f.Metadata.ModeAndPerm.String()
+		mode = f.Metadata.FileMode.String()
 	} else {
-		mode = f.Metadata.ModeAndPerm.ShortString()
+		mode = f.Metadata.FileMode.ShortString()
 	}
 	s := " " + path
 	if format.FileHash {

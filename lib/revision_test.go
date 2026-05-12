@@ -49,7 +49,7 @@ func TestRevisionEntry(t *testing.T) {
 		dirEntry := func(path string) *RevisionEntry {
 			t.Helper()
 			entry := td.RevisionEntry(path, RevisionEntryAdd)
-			entry.Metadata = td.FileMetadata(ModeDir)
+			entry.Metadata = td.FileMetadata(FileModeDir)
 			return entry
 		}
 		fileEntry := func(path string) *RevisionEntry {
@@ -88,10 +88,10 @@ func TestRevisionEntry(t *testing.T) {
 	t.Run("RevisionEntryPathCompare with different types", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		sut := td.RevisionEntryExt("a", RevisionEntryDelete, ModeDir, "")
-		assert.Equal(0, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryDelete, ModeDir, "")))
-		assert.Equal(0, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryAdd, ModeDir, "")))
-		assert.Equal(0, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryUpdate, ModeDir, "")))
+		sut := td.RevisionEntryExt("a", RevisionEntryDelete, FileModeDir, "")
+		assert.Equal(0, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryDelete, FileModeDir, "")))
+		assert.Equal(0, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryAdd, FileModeDir, "")))
+		assert.Equal(0, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryUpdate, FileModeDir, "")))
 
 		// Files are greater than directories.
 		assert.Equal(1, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryUpdate, 0, "")))
@@ -124,13 +124,13 @@ func TestRevisionEntryTemp(t *testing.T) {
 		// Use a small chunk size to force rotation.
 		sut := NewRevisionEntryTempWriter(fs, 700)
 
-		add := func(path string, mode ModeAndPerm) {
+		add := func(path string, mode FileMode) {
 			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})
 			assert.NoError(err)
 		}
 
-		add("sub", ModeDir)
-		add("sub/sub", ModeDir)
+		add("sub", FileModeDir)
+		add("sub/sub", FileModeDir)
 		add(".a.txt", 0)
 		add("a.txt", 0)
 		add("z.txt", 0)

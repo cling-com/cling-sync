@@ -137,7 +137,7 @@ func (m *DefaultCommitMonitor) OnEnd(entry *lib.RevisionEntry) error {
 	if m.Mode != DefaultMonitorModeVerbose {
 		return nil
 	}
-	if entry.Metadata.ModeAndPerm.IsDir() {
+	if entry.Metadata.FileMode.IsDir() {
 		m.emit(fmt.Sprintf("  %-6s (directory)", entry.Type))
 		return nil
 	}
@@ -223,7 +223,7 @@ func (m *DefaultStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *li
 		m.TotalFileSizes += metadata.Size
 	}
 	if m.Mode == DefaultMonitorModeVerbose {
-		if metadata != nil && metadata.ModeAndPerm.IsDir() {
+		if metadata != nil && metadata.FileMode.IsDir() {
 			m.emit("  done  (directory)")
 		} else if metadata != nil {
 			m.emit(
@@ -332,7 +332,7 @@ func (m *DefaultCpMonitor) OnEnd(entry *lib.RevisionEntry, targetPath string) er
 	if m.Mode != DefaultMonitorModeVerbose {
 		return nil
 	}
-	if entry.Metadata.ModeAndPerm.IsDir() {
+	if entry.Metadata.FileMode.IsDir() {
 		m.emit("  done  (directory)")
 		return nil
 	}

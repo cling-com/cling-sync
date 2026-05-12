@@ -348,7 +348,7 @@ func (m *Merger) findConflicts(
 			)
 		}
 		if remoteChangeExists {
-			if localChange.Metadata.ModeAndPerm.IsDir() && remoteChange.Metadata.ModeAndPerm.IsDir() {
+			if localChange.Metadata.FileMode.IsDir() && remoteChange.Metadata.FileMode.IsDir() {
 				// Directories cannot conflict, we always overwrite the attributes of the directory.
 				// todo: document that changes to local directories are ignored if they are also present in the repository.
 				//       We overwrite the attributes of the directory. Contained files are not affected.
@@ -490,7 +490,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 			restoreMode |= lib.RestorableMetadataMode | lib.RestorableMetadataMTime
 		}
 		// Write the file if it is different or does not exist.
-		if remoteEntry.Metadata.ModeAndPerm.IsDir() {
+		if remoteEntry.Metadata.FileMode.IsDir() {
 			if !existsInStaging {
 				if err := m.ws.FS.Mkdir(targetPath); err != nil {
 					return lib.WrapErrorf(err, "failed to create directory %s", targetPath)
@@ -501,7 +501,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 				return lib.WrapErrorf(
 					err,
 					"failed to restore file mode %s for %s",
-					remoteEntry.Metadata.ModeAndPerm,
+					remoteEntry.Metadata.FileMode,
 					targetPath,
 				)
 			}
@@ -520,7 +520,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 			return lib.WrapErrorf(
 				err,
 				"failed to restore file mode %s for %s",
-				remoteEntry.Metadata.ModeAndPerm,
+				remoteEntry.Metadata.FileMode,
 				targetPath,
 			)
 		}
@@ -644,7 +644,7 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 		return lib.WrapErrorf(err, "cp monitor start failed for %s", target)
 	}
 	md := entry.Metadata
-	if md.ModeAndPerm.IsDir() {
+	if md.FileMode.IsDir() {
 		if err := m.ws.FS.MkdirAll(target); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {
@@ -720,14 +720,14 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 		}
 		return lib.WrapErrorf(err, "failed to rename %s to %s", tmpPath, target)
 	}
-	if err := m.ws.FS.Chmod(target, md.ModeAndPerm.AsFileMode()); err != nil {
+	if err := m.ws.FS.Chmod(target, md.FileMode.AsFsFileMode()); err != nil {
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 			if endErr := mon.OnEnd(entry, target); endErr != nil {
 				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
 			}
 			return nil
 		}
-		return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, target)
+		return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.FileMode, target)
 	}
 	if err := mon.OnEnd(entry, target); err != nil {
 		return lib.WrapErrorf(err, "cp monitor end failed for %s", target)

@@ -88,7 +88,7 @@ func TestRevisionSnapshot(t *testing.T) {
 		_, err := testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntryExt("a", RevisionEntryAdd, ModeDir, ""),
+			td.RevisionEntryExt("a", RevisionEntryAdd, FileModeDir, ""),
 			td.RevisionEntry("z.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
@@ -97,8 +97,8 @@ func TestRevisionSnapshot(t *testing.T) {
 		_, err = testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntryExt("a", RevisionEntryAdd, ModeDir, ""),
-			td.RevisionEntryExt("a/b", RevisionEntryAdd, ModeDir, ""),
+			td.RevisionEntryExt("a", RevisionEntryAdd, FileModeDir, ""),
+			td.RevisionEntryExt("a/b", RevisionEntryAdd, FileModeDir, ""),
 		)
 		assert.NoError(err)
 		revId3, err := testCommit(
@@ -113,10 +113,10 @@ func TestRevisionSnapshot(t *testing.T) {
 		assert.Equal([]*RevisionEntry{
 			td.RevisionEntry("a.txt", RevisionEntryAdd),
 			td.RevisionEntry("z.txt", RevisionEntryAdd),
-			td.RevisionEntryExt("a", RevisionEntryAdd, ModeDir, ""),
+			td.RevisionEntryExt("a", RevisionEntryAdd, FileModeDir, ""),
 			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
 			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
-			td.RevisionEntryExt("a/b", RevisionEntryAdd, ModeDir, ""),
+			td.RevisionEntryExt("a/b", RevisionEntryAdd, FileModeDir, ""),
 			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
 		}, entries)
 	})

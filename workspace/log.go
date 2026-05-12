@@ -75,7 +75,7 @@ func Log(repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
 				if err != nil {
 					return nil, lib.WrapErrorf(err, "failed to read revision %s", revisionId)
 				}
-				if opts.PathFilter != nil && !opts.PathFilter.Include(entry.Path, entry.Metadata.ModeAndPerm.IsDir()) {
+				if opts.PathFilter != nil && !opts.PathFilter.Include(entry.Path, entry.Metadata.FileMode.IsDir()) {
 					continue
 				}
 				matchedAtLeastOnePath = true

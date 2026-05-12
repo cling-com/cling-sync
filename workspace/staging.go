@@ -230,8 +230,8 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			}
 		}
 		c := strings.Compare(
-			lib.PathCompareString(stg.RepoPath, stg.Metadata.ModeAndPerm.IsDir()),
-			lib.PathCompareString(rev.Path, rev.Metadata.ModeAndPerm.IsDir()),
+			lib.PathCompareString(stg.RepoPath, stg.Metadata.FileMode.IsDir()),
+			lib.PathCompareString(rev.Path, rev.Metadata.FileMode.IsDir()),
 		)
 		if c == 0 { //nolint:gocritic
 			if !stg.Metadata.IsEqualRestorableAttributes(rev.Metadata, restorableMetadataFlag) {
@@ -269,7 +269,7 @@ func (s *Staging) add(stagingEntry *StagingEntry) error {
 	if s.tempWriter == nil {
 		return lib.Errorf("staging is closed")
 	}
-	if s.PathFilter != nil && !s.PathFilter.Include(stagingEntry.RepoPath, stagingEntry.Metadata.ModeAndPerm.IsDir()) {
+	if s.PathFilter != nil && !s.PathFilter.Include(stagingEntry.RepoPath, stagingEntry.Metadata.FileMode.IsDir()) {
 		return nil
 	}
 	if err := s.tempWriter.Add(stagingEntry); err != nil {
@@ -378,13 +378,13 @@ func StagingEntryPathFilter(pathFilter lib.PathFilter) func(e *StagingEntry) boo
 		return nil
 	}
 	return func(e *StagingEntry) bool {
-		return pathFilter.Include(e.RepoPath, e.Metadata.ModeAndPerm.IsDir())
+		return pathFilter.Include(e.RepoPath, e.Metadata.FileMode.IsDir())
 	}
 }
 
 func StagingEntryPathCompare(a, b *StagingEntry) int {
-	return strings.Compare(lib.PathCompareString(a.RepoPath, a.Metadata.ModeAndPerm.IsDir()),
-		lib.PathCompareString(b.RepoPath, b.Metadata.ModeAndPerm.IsDir()))
+	return strings.Compare(lib.PathCompareString(a.RepoPath, a.Metadata.FileMode.IsDir()),
+		lib.PathCompareString(b.RepoPath, b.Metadata.FileMode.IsDir()))
 }
 
 func NewStagingCacheWriter(fs lib.FS, maxChunkSize int) *lib.TempWriter[StagingEntry] {
@@ -451,7 +451,7 @@ func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
 }
 
 func StagingCacheKey(stagingEntry *StagingEntry) string {
-	return lib.PathCompareString(stagingEntry.RepoPath, stagingEntry.Metadata.ModeAndPerm.IsDir())
+	return lib.PathCompareString(stagingEntry.RepoPath, stagingEntry.Metadata.FileMode.IsDir())
 }
 
 // Return the metadata either from the cache or compute it.

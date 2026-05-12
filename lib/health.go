@@ -79,7 +79,7 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 						entry.Path, revisionId, entry.Metadata.Size, fileSize)
 				}
 				expectedHash := Sha256(fileHash.Sum(nil))
-				if entry.Metadata.ModeAndPerm.IsDir() {
+				if entry.Metadata.FileMode.IsDir() {
 					// Directories have no hash.
 					expectedHash = Sha256{}
 				}

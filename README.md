@@ -316,7 +316,7 @@ All integer types are written as little-endian, and all strings are UTF-8 encode
 | Size (bytes) | Type       | Field             | Description                                    |
 | ------------ | ---------- | ----------------- | ---------------------------------------------- |
 | 2            | uint16     | _format version_  | Serialization format version (`0x01`)          |
-| 4            | uint32     | ModeAndPerm       | File mode and permission flags (see below)     |
+| 4            | uint32     | FileMode          | File mode and permission flags (see below)     |
 | _(12)_       | _timespec_ | **MTime**         | File modification time                         |
 | 8            | int64      | - MTimeSec        | File modification time (seconds since epoch)   |
 | 4            | int32      | - MTimeNsec       | File modification time (nanoseconds)           |

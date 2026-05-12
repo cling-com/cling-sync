@@ -120,7 +120,7 @@ func (wstd WorkspaceTestData) StagingEntryInfos(temp *lib.Temp[StagingEntry]) []
 		}
 		infos = append(infos, TestStagingEntryInfo{
 			Path: entry.RepoPath.String(),
-			Mode: entry.Metadata.ModeAndPerm.AsFileMode(),
+			Mode: entry.Metadata.FileMode.AsFsFileMode(),
 			Hash: entry.Metadata.FileHash,
 		})
 	}

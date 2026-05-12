@@ -27,7 +27,7 @@ func (f StatusFile) Format() string {
 		panic(fmt.Sprintf("invalid revision entry type %d", f.Type))
 	}
 	path := f.Path.String()
-	if f.Metadata.ModeAndPerm.IsDir() {
+	if f.Metadata.FileMode.IsDir() {
 		path += "/"
 	}
 	return fmt.Sprintf("%s %s", typeStr, path)

@@ -39,9 +39,9 @@ func TestLs(t *testing.T) {
 		assert.Equal([]lsFileInfo{
 			{"a.txt", 0o600, 1},
 			{"b.txt", 0o600, 1},
-			{"c", 0o700 | lib.ModeDir, 0},
+			{"c", 0o700 | lib.FileModeDir, 0},
 			{"c/1.txt", 0o600, 2},
-			{"c/d", 0o700 | lib.ModeDir, 0},
+			{"c/d", 0o700 | lib.FileModeDir, 0},
 			{"c/d/2.txt", 0o600, 3},
 		}, lsFiles(ls))
 
@@ -49,9 +49,9 @@ func TestLs(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"a.txt", 0o600, 2},
-			{"c", 0o700 | lib.ModeDir, 0},
+			{"c", 0o700 | lib.FileModeDir, 0},
 			{"c/1.txt", 0o600, 2},
-			{"c/d", 0o700 | lib.ModeDir, 0},
+			{"c/d", 0o700 | lib.FileModeDir, 0},
 			{"c/d/2.txt", 0o600, 3},
 			{"c/d/3.txt", 0o600, 3},
 		}, lsFiles(ls))
@@ -75,9 +75,9 @@ func TestLs(t *testing.T) {
 		ls, err := Ls(r.Repository, td.NewFS(t), &LsOptions{rev1, filter, lib.Path{}})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
-			{"c", 0o700 | lib.ModeDir, 0},
+			{"c", 0o700 | lib.FileModeDir, 0},
 			{"c/1.txt", 0o600, 2},
-			{"c/d", 0o700 | lib.ModeDir, 0},
+			{"c/d", 0o700 | lib.FileModeDir, 0},
 			{"c/d/2.txt", 0o600, 3},
 		}, lsFiles(ls))
 	})
@@ -142,7 +142,7 @@ func TestLs(t *testing.T) {
 
 type lsFileInfo struct {
 	Path string
-	Mode lib.ModeAndPerm
+	Mode lib.FileMode
 	Size int
 }
 
@@ -151,7 +151,7 @@ func lsFiles(f []LsFile) []lsFileInfo {
 	for i, file := range f {
 		result[i] = lsFileInfo{
 			Path: file.Path.String(),
-			Mode: file.Metadata.ModeAndPerm,
+			Mode: file.Metadata.FileMode,
 			Size: int(file.Metadata.Size),
 		}
 	}

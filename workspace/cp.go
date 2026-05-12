@@ -53,7 +53,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 		for _, entry := range directories {
 			target := entry.Path.String()
 			if err := restoreFileMode(targetFS, target, entry.Metadata, opts.RestorableMetadataFlag); err != nil {
-				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", entry.Metadata.ModeAndPerm, target)
+				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", entry.Metadata.FileMode, target)
 			}
 		}
 		return nil
@@ -82,9 +82,9 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 				}
 				continue
 			}
-			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", entry.Metadata.ModeAndPerm, target)
+			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", entry.Metadata.FileMode, target)
 		}
-		mode := entry.Metadata.ModeAndPerm.AsFileMode()
+		mode := entry.Metadata.FileMode.AsFsFileMode()
 		if mode.IsDir() {
 			// Temporarily change the permissions if the directory is not writable.
 			if mode&0o700 != 0o700 {
@@ -120,7 +120,7 @@ func restore( //nolint:funlen
 	mon CpMonitor,
 ) error {
 	md := entry.Metadata
-	if md.ModeAndPerm.IsDir() {
+	if md.FileMode.IsDir() {
 		if err := targetFS.MkdirAll(target); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {
@@ -197,14 +197,14 @@ func restore( //nolint:funlen
 			}
 			return lib.WrapErrorf(err, "failed to close file %s", target)
 		}
-		if err := targetFS.Chmod(target, md.ModeAndPerm.AsFileMode()); err != nil {
+		if err := targetFS.Chmod(target, md.FileMode.AsFsFileMode()); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {
 					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
 				}
 				return nil
 			}
-			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, target)
+			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.FileMode, target)
 		}
 	}
 	return nil
@@ -222,8 +222,8 @@ func restoreFileMode(
 		}
 	}
 	if restorableMetadataFlag&lib.RestorableMetadataMode != 0 {
-		if err := fs.Chmod(path, (md.ModeAndPerm & lib.ModePerm).AsFileMode()); err != nil {
-			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.ModeAndPerm, path)
+		if err := fs.Chmod(path, (md.FileMode & lib.FileModePerm).AsFsFileMode()); err != nil {
+			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.FileMode, path)
 		}
 	}
 	if restorableMetadataFlag&lib.RestorableMetadataMTime != 0 {

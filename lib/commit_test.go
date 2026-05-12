@@ -154,7 +154,7 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
 
-		entry := td.RevisionEntryExt("a", RevisionEntryAdd, 0o700|ModeDir, "")
+		entry := td.RevisionEntryExt("a", RevisionEntryAdd, 0o700|FileModeDir, "")
 		entry.Metadata.FileHash = Sha256{}
 		err = commit.Add(entry)
 		assert.NoError(err)

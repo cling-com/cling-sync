@@ -62,9 +62,9 @@ func (td TestData) Path(p string) Path {
 	return Path{p}
 }
 
-func (td TestData) FileMetadata(mode ModeAndPerm) *FileMetadata {
+func (td TestData) FileMetadata(mode FileMode) *FileMetadata {
 	return &FileMetadata{
-		ModeAndPerm:   mode,
+		FileMode:      mode,
 		MTimeSec:      4567890,
 		MTimeNSec:     567890,
 		Size:          67890,
@@ -85,7 +85,7 @@ func (td TestData) RevisionEntry(path string, entryType RevisionEntryType) *Revi
 func (td TestData) RevisionEntryExt(
 	path string,
 	entryType RevisionEntryType,
-	mode ModeAndPerm,
+	mode FileMode,
 	content string,
 ) *RevisionEntry {
 	sha := sha256.New()
@@ -359,7 +359,7 @@ func (f *TestFS) FileMetadata(path string) *FileMetadata {
 	f.t.Helper()
 	stat := f.Stat(path)
 	md := &FileMetadata{
-		ModeAndPerm:   NewModeAndPerm(stat.Mode()),
+		FileMode:      NewFileMode(stat.Mode()),
 		MTimeSec:      stat.ModTime().Unix(),
 		MTimeNSec:     int32(stat.ModTime().Nanosecond()), //nolint:gosec
 		Size:          stat.Size(),
@@ -374,7 +374,7 @@ func (f *TestFS) FileMetadata(path string) *FileMetadata {
 	if stat.IsDir() {
 		md.Size = 0
 	}
-	if md.ModeAndPerm.IsRegular() {
+	if md.FileMode.IsRegular() {
 		md.FileHash = f.Sha256(path)
 	}
 	EnhanceMetadata(md, stat)
@@ -459,7 +459,7 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 	blockBuf := BlockBuf{}
 	for i, entry := range entries {
 		content := ""
-		if entry.Type != RevisionEntryDelete && entry.Metadata.ModeAndPerm.IsRegular() {
+		if entry.Type != RevisionEntryDelete && entry.Metadata.FileMode.IsRegular() {
 			// Rebuild the content from the repository.
 			buf := bytes.NewBuffer([]byte{})
 			for _, blockId := range entry.Metadata.BlockIds {
@@ -471,7 +471,7 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 		}
 		actual[i] = TestFileInfo{
 			Path:    entry.Path.String(),
-			Mode:    entry.Metadata.ModeAndPerm.AsFileMode(),
+			Mode:    entry.Metadata.FileMode.AsFsFileMode(),
 			Size:    int(entry.Metadata.Size),
 			Content: content,
 		}
@@ -490,7 +490,7 @@ func (r *TestRepository) RevisionEntryReaderInfos(reader RevisionEntryReader) []
 		infos = append(infos, TestRevisionEntryInfo{
 			Path: entry.Path.String(),
 			Type: entry.Type,
-			Mode: entry.Metadata.ModeAndPerm.AsFileMode(),
+			Mode: entry.Metadata.FileMode.AsFsFileMode(),
 			Hash: entry.Metadata.FileHash,
 		})
 	}

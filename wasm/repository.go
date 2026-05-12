@@ -122,16 +122,16 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any {
 		for _, file := range files {
 			sb.WriteString("<tr>")
 			sb.WriteString("<td>")
-			sb.WriteString(html.EscapeString(file.Metadata.ModeAndPerm.ShortString()))
+			sb.WriteString(html.EscapeString(file.Metadata.FileMode.ShortString()))
 			sb.WriteString("</td>")
-			if file.Metadata.ModeAndPerm.IsRegular() {
+			if file.Metadata.FileMode.IsRegular() {
 				sb.WriteString("<td>")
 				sb.WriteString(html.EscapeString(workspace.FormatBytes(file.Metadata.Size)))
 				sb.WriteString("</td>")
 			} else {
 				sb.WriteString("<td></td>")
 			}
-			if file.Metadata.ModeAndPerm.IsRegular() {
+			if file.Metadata.FileMode.IsRegular() {
 				sb.WriteString(
 					"<td><a href=\"#download:" + base64.StdEncoding.EncodeToString([]byte(file.Path.String())) + "\">",
 				)
@@ -211,7 +211,7 @@ func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:f
 			reject(js.ValueOf(fmt.Sprintf("file too large: %s", path)))
 			return
 		}
-		if !file.Metadata.ModeAndPerm.IsRegular() {
+		if !file.Metadata.FileMode.IsRegular() {
 			reject(js.ValueOf(fmt.Sprintf("not a regular file: %s", path)))
 			return
 		}

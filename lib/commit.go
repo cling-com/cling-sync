@@ -64,7 +64,7 @@ func (c *Commit) EnsureDirExists(
 		if err != nil {
 			return WrapErrorf(err, "failed to get path %s from remote revision", p)
 		}
-		if found && !existing.Metadata.ModeAndPerm.IsDir() {
+		if found && !existing.Metadata.FileMode.IsDir() {
 			return Errorf(
 				"cannot ensure directory %s exists, because %s already exists and is not a directory",
 				path,

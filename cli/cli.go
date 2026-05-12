@@ -783,7 +783,7 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	dirFormat.FullPath = true
 	for i, file := range files {
 		if args.Short {
-			if file.Metadata.ModeAndPerm.IsDir() {
+			if file.Metadata.FileMode.IsDir() {
 				if i > 0 {
 					fmt.Println()
 				}

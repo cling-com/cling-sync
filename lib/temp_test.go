@@ -19,12 +19,12 @@ func TestTemp(t *testing.T) {
 		fs := td.NewFS(t)
 		sut := NewRevisionEntryTempWriter(fs, 500)
 
-		add := func(path string, mode ModeAndPerm) {
+		add := func(path string, mode FileMode) {
 			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})
 			assert.NoError(err)
 		}
 
-		add("some/dir1", ModeDir)
+		add("some/dir1", FileModeDir)
 		add("some/dir1/fileb", 0)
 		files, _ := fs.ReadDir(".")
 		assert.Equal(0, len(files))
@@ -38,8 +38,8 @@ func TestTemp(t *testing.T) {
 		files, _ = fs.ReadDir(".")
 		assert.Equal(2, len(files))
 		add("some/dir2/filea", 0)
-		add("some/dir2", ModeDir)
-		add("some", ModeDir)
+		add("some/dir2", FileModeDir)
+		add("some", FileModeDir)
 
 		temp, err := sut.Finalize()
 		assert.NoError(err)
@@ -228,17 +228,17 @@ func TestTempCache(t *testing.T) {
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
 		sut := NewRevisionEntryTempWriter(fs, 500)
-		add := func(path string, mode ModeAndPerm) {
+		add := func(path string, mode FileMode) {
 			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})
 			assert.NoError(err)
 		}
 
 		add("b.txt", 0)
 		add("y.txt", 0)
-		add("sub", ModeDir)
+		add("sub", FileModeDir)
 		add("sub/a.txt", 0)
 		add("sub/y.txt", 0)
-		add("sub/sub", ModeDir)
+		add("sub/sub", FileModeDir)
 		add("sub/sub/a.txt", 0)
 		add("sub/sub/y.txt", 0)
 
@@ -279,17 +279,17 @@ func TestTempCache(t *testing.T) {
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
 		sut := NewRevisionEntryTempWriter(fs, 500)
-		add := func(path string, mode ModeAndPerm) {
+		add := func(path string, mode FileMode) {
 			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})
 			assert.NoError(err)
 		}
 
 		add("b.txt", 0)
 		add("y.txt", 0)
-		add("sub", ModeDir)
+		add("sub", FileModeDir)
 		add("sub/a.txt", 0)
 		add("sub/y.txt", 0)
-		add("sub/sub", ModeDir)
+		add("sub/sub", FileModeDir)
 		add("sub/sub/a.txt", 0)
 		add("sub/sub/y.txt", 0)
 

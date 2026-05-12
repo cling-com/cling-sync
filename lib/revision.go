@@ -97,13 +97,13 @@ func UnmarshalRevision(r io.Reader) (*Revision, error) {
 // Compare two revision entries by their full path.
 func RevisionEntryPathCompare(a, b *RevisionEntry) int {
 	return strings.Compare(
-		PathCompareString(a.Path, a.Metadata.ModeAndPerm.IsDir()),
-		PathCompareString(b.Path, b.Metadata.ModeAndPerm.IsDir()),
+		PathCompareString(a.Path, a.Metadata.FileMode.IsDir()),
+		PathCompareString(b.Path, b.Metadata.FileMode.IsDir()),
 	)
 }
 
 func RevisionEntryPathCompareString(e *RevisionEntry) string {
-	return PathCompareString(e.Path, e.Metadata.ModeAndPerm.IsDir())
+	return PathCompareString(e.Path, e.Metadata.FileMode.IsDir())
 }
 
 type RevisionEntry struct {
@@ -223,6 +223,6 @@ func RevisionEntryPathFilter(pathFilter PathFilter) func(e *RevisionEntry) bool 
 		return nil
 	}
 	return func(e *RevisionEntry) bool {
-		return pathFilter.Include(e.Path, e.Metadata.ModeAndPerm.IsDir())
+		return pathFilter.Include(e.Path, e.Metadata.FileMode.IsDir())
 	}
 }
