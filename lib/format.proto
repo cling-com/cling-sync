@@ -1,0 +1,123 @@
+// # Serialization
+//
+// ## Required Fields
+//
+// All fields are required unless they have a `{required: "condition"}` extension.
+// Fields that are either not required or conditionally required are emitted as pointers in Go.
+//
+// ## Versioning
+//
+// `version` is not strictly a version but is used to signal a non-backwards compatible change.
+
+syntax = "proto3";
+
+enum Compression {
+    Compression_none = 0;
+    Compression_deflate = 1;
+}
+
+enum BlockKind {
+    BlockKind_default = 0;
+    BlockKind_revision = 1;
+}
+
+message BlockHeader1 {
+    uint32 version = 1;
+    BlockKind block_kind = 2;
+    Compression compression = 3;
+    bytes dek = 4 [(cling) = {type: "RawKey", length: 32}]; 
+    uint32 encrypted_data_size = 5;
+}
+
+message Block1  {
+    // The header encrypted with the repository KEK.
+    bytes encrypted_header = 1 [(cling) = {max_length: 0x200}];
+    // The payload padding using the [Padmé](https://lbarman.ch/blog/padme/) algorithm 
+    // and encrypted with `BlockHeader.dek`.
+    // The length must be at least `BlockHeader.encrypted_data_size`.
+    bytes encrypted_data = 2 [(cling) = {max_length: 0x7FFDF0}];
+}
+
+message Timestamp {
+    int64 sec = 1;
+    uint32 nsec = 2;
+}
+
+enum FileMode {
+    // This is only here because protobuf requires an enum variant with value `0`.
+    FileMode_empty       = 0;
+    FileMode_other_exec  = 0x001;
+    FileMode_other_write = 0x002;
+    FileMode_other_read  = 0x004;
+    FileMode_group_exec  = 0x008;
+    FileMode_group_write = 0x010;
+    FileMode_group_read  = 0x020;
+    FileMode_owner_exec  = 0x040;
+    FileMode_owner_write = 0x080;
+    FileMode_owner_read  = 0x100;
+    FileMode_perm        = 0x1FF; 
+    FileMode_dir         = 0x400;
+    FileMode_symlink     = 0x800;
+    FileMode_set_uid     = 0x1000;
+    FileMode_set_gid     = 0x2000;
+    FileMode_sticky      = 0x4000;
+}
+
+message File {
+    // A deterministic utf8 representation of a file-system path.
+    string path = 1 [(cling) = {type: ""}]; 
+    // A bitmask of `FileMode` flags.
+    FileMode file_mode = 2 [(cling) = {bitmask: true}];
+    Timestamp mtime = 3;
+    int64 size = 4;
+    bytes file_hash = 5 [(cling) = {type: "Sha256", length: 32}];
+    repeated bytes block_ids = 6 [(cling) = {inner_type: "BlockId", inner_length: 32, max_length: 0xFFFFFFFF}];
+    string sym_link_target = 7 [(cling) = {required: "this.FileMode&FileModeSymlink != 0"}];
+    uint32 uid = 8 [(cling) = {required: "false"}];
+    uint32 gid = 9 [(cling) = {required: "false"}];
+    Timestamp birthtime = 10 [(cling) = {required: "false"}];
+}
+
+enum RevisionEntryKind {
+    RevisionEntryKind_add = 0;
+    RevisionEntryKind_update = 1;
+    RevisionEntryKind_delete = 2;
+}
+
+message RevisionEntry1 {
+    RevisionEntryKind kind = 1;
+    File file = 2;
+}
+
+message RevisionEntryChunk {
+    repeated RevisionEntry1 entries = 1 [(cling) = {max_length: 0xFFFFFF}];
+}
+
+message Revision1 {
+    Timestamp timestamp = 1;
+    bytes parent_revision_id = 2 [(cling) = {type: "RevisionId", length: 32}];
+    string message = 3 [(cling) = {required: "false"}];
+    string author = 4 [(cling) = {required: "false"}];
+    repeated bytes block_ids = 5 [(cling) = {inner_type: "BlockId", inner_length: 32, max_length: 0xFFFF}];
+}
+
+// The following is only needed when used with `protoc` (which we don't use).
+
+option go_package = "github.com/cling-com/cling-sync/lib";
+
+import "google/protobuf/descriptor.proto";
+
+message ClingFieldOptions {
+    string type = 1;
+    string required = 2;
+    int64 length = 3;
+    int64 max_length = 4;
+    string inner_type = 5;
+    int64 inner_length = 6;
+    int64 inner_max_length = 7;
+    bool bitmask = 8;
+}
+
+extend google.protobuf.FieldOptions {
+    ClingFieldOptions cling = 50000;
+}

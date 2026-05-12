@@ -16,6 +16,9 @@ if [ $# -eq 0 ]; then
     echo "        cli - build the CLI as \`./cling-sync\`"
     echo "        wasm - build the wasm binary"
     echo
+    echo "  gen [project]"
+    echo "      Run \`go generate\`. If no project is specified, generate all projects."
+    echo
     echo "  fmt [project]"
     echo "      Format code. If no project is specified, format all projects."
     echo
@@ -23,7 +26,7 @@ if [ $# -eq 0 ]; then
     echo "      Lint code. If no project is specified, lint all projects."
     echo
     echo "  precommit"
-    echo "      Run all checks before committing. This is the same as running \`fmt\`, \`lint\`, and \`test\`."
+    echo "      Run all checks before committing. This is the same as running \`gen\`, \`fmt\`, \`lint\`, and \`test\`."
     echo
     echo "  test [project|integration-bash]"
     echo "      Run tests. If no project is specified, run all tests including integration tests."
@@ -124,6 +127,10 @@ case "$cmd" in
     tools)
         build_tools
         ;;
+    gen)
+        echo ">>> Generating code"
+        run_project_cmd "go generate" "$@"
+        ;;
     fmt)
         if [ $# -gt 0 ] && [ "$1" = "wasm" ]; then
             shift
@@ -155,6 +162,7 @@ case "$cmd" in
         run_project_cmd "go test ./... -count 1" "$@"
         ;;
     precommit)
+        bash $0 gen "$@"
         bash $0 fmt "$@"
         bash $0 lint "$@"
         bash $0 test "$@"
