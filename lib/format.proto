@@ -64,18 +64,15 @@ enum FileMode {
 }
 
 message File {
-    // A deterministic utf8 representation of a file-system path.
-    string path = 1 [(cling) = {type: ""}]; 
-    // A bitmask of `FileMode` flags.
-    FileMode file_mode = 2 [(cling) = {bitmask: true}];
-    Timestamp mtime = 3;
-    int64 size = 4;
-    bytes file_hash = 5 [(cling) = {type: "Sha256", length: 32}];
-    repeated bytes block_ids = 6 [(cling) = {inner_type: "BlockId", inner_length: 32, max_length: 0xFFFFFFFF}];
-    string sym_link_target = 7 [(cling) = {required: "this.FileMode&FileModeSymlink != 0"}];
-    uint32 uid = 8 [(cling) = {required: "false"}];
-    uint32 gid = 9 [(cling) = {required: "false"}];
-    Timestamp birthtime = 10 [(cling) = {required: "false"}];
+    FileMode file_mode = 1 [(cling) = {bitmask: true}];
+    Timestamp mtime = 2;
+    int64 size = 3;
+    bytes file_hash = 4 [(cling) = {type: "Sha256", length: 32}];
+    repeated bytes block_ids = 5 [(cling) = {inner_type: "BlockId", inner_length: 32, max_length: 0xFFFFFFFF}];
+    string sym_link_target = 6 [(cling) = {required: "this.FileMode&FileModeSymlink != 0"}];
+    uint32 uid = 7 [(cling) = {required: "false"}];
+    uint32 gid = 8 [(cling) = {required: "false"}];
+    Timestamp birthtime = 9 [(cling) = {required: "false"}];
 }
 
 enum RevisionEntryKind {
@@ -86,7 +83,9 @@ enum RevisionEntryKind {
 
 message RevisionEntry1 {
     RevisionEntryKind kind = 1;
-    File file = 2;
+    // A deterministic utf8 representation of a file-system path.
+    string path = 2 [(cling) = {type: "Path"}];
+    File file = 3;
 }
 
 message RevisionEntryChunk {

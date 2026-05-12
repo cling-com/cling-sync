@@ -267,7 +267,6 @@ const (
 )
 
 type File struct {
-	Path          string
 	FileMode      FileMode
 	Mtime         Timestamp
 	Size          int64
@@ -293,39 +292,36 @@ func (o *File) Marshall(w *ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
-	if err := w.WriteBytes(1, []byte(o.Path)); err != nil {
-		return err
-	}
-	if err := w.WriteTag(2, 0); err != nil {
+	if err := w.WriteTag(1, 0); err != nil {
 		return err
 	}
 	if err := w.WriteVarint(int64(o.FileMode)); err != nil {
 		return err
 	}
-	if err := w.WriteMessage(3, o.Mtime.Marshall); err != nil {
+	if err := w.WriteMessage(2, o.Mtime.Marshall); err != nil {
 		return err
 	}
-	if err := w.WriteTag(4, 0); err != nil {
+	if err := w.WriteTag(3, 0); err != nil {
 		return err
 	}
 	if err := w.WriteVarint(o.Size); err != nil {
 		return err
 	}
-	if err := w.WriteBytes(5, o.FileHash[:]); err != nil {
+	if err := w.WriteBytes(4, o.FileHash[:]); err != nil {
 		return err
 	}
 	for _, v := range o.BlockIds {
-		if err := w.WriteBytes(6, v[:]); err != nil {
+		if err := w.WriteBytes(5, v[:]); err != nil {
 			return err
 		}
 	}
 	if o.SymLinkTarget != nil {
-		if err := w.WriteBytes(7, []byte((*o.SymLinkTarget))); err != nil {
+		if err := w.WriteBytes(6, []byte((*o.SymLinkTarget))); err != nil {
 			return err
 		}
 	}
 	if o.Uid != nil {
-		if err := w.WriteTag(8, 0); err != nil {
+		if err := w.WriteTag(7, 0); err != nil {
 			return err
 		}
 		if err := w.WriteVarint(int64((*o.Uid))); err != nil {
@@ -333,7 +329,7 @@ func (o *File) Marshall(w *ProtobufWriter) error {
 		}
 	}
 	if o.Gid != nil {
-		if err := w.WriteTag(9, 0); err != nil {
+		if err := w.WriteTag(8, 0); err != nil {
 			return err
 		}
 		if err := w.WriteVarint(int64((*o.Gid))); err != nil {
@@ -341,7 +337,7 @@ func (o *File) Marshall(w *ProtobufWriter) error {
 		}
 	}
 	if o.Birthtime != nil {
-		if err := w.WriteMessage(10, (*o.Birthtime).Marshall); err != nil {
+		if err := w.WriteMessage(9, (*o.Birthtime).Marshall); err != nil {
 			return err
 		}
 	}
@@ -357,18 +353,12 @@ func UnmarshallFile(r *ProtobufReader) (File, error) {
 		}
 		switch tag {
 		case 1:
-			b, err := r.ReadBytes()
-			if err != nil {
-				return File{}, err
-			}
-			o.Path = string(b)
-		case 2:
 			u, err := r.ReadUint32()
 			if err != nil {
 				return File{}, err
 			}
 			o.FileMode = FileMode(u)
-		case 3:
+		case 2:
 			b, err := r.ReadBytes()
 			if err != nil {
 				return File{}, err
@@ -378,13 +368,13 @@ func UnmarshallFile(r *ProtobufReader) (File, error) {
 				return File{}, err
 			}
 			o.Mtime = v
-		case 4:
+		case 3:
 			i, err := r.ReadVarint()
 			if err != nil {
 				return File{}, err
 			}
 			o.Size = i
-		case 5:
+		case 4:
 			b, err := r.ReadBytes()
 			if err != nil {
 				return File{}, err
@@ -393,7 +383,7 @@ func UnmarshallFile(r *ProtobufReader) (File, error) {
 				return File{}, Errorf("File.FileHash must have length 32")
 			}
 			o.FileHash = Sha256(b)
-		case 6:
+		case 5:
 			b, err := r.ReadBytes()
 			if err != nil {
 				return File{}, err
@@ -402,28 +392,28 @@ func UnmarshallFile(r *ProtobufReader) (File, error) {
 				return File{}, Errorf("every entry in File.BlockIds must have length 32")
 			}
 			o.BlockIds = append(o.BlockIds, BlockId(b))
-		case 7:
+		case 6:
 			b, err := r.ReadBytes()
 			if err != nil {
 				return File{}, err
 			}
 			v := string(b)
 			o.SymLinkTarget = &v
-		case 8:
+		case 7:
 			u, err := r.ReadUint32()
 			if err != nil {
 				return File{}, err
 			}
 			v := u
 			o.Uid = &v
-		case 9:
+		case 8:
 			u, err := r.ReadUint32()
 			if err != nil {
 				return File{}, err
 			}
 			v := u
 			o.Gid = &v
-		case 10:
+		case 9:
 			b, err := r.ReadBytes()
 			if err != nil {
 				return File{}, err
@@ -455,6 +445,7 @@ const (
 
 type RevisionEntry1 struct {
 	Kind RevisionEntryKind
+	Path Path
 	File File
 }
 
@@ -477,7 +468,10 @@ func (o *RevisionEntry1) Marshall(w *ProtobufWriter) error {
 	if err := w.WriteVarint(int64(o.Kind)); err != nil {
 		return err
 	}
-	if err := w.WriteMessage(2, o.File.Marshall); err != nil {
+	if err := w.WriteBytes(2, []byte(o.Path.String())); err != nil {
+		return err
+	}
+	if err := w.WriteMessage(3, o.File.Marshall); err != nil {
 		return err
 	}
 	return nil
@@ -498,6 +492,16 @@ func UnmarshallRevisionEntry1(r *ProtobufReader) (RevisionEntry1, error) {
 			}
 			o.Kind = RevisionEntryKind(u)
 		case 2:
+			b, err := r.ReadBytes()
+			if err != nil {
+				return RevisionEntry1{}, err
+			}
+			pv, err := NewPath(string(b))
+			if err != nil {
+				return RevisionEntry1{}, err
+			}
+			o.Path = pv
+		case 3:
 			b, err := r.ReadBytes()
 			if err != nil {
 				return RevisionEntry1{}, err

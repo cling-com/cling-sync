@@ -282,6 +282,11 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 		switch f.protoTyp {
 		case "string":
 			read("b", "r.ReadBytes()")
+			if f.constraints.typ != "" {
+				// Custom string-backed type: call `New<Type>(string)` which returns `(<Type>, error)`.
+				read("pv", fmt.Sprintf("New%s(string(b))", f.constraints.typ))
+				return "pv"
+			}
 			return "string(b)"
 		case "uint32":
 			read("u", "r.ReadUint32()")
@@ -356,7 +361,12 @@ func (g *generator) genFieldMarshall(f field) {
 		}
 		switch typ {
 		case "string":
-			checkErr(fmt.Sprintf("w.WriteBytes(%d, []byte(%s))", f.tag, variable))
+			expr := variable
+			if f.constraints.typ != "" {
+				// Custom string-backed type: marshal via its `String()` method.
+				expr = fmt.Sprintf("%s.String()", variable)
+			}
+			checkErr(fmt.Sprintf("w.WriteBytes(%d, []byte(%s))", f.tag, expr))
 		case "uint32":
 			varint(fmt.Sprintf("int64(%s)", variable))
 		case "int64":

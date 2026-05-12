@@ -75,13 +75,11 @@ func TestFormatMarshall(t *testing.T) {
 	`)
 
 	check("File minimal", &File{
-		Path:     "foo/bar.txt",
 		FileMode: 0o644,
 		Mtime:    Timestamp{Sec: 1234567890, Nsec: 500000000},
 		Size:     42,
 		FileHash: sha256Hash("h"),
 	}, UnmarshallFile, `
-		path: "foo/bar.txt"
 		file_mode: 420
 		mtime {
 		  sec: 1234567890
@@ -95,7 +93,6 @@ func TestFormatMarshall(t *testing.T) {
 	link := "/etc/passwd"
 	birthtime := Timestamp{Sec: 999, Nsec: 1}
 	check("File fully set", &File{
-		Path:          "link",
 		FileMode:      FileModeSymlink | 0o777,
 		Mtime:         Timestamp{Sec: 1234567890, Nsec: 500000000},
 		Size:          128,
@@ -106,7 +103,6 @@ func TestFormatMarshall(t *testing.T) {
 		Gid:           &gid,
 		Birthtime:     &birthtime,
 	}, UnmarshallFile, `
-		path: "link"
 		file_mode: 2559
 		mtime {
 		  sec: 1234567890
@@ -127,8 +123,8 @@ func TestFormatMarshall(t *testing.T) {
 
 	check("RevisionEntry1", &RevisionEntry1{
 		Kind: RevisionEntryKindUpdate,
+		Path: td.Path("foo/bar.txt"),
 		File: File{
-			Path:     "foo/bar.txt",
 			FileMode: 0o644,
 			Mtime:    Timestamp{Sec: 1234567890, Nsec: 500000000},
 			Size:     42,
@@ -136,8 +132,8 @@ func TestFormatMarshall(t *testing.T) {
 		},
 	}, UnmarshallRevisionEntry1, `
 		kind: RevisionEntryKind_update
+		path: "foo/bar.txt"
 		file {
-		  path: "foo/bar.txt"
 		  file_mode: 420
 		  mtime {
 		    sec: 1234567890
@@ -152,8 +148,8 @@ func TestFormatMarshall(t *testing.T) {
 		Entries: []RevisionEntry1{
 			{
 				Kind: RevisionEntryKindUpdate,
+				Path: td.Path("foo/bar.txt"),
 				File: File{
-					Path:     "foo/bar.txt",
 					FileMode: 0o644,
 					Mtime:    Timestamp{Sec: 1234567890, Nsec: 500000000},
 					Size:     42,
@@ -164,8 +160,8 @@ func TestFormatMarshall(t *testing.T) {
 	}, UnmarshallRevisionEntryChunk, `
 		entries {
 		  kind: RevisionEntryKind_update
+		  path: "foo/bar.txt"
 		  file {
-		    path: "foo/bar.txt"
 		    file_mode: 420
 		    mtime {
 		      sec: 1234567890
@@ -208,7 +204,7 @@ func TestFormatUnmarshallLength(t *testing.T) {
 	t.Run("File block_ids entry wrong length", func(t *testing.T) {
 		assert := NewAssert(t)
 		w := NewProtobufWriter(make([]byte, 4096))
-		assert.NoError(w.WriteBytes(6, make([]byte, 31)))
+		assert.NoError(w.WriteBytes(5, make([]byte, 31)))
 		_, err := UnmarshallFile(NewProtobufReader(w.Bytes()))
 		assert.Error(err, "every entry in File.BlockIds must have length 32")
 	})
@@ -223,11 +219,11 @@ func TestFormatUnmarshallLength(t *testing.T) {
 	t.Run("nested error propagates from File via RevisionEntry1", func(t *testing.T) {
 		assert := NewAssert(t)
 		file := NewProtobufWriter(make([]byte, 64))
-		assert.NoError(file.WriteBytes(5, make([]byte, 31))) // wrong-length file_hash
+		assert.NoError(file.WriteBytes(4, make([]byte, 31))) // wrong-length file_hash
 		entry := NewProtobufWriter(make([]byte, 128))
 		assert.NoError(entry.WriteTag(1, 0))
 		assert.NoError(entry.WriteVarint(int64(RevisionEntryKindUpdate)))
-		assert.NoError(entry.WriteBytes(2, file.Bytes()))
+		assert.NoError(entry.WriteBytes(3, file.Bytes()))
 		_, err := UnmarshallRevisionEntry1(NewProtobufReader(entry.Bytes()))
 		assert.Error(err, "File.FileHash must have length 32")
 	})
@@ -295,16 +291,13 @@ func TestFormatValidate(t *testing.T) {
 	link := "/etc/passwd"
 	check("File zero value", &File{}, "")
 	check("File non-symlink, no target", &File{
-		Path:     "foo.txt",
 		FileMode: 0o644,
 	}, "")
 	check("File symlink with target", &File{
-		Path:          "link",
 		FileMode:      FileModeSymlink,
 		SymLinkTarget: &link,
 	}, "")
 	check("File symlink without target", &File{
-		Path:     "link",
 		FileMode: FileModeSymlink,
 	}, "SymLinkTarget must be set")
 
