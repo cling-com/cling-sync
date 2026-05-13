@@ -79,11 +79,7 @@ func (c *Commit) EnsureDirExists(
 		if found {
 			break
 		}
-		entry, err := NewRevisionEntry(p, RevisionEntryAdd, &md)
-		if err != nil {
-			return WrapErrorf(err, "failed to create revision entry for path %s", p)
-		}
-		c.ensureDirs = append(c.ensureDirs, entry)
+		c.ensureDirs = append(c.ensureDirs, RevisionEntry{Kind: RevisionEntryKindAdd, Path: p, Metadata: md})
 		p = p.Dir()
 	}
 	return nil

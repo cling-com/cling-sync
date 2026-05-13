@@ -17,15 +17,15 @@ func TestCheckHealth(t *testing.T) {
 		assert.NoError(err)
 		blockId2, _, err := r.WriteBlock([]byte("de"))
 		assert.NoError(err)
-		e1 := td.RevisionEntry("a.txt", RevisionEntryAdd)
+		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		e1.Metadata.BlockIds = []BlockId{blockId1}
 		e1.Metadata.Size = 3
 		e1.Metadata.FileHash = td.SHA256("abc")
-		e2 := td.RevisionEntry("b.txt", RevisionEntryUpdate)
+		e2 := td.RevisionEntry("b.txt", RevisionEntryKindUpdate)
 		e2.Metadata.BlockIds = []BlockId{blockId2}
 		e2.Metadata.Size = 2
 		e2.Metadata.FileHash = td.SHA256("de")
-		e3 := td.RevisionEntry("c.txt", RevisionEntryDelete)
+		e3 := td.RevisionEntry("c.txt", RevisionEntryKindDelete)
 		e3.Metadata.BlockIds = []BlockId{blockId1, blockId2}
 		e3.Metadata.Size = 5
 		e3.Metadata.FileHash = td.SHA256("abcde")
@@ -41,7 +41,7 @@ func TestCheckHealth(t *testing.T) {
 		assert.NoError(err)
 		assert.Calls([]MockCall{
 			NewMockCall("OnRevisionStart", rev1Id),
-			NewMockCall("OnBlockOk", assert.Any, false, 361),
+			NewMockCall("OnBlockOk", assert.Any, false, 371),
 			NewMockCall("OnRevisionEntry", e1),
 			NewMockCall("OnRevisionEntry", e2),
 			NewMockCall("OnRevisionEntry", e3),
@@ -53,7 +53,7 @@ func TestCheckHealth(t *testing.T) {
 		assert.NoError(err)
 		assert.Calls([]MockCall{
 			NewMockCall("OnRevisionStart", rev1Id),
-			NewMockCall("OnBlockOk", assert.Any, false, 361),
+			NewMockCall("OnBlockOk", assert.Any, false, 371),
 			NewMockCall("OnRevisionEntry", e1),
 			NewMockCall("OnBlockOk", blockId1, false, 3),
 			NewMockCall("OnRevisionEntry", e2),
@@ -71,7 +71,7 @@ func TestCheckHealth(t *testing.T) {
 
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		e1 := td.RevisionEntry("a.txt", RevisionEntryAdd)
+		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		blockId, _, err := r.WriteBlock([]byte{1, 2, 3})
 		assert.NoError(err)
 		e1.Metadata.BlockIds = []BlockId{blockId, td.BlockId("1")}
@@ -97,7 +97,7 @@ func TestCheckHealth(t *testing.T) {
 
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		e1 := td.RevisionEntry("a.txt", RevisionEntryAdd)
+		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		blockId, _, err := r.WriteBlock([]byte{1, 2, 3})
 		assert.NoError(err)
 		e1.Metadata.BlockIds = []BlockId{blockId}
@@ -123,7 +123,7 @@ func TestCheckHealth(t *testing.T) {
 
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		e1 := td.RevisionEntry("a.txt", RevisionEntryAdd)
+		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		blockId, _, err := r.WriteBlock([]byte("abc"))
 		assert.NoError(err)
 		e1.Metadata.BlockIds = []BlockId{blockId}

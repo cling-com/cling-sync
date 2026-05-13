@@ -81,7 +81,7 @@ enum RevisionEntryKind {
     RevisionEntryKind_delete = 2;
 }
 
-message RevisionEntry1 {
+message RevisionEntry {
     RevisionEntryKind kind = 1;
     // A deterministic utf8 representation of a file-system path.
     string path = 2 [(cling) = {type: "Path"}];
@@ -89,7 +89,7 @@ message RevisionEntry1 {
 }
 
 message RevisionEntryChunk {
-    repeated RevisionEntry1 entries = 1 [(cling) = {max_length: 0xFFFFFF}];
+    repeated RevisionEntry entries = 1 [(cling) = {max_length: 0xFFFFFF}];
 }
 
 message Revision1 {

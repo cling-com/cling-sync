@@ -443,22 +443,22 @@ const (
 	RevisionEntryKindDelete RevisionEntryKind = 2
 )
 
-type RevisionEntry1 struct {
+type RevisionEntry struct {
 	Kind     RevisionEntryKind
 	Path     Path
 	Metadata PathMetadata
 }
 
-func (o *RevisionEntry1) Validate() error {
+func (o *RevisionEntry) Validate() error {
 	switch o.Kind {
 	case RevisionEntryKindAdd, RevisionEntryKindUpdate, RevisionEntryKindDelete:
 	default:
-		return Errorf("RevisionEntry1.Kind has invalid value %d", o.Kind)
+		return Errorf("RevisionEntry.Kind has invalid value %d", o.Kind)
 	}
 	return nil
 }
 
-func (o *RevisionEntry1) Marshall(w *ProtobufWriter) error {
+func (o *RevisionEntry) Marshall(w *ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -477,54 +477,54 @@ func (o *RevisionEntry1) Marshall(w *ProtobufWriter) error {
 	return nil
 }
 
-func UnmarshallRevisionEntry1(r *ProtobufReader) (RevisionEntry1, error) {
-	o := RevisionEntry1{}
+func UnmarshallRevisionEntry(r *ProtobufReader) (RevisionEntry, error) {
+	o := RevisionEntry{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
-			return RevisionEntry1{}, err
+			return RevisionEntry{}, err
 		}
 		switch tag {
 		case 1:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return RevisionEntry1{}, err
+				return RevisionEntry{}, err
 			}
 			o.Kind = RevisionEntryKind(u)
 		case 2:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return RevisionEntry1{}, err
+				return RevisionEntry{}, err
 			}
 			pv, err := NewPath(string(b))
 			if err != nil {
-				return RevisionEntry1{}, err
+				return RevisionEntry{}, err
 			}
 			o.Path = pv
 		case 3:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return RevisionEntry1{}, err
+				return RevisionEntry{}, err
 			}
 			v, err := UnmarshallPathMetadata(NewProtobufReader(b))
 			if err != nil {
-				return RevisionEntry1{}, err
+				return RevisionEntry{}, err
 			}
 			o.Metadata = v
 		default:
 			if err := r.Skip(wireType); err != nil {
-				return RevisionEntry1{}, err
+				return RevisionEntry{}, err
 			}
 		}
 	}
 	if err := o.Validate(); err != nil {
-		return RevisionEntry1{}, err
+		return RevisionEntry{}, err
 	}
 	return o, nil
 }
 
 type RevisionEntryChunk struct {
-	Entries []RevisionEntry1
+	Entries []RevisionEntry
 }
 
 func (o *RevisionEntryChunk) Validate() error {
@@ -559,7 +559,7 @@ func UnmarshallRevisionEntryChunk(r *ProtobufReader) (RevisionEntryChunk, error)
 			if err != nil {
 				return RevisionEntryChunk{}, err
 			}
-			v, err := UnmarshallRevisionEntry1(NewProtobufReader(b))
+			v, err := UnmarshallRevisionEntry(NewProtobufReader(b))
 			if err != nil {
 				return RevisionEntryChunk{}, err
 			}

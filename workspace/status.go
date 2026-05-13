@@ -10,21 +10,21 @@ import (
 
 type StatusFile struct {
 	Path     lib.Path
-	Type     lib.RevisionEntryType
-	Metadata *lib.PathMetadata
+	Kind     lib.RevisionEntryKind
+	Metadata lib.PathMetadata
 }
 
 func (f StatusFile) Format() string {
 	var typeStr string
-	switch f.Type {
-	case lib.RevisionEntryAdd:
+	switch f.Kind {
+	case lib.RevisionEntryKindAdd:
 		typeStr = "A"
-	case lib.RevisionEntryUpdate:
+	case lib.RevisionEntryKindUpdate:
 		typeStr = "M"
-	case lib.RevisionEntryDelete:
+	case lib.RevisionEntryKindDelete:
 		typeStr = "D"
 	default:
-		panic(fmt.Sprintf("invalid revision entry type %d", f.Type))
+		panic(fmt.Sprintf("invalid revision entry type %d", f.Kind))
 	}
 	path := f.Path.String()
 	if f.Metadata.FileMode.IsDir() {
@@ -43,15 +43,15 @@ func (s StatusFiles) Summary() string {
 	updated := 0
 	deleted := 0
 	for _, file := range s {
-		switch file.Type {
-		case lib.RevisionEntryAdd:
+		switch file.Kind {
+		case lib.RevisionEntryKindAdd:
 			added++
-		case lib.RevisionEntryUpdate:
+		case lib.RevisionEntryKindUpdate:
 			updated++
-		case lib.RevisionEntryDelete:
+		case lib.RevisionEntryKindDelete:
 			deleted++
 		default:
-			panic(fmt.Sprintf("invalid revision entry type %d", file.Type))
+			panic(fmt.Sprintf("invalid revision entry type %d", file.Kind))
 		}
 	}
 	return fmt.Sprintf("%d added, %d updated, %d deleted", added, updated, deleted)
@@ -107,7 +107,7 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 		if !ok {
 			continue
 		}
-		result = append(result, StatusFile{path, entry.Type, entry.Metadata})
+		result = append(result, StatusFile{path, entry.Kind, entry.Metadata})
 	}
 	return result, nil
 }

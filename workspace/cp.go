@@ -51,7 +51,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 	restoreDirFileModes := func() error {
 		for _, entry := range directories {
 			target := entry.Path.String()
-			if err := restoreFileMode(targetFS, target, entry.Metadata, opts.RestorableMetadataFlag); err != nil {
+			if err := restoreFileMode(targetFS, target, &entry.Metadata, opts.RestorableMetadataFlag); err != nil {
 				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", entry.Metadata.FileMode, target)
 			}
 		}
@@ -74,7 +74,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 		if err := restore(entry, repository, targetFS, target, buf, mon); err != nil {
 			return lib.WrapErrorf(err, "failed to copy %s", target)
 		}
-		if err := restoreFileMode(targetFS, target, entry.Metadata, opts.RestorableMetadataFlag); err != nil {
+		if err := restoreFileMode(targetFS, target, &entry.Metadata, opts.RestorableMetadataFlag); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {
 					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)

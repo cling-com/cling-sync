@@ -87,7 +87,7 @@ const (
 // Compare all attributes that can be restored like `FileMode`, `Size`, `FileHash` etc.
 // `Birthtime` is not compared because it cannot be restored.
 // `BlockIds` are not compared because they should be the same if the `FileHash` is the same.
-func (p *PathMetadata) IsEqualRestorableAttributes(other *PathMetadata, flags RestorableMetadataFlag) bool {
+func (p *PathMetadata) IsEqualRestorableAttributes(other PathMetadata, flags RestorableMetadataFlag) bool {
 	if p.FileMode&^restorableMetadataModeMask != other.FileMode&^restorableMetadataModeMask {
 		return false
 	}

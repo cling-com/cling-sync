@@ -26,19 +26,19 @@ func TestStaging(t *testing.T) {
 		// Create a remote commit with a modified file, missing files, and a new file.
 		commit, err := lib.NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		assert.NoError(commit.Add(td.RevisionEntryExt("a.txt", lib.RevisionEntryAdd, 0o600, "a")))
-		bDirEntry := td.RevisionEntry("b", lib.RevisionEntryAdd)
-		bDirEntry.Metadata = w.PathMetadata("b")
+		assert.NoError(commit.Add(td.RevisionEntryExt("a.txt", lib.RevisionEntryKindAdd, 0o600, "a")))
+		bDirEntry := td.RevisionEntry("b", lib.RevisionEntryKindAdd)
+		bDirEntry.Metadata = *w.PathMetadata("b")
 		assert.NoError(commit.Add(bDirEntry))
-		assert.NoError(commit.Add(td.RevisionEntryExt("b/remote.txt", lib.RevisionEntryAdd, 0o123, "rrr")))
+		assert.NoError(commit.Add(td.RevisionEntryExt("b/remote.txt", lib.RevisionEntryKindAdd, 0o123, "rrr")))
 		remoteRev1, err := commit.Commit(td.CommitInfo())
 		assert.NoError(err)
 		assert.Equal(remoteRev1, r.Head())
 		assert.Equal(false, remoteRev1.IsRoot())
 		assert.Equal([]lib.TestRevisionEntryInfo{
-			{"a.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("a")},
-			{"b", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, td.SHA256("")},
-			{"b/remote.txt", lib.RevisionEntryAdd, 0o123, td.SHA256("rrr")},
+			{"a.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("a")},
+			{"b", lib.RevisionEntryKindAdd, 0o700 | fs.ModeDir, td.SHA256("")},
+			{"b/remote.txt", lib.RevisionEntryKindAdd, 0o123, td.SHA256("rrr")},
 		}, r.RevisionInfos(remoteRev1))
 
 		// Create a staging.
@@ -60,13 +60,13 @@ func TestStaging(t *testing.T) {
 		merged, err := staging.MergeWithSnapshot(snapshot, lib.RestorableMetadataAll)
 		assert.NoError(err)
 		assert.Equal([]lib.TestRevisionEntryInfo{
-			{"a.txt", lib.RevisionEntryUpdate, 0o600, td.SHA256("a")},
+			{"a.txt", lib.RevisionEntryKindUpdate, 0o600, td.SHA256("a")},
 			// Note that `b/` did not change (and is hence omitted).
-			{"b/c.txt", lib.RevisionEntryAdd, 0o400, td.SHA256("cc")},
+			{"b/c.txt", lib.RevisionEntryKindAdd, 0o400, td.SHA256("cc")},
 			// Metadata of `b/remote.txt` should match the repository version.
-			{"b/remote.txt", lib.RevisionEntryDelete, 0o123, td.SHA256("rrr")},
-			{"b/e", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, td.SHA256("")},
-			{"b/e/f.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("fff")},
+			{"b/remote.txt", lib.RevisionEntryKindDelete, 0o123, td.SHA256("rrr")},
+			{"b/e", lib.RevisionEntryKindAdd, 0o700 | fs.ModeDir, td.SHA256("")},
+			{"b/e/f.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("fff")},
 		}, r.RevisionTempInfos(merged))
 	})
 

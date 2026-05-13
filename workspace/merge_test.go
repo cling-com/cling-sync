@@ -365,8 +365,8 @@ func TestMerge(t *testing.T) {
 		assert.Equal(1, len(conflicts))
 		assert.Equal("a.txt", conflicts[0].WorkspaceEntry.Path.String())
 		assert.Equal("a.txt", conflicts[0].RepositoryEntry.Path.String())
-		assert.Equal(lib.RevisionEntryAdd, conflicts[0].WorkspaceEntry.Type)
-		assert.Equal(lib.RevisionEntryAdd, conflicts[0].RepositoryEntry.Type)
+		assert.Equal(lib.RevisionEntryKindAdd, conflicts[0].WorkspaceEntry.Kind)
+		assert.Equal(lib.RevisionEntryKindAdd, conflicts[0].RepositoryEntry.Kind)
 		assert.Equal(int64(2), conflicts[0].WorkspaceEntry.Metadata.Size)
 		assert.Equal(int64(1), conflicts[0].RepositoryEntry.Metadata.Size)
 
@@ -591,9 +591,9 @@ func TestMergeWithPathPrefix(t *testing.T) {
 			{"look/here/dir2/d.txt", 0o600, 1, "d"},
 		}, r.RevisionSnapshotFileInfos(rev, nil))
 		assert.Equal([]lib.TestRevisionEntryInfo{
-			{"look/here/c.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("c")},
-			{"look/here/dir2", lib.RevisionEntryAdd, 0o700 | fs.ModeDir, td.SHA256("")},
-			{"look/here/dir2/d.txt", lib.RevisionEntryAdd, 0o600, td.SHA256("d")},
+			{"look/here/c.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("c")},
+			{"look/here/dir2", lib.RevisionEntryKindAdd, 0o700 | fs.ModeDir, td.SHA256("")},
+			{"look/here/dir2/d.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("d")},
 		}, r.RevisionInfos(rev))
 
 		// Merging again should not do anything.
@@ -698,8 +698,8 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		assert.Equal(1, len(conflicts))
 		assert.Equal("a.txt", conflicts[0].WorkspaceEntry.Path.String())
 		assert.Equal("look/here/a.txt", conflicts[0].RepositoryEntry.Path.String())
-		assert.Equal(lib.RevisionEntryAdd, conflicts[0].WorkspaceEntry.Type)
-		assert.Equal(lib.RevisionEntryAdd, conflicts[0].RepositoryEntry.Type)
+		assert.Equal(lib.RevisionEntryKindAdd, conflicts[0].WorkspaceEntry.Kind)
+		assert.Equal(lib.RevisionEntryKindAdd, conflicts[0].RepositoryEntry.Kind)
 		assert.Equal(int64(2), conflicts[0].WorkspaceEntry.Metadata.Size)
 		assert.Equal(int64(1), conflicts[0].RepositoryEntry.Metadata.Size)
 
@@ -863,7 +863,7 @@ func (m *changeRemoteCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
 	m.committed = true
 	commit, err := lib.NewCommit(m.repository, td.NewFS(m.t))
 	m.assert.NoError(err)
-	err = commit.Add(td.RevisionEntry("update.txt", lib.RevisionEntryAdd))
+	err = commit.Add(td.RevisionEntry("update.txt", lib.RevisionEntryKindAdd))
 	m.assert.NoError(err)
 	_, err = commit.Commit(td.CommitInfo())
 	m.assert.NoError(err)

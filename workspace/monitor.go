@@ -138,13 +138,13 @@ func (m *DefaultCommitMonitor) OnEnd(entry *lib.RevisionEntry) error {
 		return nil
 	}
 	if entry.Metadata.FileMode.IsDir() {
-		m.emit(fmt.Sprintf("  %-6s (directory)", entry.Type))
+		m.emit(fmt.Sprintf("  %-6s (directory)", entry.Kind))
 		return nil
 	}
 	m.emit(
 		fmt.Sprintf(
 			"  %-6s %s %6s",
-			entry.Type,
+			entry.Kind,
 			hex.EncodeToString(entry.Metadata.FileHash[:]),
 			FormatBytes(entry.Metadata.Size),
 		),
@@ -422,7 +422,7 @@ func (m *DefaultHealthCheckMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
 	m.Paths++
 	m.emitProgress()
 	if m.Mode == DefaultMonitorModeVerbose {
-		m.emit(fmt.Sprintf("  path     %s (%s)", entry.Path, entry.Type))
+		m.emit(fmt.Sprintf("  path     %s (%s)", entry.Path, entry.Kind))
 	}
 }
 
@@ -511,7 +511,7 @@ func (m *DefaultSyncRepoMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
 	m.Paths++
 	m.emitProgress()
 	if m.Mode == DefaultMonitorModeVerbose {
-		m.emit(fmt.Sprintf("  path     %s (%s)", entry.Path, entry.Type))
+		m.emit(fmt.Sprintf("  path     %s (%s)", entry.Path, entry.Kind))
 	}
 }
 

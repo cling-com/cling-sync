@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
-	"strings"
 )
 
 const revisionMarshalMagick = "cling-rev"
@@ -19,27 +17,6 @@ func (id RevisionId) String() string {
 
 func (id RevisionId) IsRoot() bool {
 	return id == (RevisionId)(BlockId{})
-}
-
-type RevisionEntryType uint8
-
-const (
-	RevisionEntryAdd    RevisionEntryType = 0
-	RevisionEntryUpdate RevisionEntryType = 1
-	RevisionEntryDelete RevisionEntryType = 2
-)
-
-func (t RevisionEntryType) String() string {
-	switch t {
-	case RevisionEntryAdd:
-		return "add"
-	case RevisionEntryUpdate:
-		return "update"
-	case RevisionEntryDelete:
-		return "delete"
-	default:
-		return fmt.Sprintf("unknown(%d)", t)
-	}
 }
 
 type Revision struct {
@@ -94,73 +71,7 @@ func UnmarshalRevision(r io.Reader) (*Revision, error) {
 	return &c, br.Err
 }
 
-// Compare two revision entries by their full path.
-func RevisionEntryPathCompare(a, b *RevisionEntry) int {
-	return strings.Compare(
-		PathCompareString(a.Path, a.Metadata.FileMode.IsDir()),
-		PathCompareString(b.Path, b.Metadata.FileMode.IsDir()),
-	)
-}
-
-func RevisionEntryPathCompareString(e *RevisionEntry) string {
-	return PathCompareString(e.Path, e.Metadata.FileMode.IsDir())
-}
-
-type RevisionEntry struct {
-	Path     Path
-	Type     RevisionEntryType
-	Metadata *PathMetadata
-}
-
-func NewRevisionEntry(path Path, typ RevisionEntryType, md *PathMetadata) (RevisionEntry, error) {
-	return RevisionEntry{Path: path, Type: typ, Metadata: md}, nil
-}
-
-func RevisionEntryMarshalledSize(r *RevisionEntry) int {
-	return r.Path.Len() + 2 + 1 + // Path + len(Path) + Type
-		r.Metadata.MarshalledSize()
-}
-
-func MarshalRevisionEntry(r *RevisionEntry, w io.Writer) error {
-	bw := NewBinaryWriter(w)
-	bw.WriteString(r.Path.String())
-	bw.Write(r.Type)
-	if bw.Err != nil {
-		return WrapErrorf(bw.Err, "failed to marshal revision entry %s", r.Path)
-	}
-	if err := MarshalPathMetadata(r.Metadata, w); err != nil {
-		return WrapErrorf(err, "failed to marshal revision entry %s", r.Path)
-	}
-	return nil
-}
-
-// todo: All unmarshal functions should take a reference of an object to be filled.
-// todo: Make sure to wrap all errors in marshal and unmarshal
-func UnmarshalRevisionEntry(r io.Reader) (*RevisionEntry, error) {
-	var re RevisionEntry
-	br := NewBinaryReader(r)
-	path := br.ReadString()
-	var err error
-	re.Path, err = NewPath(path)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to unmarshal revision entry, invalid path %q", path)
-	}
-	br.Read(&re.Type)
-	if br.Err != nil {
-		return nil, WrapErrorf(br.Err, "failed to unmarshal revision entry")
-	}
-	metadata, err := UnmarshalPathMetadata(r)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to unmarshal path metadata for revision entry %s", re.Path)
-	}
-	re.Metadata = metadata
-	return &re, nil
-}
-
-type RevisionEntryReader interface {
-	Read(buf BlockBuf) (*RevisionEntry, error)
-}
-
+// RevisionReader streams `RevisionEntry`s out of the blocks of a `Revision`.
 type RevisionReader struct {
 	revision   *Revision
 	repository *Repository
@@ -201,28 +112,4 @@ func (rr *RevisionReader) Read(buf BlockBuf) (*RevisionEntry, error) {
 		return nil, WrapErrorf(err, "failed to unmarshal revision entry")
 	}
 	return re, nil
-}
-
-func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) *TempWriter[RevisionEntry] {
-	return NewTempWriter(
-		RevisionEntryPathCompare,
-		MarshalRevisionEntry,
-		RevisionEntryMarshalledSize,
-		UnmarshalRevisionEntry,
-		fs,
-		maxChunkSize,
-	)
-}
-
-func NewRevisionEntryTempCache(temp *Temp[RevisionEntry], maxChunksInCache int) (*TempCache[RevisionEntry], error) {
-	return NewTempCache(temp, RevisionEntryPathCompareString, maxChunksInCache)
-}
-
-func RevisionEntryPathFilter(pathFilter PathFilter) func(e *RevisionEntry) bool {
-	if pathFilter == nil {
-		return nil
-	}
-	return func(e *RevisionEntry) bool {
-		return pathFilter.Include(e.Path, e.Metadata.FileMode.IsDir())
-	}
 }

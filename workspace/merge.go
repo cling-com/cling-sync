@@ -228,7 +228,7 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 		if err := mon.OnStart(entry); err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor start failed for %s", entry.Path)
 		}
-		if entry.Type == lib.RevisionEntryDelete {
+		if entry.Kind == lib.RevisionEntryKindDelete {
 			if err := commit.Add(entry); err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add revision entry to commit")
 			}
@@ -253,7 +253,7 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 				entry.Path,
 			)
 		}
-		var md *lib.PathMetadata
+		var md lib.PathMetadata
 		if existsInRemote && entry.Metadata.FileHash == remoteEntry.Metadata.FileHash {
 			if entry.Metadata.IsEqualRestorableAttributes(remoteEntry.Metadata, m.opts.RestorableMetadataFlag) {
 				// The file did not change at all, we can skip it completely.
@@ -270,7 +270,7 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 			if err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", localPath)
 			}
-			md = &uploadedMD
+			md = uploadedMD
 		}
 		if md.FileHash != entry.Metadata.FileHash {
 			return lib.RevisionId{}, lib.Errorf(
@@ -481,8 +481,8 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		}
 		// Make sure parent directories are writable.
 		targetPath := localPath.String()
-		if remoteEntry.Type != lib.RevisionEntryAdd && remoteEntry.Type != lib.RevisionEntryUpdate {
-			return lib.Errorf("unexpected revision entry type %s for %s", remoteEntry.Type, targetPath)
+		if remoteEntry.Kind != lib.RevisionEntryKindAdd && remoteEntry.Kind != lib.RevisionEntryKindUpdate {
+			return lib.Errorf("unexpected revision entry type %s for %s", remoteEntry.Kind, targetPath)
 		}
 		restoreMode := m.opts.RestorableMetadataFlag
 		if !existsInStaging {
@@ -497,7 +497,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 				}
 			}
 			// Only update metadata.
-			if err := restoreFileMode(m.ws.FS, targetPath, remoteEntry.Metadata, restoreMode); err != nil {
+			if err := restoreFileMode(m.ws.FS, targetPath, &remoteEntry.Metadata, restoreMode); err != nil {
 				return lib.WrapErrorf(
 					err,
 					"failed to restore file mode %s for %s",
@@ -516,7 +516,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 				return lib.WrapErrorf(err, "failed to restore %s", targetPath)
 			}
 		}
-		if err := restoreFileMode(m.ws.FS, targetPath, remoteEntry.Metadata, restoreMode); err != nil {
+		if err := restoreFileMode(m.ws.FS, targetPath, &remoteEntry.Metadata, restoreMode); err != nil {
 			return lib.WrapErrorf(
 				err,
 				"failed to restore file mode %s for %s",
@@ -750,7 +750,7 @@ func AddFileToRepository(
 	// Fast path: If the entry already has BlockIds and the size of the file did
 	// not change, only calculate the hash.
 	// If the hash is the same, we can skip the whole block calculation.
-	if entry != nil && len(entry.Metadata.BlockIds) > 0 && entry.Metadata != nil &&
+	if entry != nil && len(entry.Metadata.BlockIds) > 0 &&
 		entry.Metadata.Size == fileInfo.Size() {
 		md, err := computeFileHash(fs, path, fileInfo)
 		if err != nil {

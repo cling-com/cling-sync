@@ -531,8 +531,8 @@ func MergeCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		for _, conflict := range conflicts {
 			fmt.Fprintf(&sb, "  %s (remote: %s, local: %s)\n",
 				conflict.WorkspaceEntry.Path,
-				conflict.RepositoryEntry.Type,
-				conflict.WorkspaceEntry.Type)
+				conflict.RepositoryEntry.Kind,
+				conflict.WorkspaceEntry.Kind)
 		}
 		fmt.Fprintf(&sb, `
 No files were changed, you need to resolve the conflicts manually.

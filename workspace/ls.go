@@ -12,7 +12,7 @@ import (
 
 type LsFile struct {
 	Path     lib.Path
-	Metadata *lib.PathMetadata
+	Metadata lib.PathMetadata
 }
 
 func (f *LsFile) String() string {

@@ -164,11 +164,8 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 		return nil, lib.WrapErrorf(err, "failed to create commit directory")
 	}
 	finalWriter := lib.NewRevisionEntryTempWriter(final, lib.MaxBlockDataSize)
-	add := func(path lib.Path, typ lib.RevisionEntryType, md *lib.PathMetadata) error {
-		re, err := lib.NewRevisionEntry(path, typ, md)
-		if err != nil {
-			return lib.WrapErrorf(err, "failed to create revision entry for path %s", path)
-		}
+	add := func(path lib.Path, kind lib.RevisionEntryKind, md lib.PathMetadata) error {
+		re := lib.RevisionEntry{Kind: kind, Path: path, Metadata: md}
 		if err := finalWriter.Add(&re); err != nil {
 			return lib.WrapErrorf(err, "failed to write revision entry for path %s", path)
 		}
@@ -186,7 +183,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 				for {
 					if rev != nil { // The current one might be nil.
 						// Write a delete.
-						if err := add(rev.Path, lib.RevisionEntryDelete, rev.Metadata); err != nil {
+						if err := add(rev.Path, lib.RevisionEntryKindDelete, rev.Metadata); err != nil {
 							return nil, err
 						}
 					}
@@ -211,7 +208,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 				// Write an add for all remaining staging entries.
 				for {
 					if stg != nil { // The current one might be nil.
-						if err := add(stg.RepoPath, lib.RevisionEntryAdd, stg.Metadata); err != nil {
+						if err := add(stg.RepoPath, lib.RevisionEntryKindAdd, *stg.Metadata); err != nil {
 							return nil, err
 						}
 					}
@@ -236,7 +233,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 		if c == 0 { //nolint:gocritic
 			if !stg.Metadata.IsEqualRestorableAttributes(rev.Metadata, restorableMetadataFlag) {
 				// Write an update.
-				if err := add(stg.RepoPath, lib.RevisionEntryUpdate, stg.Metadata); err != nil {
+				if err := add(stg.RepoPath, lib.RevisionEntryKindUpdate, *stg.Metadata); err != nil {
 					return nil, err
 				}
 			}
@@ -244,14 +241,14 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			rev = nil
 		} else if c < 0 {
 			// Write an add.
-			if err := add(stg.RepoPath, lib.RevisionEntryAdd, stg.Metadata); err != nil {
+			if err := add(stg.RepoPath, lib.RevisionEntryKindAdd, *stg.Metadata); err != nil {
 				return nil, err
 			}
 			stg = nil
 			continue
 		} else {
 			// Write a delete.
-			if err := add(rev.Path, lib.RevisionEntryDelete, rev.Metadata); err != nil {
+			if err := add(rev.Path, lib.RevisionEntryKindDelete, rev.Metadata); err != nil {
 				return nil, err
 			}
 			rev = nil

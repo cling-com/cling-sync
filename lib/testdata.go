@@ -82,13 +82,13 @@ func (td TestData) PathMetadata(mode FileMode) *PathMetadata {
 	return md
 }
 
-func (td TestData) RevisionEntry(path string, entryType RevisionEntryType) *RevisionEntry {
+func (td TestData) RevisionEntry(path string, entryType RevisionEntryKind) *RevisionEntry {
 	return td.RevisionEntryExt(path, entryType, 0o600, "test")
 }
 
 func (td TestData) RevisionEntryExt(
 	path string,
-	entryType RevisionEntryType,
+	entryType RevisionEntryKind,
 	mode FileMode,
 	content string,
 ) *RevisionEntry {
@@ -101,7 +101,7 @@ func (td TestData) RevisionEntryExt(
 	if err != nil {
 		panic(err)
 	}
-	return &RevisionEntry{p, entryType, md}
+	return &RevisionEntry{Kind: entryType, Path: p, Metadata: *md}
 }
 
 func (td TestData) Revision(parent RevisionId) *Revision {
@@ -275,7 +275,7 @@ type TestFileInfo struct {
 
 type TestRevisionEntryInfo struct {
 	Path string
-	Type RevisionEntryType
+	Type RevisionEntryKind
 	Mode fs.FileMode
 	Hash Sha256
 }
@@ -455,7 +455,7 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 	blockBuf := BlockBuf{}
 	for i, entry := range entries {
 		content := ""
-		if entry.Type != RevisionEntryDelete && entry.Metadata.FileMode.IsRegular() {
+		if entry.Kind != RevisionEntryKindDelete && entry.Metadata.FileMode.IsRegular() {
 			// Rebuild the content from the repository.
 			buf := bytes.NewBuffer([]byte{})
 			for _, blockId := range entry.Metadata.BlockIds {
@@ -485,7 +485,7 @@ func (r *TestRepository) RevisionEntryReaderInfos(reader RevisionEntryReader) []
 		r.assert.NoError(err)
 		infos = append(infos, TestRevisionEntryInfo{
 			Path: entry.Path.String(),
-			Type: entry.Type,
+			Type: entry.Kind,
 			Mode: entry.Metadata.FileMode.AsFsFileMode(),
 			Hash: entry.Metadata.FileHash,
 		})

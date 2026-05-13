@@ -111,11 +111,11 @@ func TestSyncRepository(t *testing.T) {
 
 		blockId, _, err := src.WriteBlock([]byte("shared"))
 		assert.NoError(err)
-		entry1 := td.RevisionEntry("a.txt", RevisionEntryAdd)
+		entry1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		entry1.Metadata.BlockIds = []BlockId{blockId}
 		entry1.Metadata.Size = 6
 		entry1.Metadata.FileHash = td.SHA256("shared")
-		entry2 := td.RevisionEntry("b.txt", RevisionEntryAdd)
+		entry2 := td.RevisionEntry("b.txt", RevisionEntryKindAdd)
 		entry2.Metadata.BlockIds = []BlockId{blockId}
 		entry2.Metadata.Size = 6
 		entry2.Metadata.FileHash = td.SHA256("shared")
@@ -170,7 +170,7 @@ func TestSyncRepository(t *testing.T) {
 func testEntry(t *testing.T, r *TestRepository, path, content string) (*RevisionEntry, BlockId) {
 	t.Helper()
 	assert := NewAssert(t)
-	entry := td.RevisionEntry(path, RevisionEntryAdd)
+	entry := td.RevisionEntry(path, RevisionEntryKindAdd)
 	blockId, _, err := r.WriteBlock([]byte(content))
 	assert.NoError(err)
 	entry.Metadata.BlockIds = []BlockId{blockId}

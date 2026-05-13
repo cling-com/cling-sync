@@ -80,7 +80,7 @@ func Log(repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
 				}
 				matchedAtLeastOnePath = true
 				if opts.Status {
-					files = append(files, StatusFile{entry.Path, entry.Type, entry.Metadata})
+					files = append(files, StatusFile{entry.Path, entry.Kind, entry.Metadata})
 				}
 			}
 		}

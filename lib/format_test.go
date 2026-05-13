@@ -121,7 +121,7 @@ func TestFormatMarshall(t *testing.T) {
 		}
 	`)
 
-	check("RevisionEntry1", &RevisionEntry1{
+	check("RevisionEntry", &RevisionEntry{
 		Kind: RevisionEntryKindUpdate,
 		Path: td.Path("foo/bar.txt"),
 		Metadata: PathMetadata{
@@ -130,7 +130,7 @@ func TestFormatMarshall(t *testing.T) {
 			Size:     42,
 			FileHash: sha256Hash("h"),
 		},
-	}, UnmarshallRevisionEntry1, `
+	}, UnmarshallRevisionEntry, `
 		kind: RevisionEntryKind_update
 		path: "foo/bar.txt"
 		metadata {
@@ -145,7 +145,7 @@ func TestFormatMarshall(t *testing.T) {
 	`)
 
 	check("RevisionEntryChunk", &RevisionEntryChunk{
-		Entries: []RevisionEntry1{
+		Entries: []RevisionEntry{
 			{
 				Kind: RevisionEntryKindUpdate,
 				Path: td.Path("foo/bar.txt"),
@@ -216,7 +216,7 @@ func TestFormatUnmarshallLength(t *testing.T) {
 		_, err := UnmarshallBlockHeader1(NewProtobufReader(w.Bytes()))
 		assert.Error(err, "uint32 varint out of range")
 	})
-	t.Run("nested error propagates from PathMetadata via RevisionEntry1", func(t *testing.T) {
+	t.Run("nested error propagates from PathMetadata via RevisionEntry", func(t *testing.T) {
 		assert := NewAssert(t)
 		md := NewProtobufWriter(make([]byte, 64))
 		assert.NoError(md.WriteBytes(4, make([]byte, 31))) // wrong-length file_hash
@@ -224,7 +224,7 @@ func TestFormatUnmarshallLength(t *testing.T) {
 		assert.NoError(entry.WriteTag(1, 0))
 		assert.NoError(entry.WriteVarint(int64(RevisionEntryKindUpdate)))
 		assert.NoError(entry.WriteBytes(3, md.Bytes()))
-		_, err := UnmarshallRevisionEntry1(NewProtobufReader(entry.Bytes()))
+		_, err := UnmarshallRevisionEntry(NewProtobufReader(entry.Bytes()))
 		assert.Error(err, "PathMetadata.FileHash must have length 32")
 	})
 }
@@ -265,8 +265,8 @@ func TestFormatValidate(t *testing.T) {
 		"BlockHeader1.BlockKind has invalid value 99")
 	check("BlockHeader1 invalid compression", &BlockHeader1{Compression: 99},
 		"BlockHeader1.Compression has invalid value 99")
-	check("RevisionEntry1 invalid kind", &RevisionEntry1{Kind: 99},
-		"RevisionEntry1.Kind has invalid value 99")
+	check("RevisionEntry invalid kind", &RevisionEntry{Kind: 99},
+		"RevisionEntry.Kind has invalid value 99")
 
 	// Block1: encrypted_header <= 512, encrypted_data <= 8388080.
 	check("Block1 zero value", &Block1{}, "")
@@ -301,8 +301,8 @@ func TestFormatValidate(t *testing.T) {
 		FileMode: FileModeSymlink,
 	}, "SymLinkTarget must be set")
 
-	// RevisionEntry1: no validation rules.
-	check("RevisionEntry1 zero value", &RevisionEntry1{}, "")
+	// RevisionEntry: no validation rules.
+	check("RevisionEntry zero value", &RevisionEntry{}, "")
 
 	// RevisionEntryChunk: entries cap is 2^24-1 — too large to materialize.
 	check("RevisionEntryChunk zero value", &RevisionEntryChunk{}, "")

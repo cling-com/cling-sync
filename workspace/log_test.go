@@ -61,16 +61,16 @@ func TestLog(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId2, []TestStatusFile{
-				{"a.txt", lib.RevisionEntryDelete, 1},
-				{"b.txt", lib.RevisionEntryUpdate, 2},
-				{"c", lib.RevisionEntryUpdate, 0},
-				{"c/e.txt", lib.RevisionEntryAdd, 1},
+				{"a.txt", lib.RevisionEntryKindDelete, 1},
+				{"b.txt", lib.RevisionEntryKindUpdate, 2},
+				{"c", lib.RevisionEntryKindUpdate, 0},
+				{"c/e.txt", lib.RevisionEntryKindAdd, 1},
 			}),
 			revisionLog(t, r, revId1, []TestStatusFile{
-				{"a.txt", lib.RevisionEntryAdd, 1},
-				{"b.txt", lib.RevisionEntryAdd, 1},
-				{"c", lib.RevisionEntryAdd, 0},
-				{"c/d.txt", lib.RevisionEntryAdd, 1},
+				{"a.txt", lib.RevisionEntryKindAdd, 1},
+				{"b.txt", lib.RevisionEntryKindAdd, 1},
+				{"c", lib.RevisionEntryKindAdd, 0},
+				{"c/d.txt", lib.RevisionEntryKindAdd, 1},
 			}),
 		}, newTestRevisionLogs(logs, true))
 	})
@@ -107,8 +107,8 @@ func TestLog(t *testing.T) {
 		logs, err = Log(r.Repository, &LogOptions{filter, true})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
-			revisionLog(t, r, revId3, []TestStatusFile{{"a.txt", lib.RevisionEntryDelete, 1}}),
-			revisionLog(t, r, revId1, []TestStatusFile{{"a.txt", lib.RevisionEntryAdd, 1}}),
+			revisionLog(t, r, revId3, []TestStatusFile{{"a.txt", lib.RevisionEntryKindDelete, 1}}),
+			revisionLog(t, r, revId1, []TestStatusFile{{"a.txt", lib.RevisionEntryKindAdd, 1}}),
 		}, newTestRevisionLogs(logs, true))
 
 		// PathFilter on `c/*` with status.
@@ -116,8 +116,8 @@ func TestLog(t *testing.T) {
 		logs, err = Log(r.Repository, &LogOptions{filter, true})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
-			revisionLog(t, r, revId2, []TestStatusFile{{"c/e.txt", lib.RevisionEntryAdd, 1}}),
-			revisionLog(t, r, revId1, []TestStatusFile{{"c/d.txt", lib.RevisionEntryAdd, 1}}),
+			revisionLog(t, r, revId2, []TestStatusFile{{"c/e.txt", lib.RevisionEntryKindAdd, 1}}),
+			revisionLog(t, r, revId1, []TestStatusFile{{"c/d.txt", lib.RevisionEntryKindAdd, 1}}),
 		}, newTestRevisionLogs(logs, true))
 	})
 }
@@ -130,7 +130,7 @@ type TestRevisionLog struct {
 
 type TestStatusFile struct {
 	Path string
-	Type lib.RevisionEntryType
+	Type lib.RevisionEntryKind
 	Size int
 }
 
@@ -154,7 +154,7 @@ func newTestRevisionLog(log RevisionLog, status bool) TestRevisionLog {
 	if status {
 		files = make([]TestStatusFile, len(log.Files))
 		for i, file := range log.Files {
-			files[i] = TestStatusFile{file.Path.String(), file.Type, int(file.Metadata.Size)}
+			files[i] = TestStatusFile{file.Path.String(), file.Kind, int(file.Metadata.Size)}
 		}
 	}
 	return TestRevisionLog{log.RevisionId, log.Revision, files}

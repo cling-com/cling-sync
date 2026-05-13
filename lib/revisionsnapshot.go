@@ -85,7 +85,7 @@ func revisionNWayMerge(
 				heap[i] = re
 			}
 		}
-		if newest.Type != RevisionEntryDelete {
+		if newest.Kind != RevisionEntryKindDelete {
 			if err := tempWriter.Add(newest); err != nil {
 				return WrapErrorf(err, "failed to write entry")
 			}

@@ -17,61 +17,61 @@ func TestRevisionSnapshot(t *testing.T) {
 		revId1, err := testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/3.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/3.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/4.txt", RevisionEntryKindAdd),
 		)
 		assert.NoError(err)
 
 		revId2, err := testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntry("b/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("b/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("b/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("b/2.txt", RevisionEntryKindAdd),
 			// Delete an entry.
-			td.RevisionEntry("a/2.txt", RevisionEntryDelete),
+			td.RevisionEntry("a/2.txt", RevisionEntryKindDelete),
 			// Update an entry.
-			td.RevisionEntry("a/3.txt", RevisionEntryUpdate),
+			td.RevisionEntry("a/3.txt", RevisionEntryKindUpdate),
 			// Delete another entry to update it in the next revision.
-			td.RevisionEntry("a/4.txt", RevisionEntryDelete),
+			td.RevisionEntry("a/4.txt", RevisionEntryKindDelete),
 		)
 		assert.NoError(err)
 
 		revId3, err := testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntry("b/1.txt", RevisionEntryDelete),
-			td.RevisionEntry("c/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/1.txt", RevisionEntryUpdate),
+			td.RevisionEntry("b/1.txt", RevisionEntryKindDelete),
+			td.RevisionEntry("c/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindUpdate),
 			// Re-add a deleted file.
-			td.RevisionEntry("a/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/4.txt", RevisionEntryKindAdd),
 		)
 		assert.NoError(err)
 
 		entries := readRevisionSnapshot(t, r.Repository, revId3, nil)
 		assert.Equal([]*RevisionEntry{
-			td.RevisionEntry("a/1.txt", RevisionEntryUpdate),
-			td.RevisionEntry("a/3.txt", RevisionEntryUpdate),
-			td.RevisionEntry("a/4.txt", RevisionEntryAdd),
-			td.RevisionEntry("b/2.txt", RevisionEntryAdd),
-			td.RevisionEntry("c/1.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindUpdate),
+			td.RevisionEntry("a/3.txt", RevisionEntryKindUpdate),
+			td.RevisionEntry("a/4.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("b/2.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("c/1.txt", RevisionEntryKindAdd),
 		}, entries)
 
 		entries = readRevisionSnapshot(t, r.Repository, revId2, nil)
 		assert.Equal([]*RevisionEntry{
-			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/3.txt", RevisionEntryUpdate),
-			td.RevisionEntry("b/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("b/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/3.txt", RevisionEntryKindUpdate),
+			td.RevisionEntry("b/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("b/2.txt", RevisionEntryKindAdd),
 		}, entries)
 
 		entries = readRevisionSnapshot(t, r.Repository, revId1, nil)
 		assert.Equal([]*RevisionEntry{
-			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/3.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/3.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/4.txt", RevisionEntryKindAdd),
 		}, entries)
 
 		// Root revision should be empty.
@@ -88,36 +88,36 @@ func TestRevisionSnapshot(t *testing.T) {
 		_, err := testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntryExt("a", RevisionEntryAdd, FileModeDir, ""),
-			td.RevisionEntry("z.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
+			td.RevisionEntryExt("a", RevisionEntryKindAdd, FileModeDir, ""),
+			td.RevisionEntry("z.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryKindAdd),
 		)
 		assert.NoError(err)
 		_, err = testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntryExt("a", RevisionEntryAdd, FileModeDir, ""),
-			td.RevisionEntryExt("a/b", RevisionEntryAdd, FileModeDir, ""),
+			td.RevisionEntryExt("a", RevisionEntryKindAdd, FileModeDir, ""),
+			td.RevisionEntryExt("a/b", RevisionEntryKindAdd, FileModeDir, ""),
 		)
 		assert.NoError(err)
 		revId3, err := testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntry("a.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryKindAdd),
 		)
 		assert.NoError(err)
 
 		entries := readRevisionSnapshot(t, r.Repository, revId3, nil)
 		assert.Equal([]*RevisionEntry{
-			td.RevisionEntry("a.txt", RevisionEntryAdd),
-			td.RevisionEntry("z.txt", RevisionEntryAdd),
-			td.RevisionEntryExt("a", RevisionEntryAdd, FileModeDir, ""),
-			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
-			td.RevisionEntryExt("a/b", RevisionEntryAdd, FileModeDir, ""),
-			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
+			td.RevisionEntry("a.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("z.txt", RevisionEntryKindAdd),
+			td.RevisionEntryExt("a", RevisionEntryKindAdd, FileModeDir, ""),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryKindAdd),
+			td.RevisionEntryExt("a/b", RevisionEntryKindAdd, FileModeDir, ""),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryKindAdd),
 		}, entries)
 	})
 
@@ -129,18 +129,18 @@ func TestRevisionSnapshot(t *testing.T) {
 		revId1, err := testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/b/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/b/4.txt", RevisionEntryKindAdd),
 		)
 		assert.NoError(err)
 		assert.NoError(err)
 		filter := NewPathExclusionFilter([]string{"a/b"})
 		snapshot := readRevisionSnapshot(t, r.Repository, revId1, filter)
 		assert.Equal([]*RevisionEntry{
-			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryKindAdd),
 		}, snapshot)
 	})
 
@@ -152,32 +152,32 @@ func TestRevisionSnapshot(t *testing.T) {
 		_, err := testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/b/3.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/b/4.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/b/4.txt", RevisionEntryKindAdd),
 		)
 		assert.NoError(err)
 		_, err = testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntry("a/b/3.txt", RevisionEntryUpdate),
-			td.RevisionEntry("a/b/4.txt", RevisionEntryUpdate),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryKindUpdate),
+			td.RevisionEntry("a/b/4.txt", RevisionEntryKindUpdate),
 		)
 		assert.NoError(err)
 		revId2, err := testCommit(
 			t,
 			r.Repository,
-			td.RevisionEntry("a/b", RevisionEntryDelete),
-			td.RevisionEntry("a/b/3.txt", RevisionEntryDelete),
-			td.RevisionEntry("a/b/4.txt", RevisionEntryDelete),
+			td.RevisionEntry("a/b", RevisionEntryKindDelete),
+			td.RevisionEntry("a/b/3.txt", RevisionEntryKindDelete),
+			td.RevisionEntry("a/b/4.txt", RevisionEntryKindDelete),
 		)
 		assert.NoError(err)
 
 		entries := readRevisionSnapshot(t, r.Repository, revId2, nil)
 		assert.Equal([]*RevisionEntry{
-			td.RevisionEntry("a/1.txt", RevisionEntryAdd),
-			td.RevisionEntry("a/2.txt", RevisionEntryAdd),
+			td.RevisionEntry("a/1.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("a/2.txt", RevisionEntryKindAdd),
 		}, entries)
 	})
 }

@@ -16,9 +16,9 @@ func TestCommit(t *testing.T) {
 
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		e1 := td.RevisionEntry("a/1.txt", RevisionEntryAdd)
-		e2 := td.RevisionEntry("a/2.txt", RevisionEntryUpdate)
-		e3 := td.RevisionEntry("a/3.txt", RevisionEntryDelete)
+		e1 := td.RevisionEntry("a/1.txt", RevisionEntryKindAdd)
+		e2 := td.RevisionEntry("a/2.txt", RevisionEntryKindUpdate)
+		e3 := td.RevisionEntry("a/3.txt", RevisionEntryKindDelete)
 		// Add the entries unordered to test that they are sorted before commit.
 		assert.NoError(commit.Add(e2))
 		assert.NoError(commit.Add(e1))
@@ -36,7 +36,7 @@ func TestCommit(t *testing.T) {
 		// Add a second revision.
 		commit2, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		e4 := td.RevisionEntry("a/1.txt", RevisionEntryDelete)
+		e4 := td.RevisionEntry("a/1.txt", RevisionEntryKindDelete)
 		assert.NoError(commit2.Add(e4))
 		revisionId2, err := commit2.Commit(&CommitInfo{Author: "test author2", Message: "test message2"})
 		assert.NoError(err)
@@ -83,7 +83,7 @@ func TestCommit(t *testing.T) {
 		assert.NoError(err)
 
 		// Try to commit with the head changed.
-		err = commit.Add(td.RevisionEntry("a/1.txt", RevisionEntryAdd))
+		err = commit.Add(td.RevisionEntry("a/1.txt", RevisionEntryKindAdd))
 		assert.NoError(err)
 		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
 		assert.ErrorIs(err, ErrHeadChanged)
@@ -118,16 +118,16 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		err := run(r, assert, Path{"a/b/c"})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionEntryInfo{
-			{"a", RevisionEntryAdd, 0o700 | fs.ModeDir, Sha256{}},
-			{"a/b", RevisionEntryAdd, 0o700 | fs.ModeDir, Sha256{}},
-			{"a/b/c", RevisionEntryAdd, 0o700 | fs.ModeDir, Sha256{}},
+			{"a", RevisionEntryKindAdd, 0o700 | fs.ModeDir, Sha256{}},
+			{"a/b", RevisionEntryKindAdd, 0o700 | fs.ModeDir, Sha256{}},
+			{"a/b/c", RevisionEntryKindAdd, 0o700 | fs.ModeDir, Sha256{}},
 		}, r.RevisionInfos(r.Head()))
 
 		// Adding another directory level.
 		err = run(r, assert, Path{"a/b/c/d"})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionEntryInfo{
-			{"a/b/c/d", RevisionEntryAdd, 0o700 | fs.ModeDir, Sha256{}},
+			{"a/b/c/d", RevisionEntryKindAdd, 0o700 | fs.ModeDir, Sha256{}},
 		}, r.RevisionInfos(r.Head()))
 	})
 
@@ -154,7 +154,7 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
 
-		entry := td.RevisionEntryExt("a", RevisionEntryAdd, 0o700|FileModeDir, "")
+		entry := td.RevisionEntryExt("a", RevisionEntryKindAdd, 0o700|FileModeDir, "")
 		entry.Metadata.FileHash = Sha256{}
 		err = commit.Add(entry)
 		assert.NoError(err)
@@ -170,7 +170,7 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionEntryInfo{
-			{"a", RevisionEntryAdd, 0o700 | fs.ModeDir, Sha256{}},
+			{"a", RevisionEntryKindAdd, 0o700 | fs.ModeDir, Sha256{}},
 		}, r.RevisionInfos(r.Head()))
 	})
 
@@ -182,7 +182,7 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
 
-		err = commit.Add(td.RevisionEntry("a/b", RevisionEntryAdd))
+		err = commit.Add(td.RevisionEntry("a/b", RevisionEntryKindAdd))
 		assert.NoError(err)
 		_, err = commit.Commit(td.CommitInfo())
 		assert.NoError(err)
