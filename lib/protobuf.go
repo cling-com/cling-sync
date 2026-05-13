@@ -1,11 +1,10 @@
 // A minimal protobuf implementation that only supports what this project needs.
-//
-//go:generate go run protogen.go
 package lib
 
 type ProtobufWriter interface {
 	WriteTag(field, wireType int) error
 	WriteVarint(v int64) error
+	WriteUint64(field int, v uint64) error
 	WriteBytes(field int, v []byte) error
 	WriteMessage(field int, marshall func(ProtobufWriter) error) error
 }
@@ -105,6 +104,26 @@ func (w *ProtobufBytesWriter) WriteVarint(v_ int64) error {
 	return nil
 }
 
+func (w *ProtobufBytesWriter) WriteUint64(field int, v uint64) error {
+	if err := w.WriteTag(field, 0); err != nil {
+		return err
+	}
+	for v > 0x7f {
+		if w.offset >= len(w.out) {
+			return Errorf("buffer too small")
+		}
+		w.out[w.offset] = byte(v&0x7f) | 0x80
+		w.offset++
+		v >>= 7
+	}
+	if w.offset >= len(w.out) {
+		return Errorf("buffer too small")
+	}
+	w.out[w.offset] = byte(v)
+	w.offset++
+	return nil
+}
+
 type ProtobufSizeWriter struct {
 	size int
 }
@@ -124,6 +143,16 @@ func (w *ProtobufSizeWriter) WriteTag(field, wireType int) error {
 
 func (w *ProtobufSizeWriter) WriteVarint(v int64) error {
 	w.size += VarintLen(v)
+	return nil
+}
+
+func (w *ProtobufSizeWriter) WriteUint64(field int, v uint64) error {
+	n := 1
+	for v > 0x7f {
+		v >>= 7
+		n++
+	}
+	w.size += TagLen(field, 0) + n
 	return nil
 }
 
@@ -210,6 +239,16 @@ func (r *ProtobufReader) ReadUint32() (uint32, error) {
 		return 0, Errorf("uint32 varint out of range: %d", v)
 	}
 	return uint32(v), nil
+}
+
+func (r *ProtobufReader) ReadUint64() (uint64, error) {
+	v, err := r.ReadVarint()
+	if err != nil {
+		return 0, err
+	}
+	// ReadVarint returns int64; uint64 covers the full bit pattern so any
+	// value is in range. The cast just reinterprets the bits.
+	return uint64(v), nil //nolint:gosec
 }
 
 func (r *ProtobufReader) ReadBytes() ([]byte, error) {

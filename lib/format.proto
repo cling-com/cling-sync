@@ -10,6 +10,7 @@
 // `version` is not strictly a version but is used to signal a non-backwards compatible change.
 
 syntax = "proto3";
+package lib;
 
 enum Compression {
     Compression_none = 0;
@@ -102,7 +103,7 @@ message Revision1 {
 
 // The following is only needed when used with `protoc` (which we don't use).
 
-option go_package = "github.com/cling-com/cling-sync/lib";
+option go_package = "github.com/flunderpero/cling-sync/lib";
 
 import "google/protobuf/descriptor.proto";
 

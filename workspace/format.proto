@@ -1,0 +1,19 @@
+// Workspace-side message definitions. See `lib/format.proto` for the
+// repository-side messages and the cling-options conventions.
+
+syntax = "proto3";
+package workspace;
+
+import "lib/format.proto";
+
+message StagingEntry {
+    string repo_path = 1 [(lib.cling) = {type: "lib.Path"}];
+    lib.PathMetadata metadata = 2;
+    lib.Timestamp ctime = 3;
+    int64 size = 4;
+    uint64 inode = 5;
+}
+
+// The following is only needed when used with `protoc` (which we don't use).
+
+option go_package = "github.com/flunderpero/cling-sync/workspace";

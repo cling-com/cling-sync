@@ -1,4 +1,5 @@
 //nolint:paralleltest,exhaustruct,unparam,forcetypeassert
+//go:generate go run protogen.go
 package lib
 
 import (
@@ -365,7 +366,7 @@ func sha256Hash(b string) Sha256 {
 // format.proto` and returns the textproto output.
 func protocDecode(t *testing.T, message string, in []byte) string {
 	t.Helper()
-	cmd := exec.Command("protoc", "--decode="+message, "format.proto")
+	cmd := exec.Command("protoc", "--decode=lib."+message, "format.proto")
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

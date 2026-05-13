@@ -207,6 +207,37 @@ func TestProtoWriteMessage(t *testing.T) {
 	})
 }
 
+// WriteUint64 writes (tag, varint) and ReadUint64 reads the varint back as
+// a uint64. The round-trip must preserve the full 64-bit pattern, including
+// values above MaxInt64.
+func TestProtoUint64(t *testing.T) {
+	check := func(name string, fieldNumber int, value uint64) {
+		t.Run(name, func(t *testing.T) {
+			assert := NewAssert(t)
+			w := NewProtobufWriter(make([]byte, 32))
+			assert.NoError(w.WriteUint64(fieldNumber, value))
+
+			r := NewProtobufReader(w.Bytes())
+			field, wireType, err := r.ReadTag()
+			assert.NoError(err)
+			assert.Equal(fieldNumber, field)
+			assert.Equal(0, wireType)
+			got, err := r.ReadUint64()
+			assert.NoError(err)
+			assert.Equal(value, got)
+			assert.Equal(true, r.AtEnd())
+		})
+	}
+	check("zero", 1, 0)
+	check("one", 1, 1)
+	check("127 (largest 1-byte varint)", 1, 127)
+	check("128 (smallest 2-byte varint)", 1, 128)
+	check("max int64", 1, math.MaxInt64)
+	check("max int64 + 1 (high bit set)", 1, 1<<63)
+	check("max uint64 (10-byte varint)", 1, math.MaxUint64)
+	check("field 16 (2-byte tag)", 16, 1234567890123)
+}
+
 // ProtobufSizeWriter never writes anything; it only sums the number of
 // bytes ProtobufBytesWriter would produce. The contract is: for any
 // sequence of Write* calls, sw.Size() must equal len(bw.Bytes()).
@@ -236,6 +267,13 @@ func TestProtoSizeWriter(t *testing.T) {
 	check("WriteBytes 128 (2-byte length)", func(w ProtobufWriter) error {
 		return w.WriteBytes(1, bytes.Repeat([]byte{0xAB}, 128))
 	})
+
+	check("WriteUint64 zero", func(w ProtobufWriter) error { return w.WriteUint64(1, 0) })
+	check("WriteUint64 1-byte boundary", func(w ProtobufWriter) error { return w.WriteUint64(1, 127) })
+	check("WriteUint64 2-byte boundary", func(w ProtobufWriter) error { return w.WriteUint64(1, 128) })
+	check("WriteUint64 max int64", func(w ProtobufWriter) error { return w.WriteUint64(1, math.MaxInt64) })
+	check("WriteUint64 max uint64", func(w ProtobufWriter) error { return w.WriteUint64(1, math.MaxUint64) })
+	check("WriteUint64 at field 16", func(w ProtobufWriter) error { return w.WriteUint64(16, 42) })
 
 	check("WriteMessage empty", func(w ProtobufWriter) error {
 		return w.WriteMessage(1, func(_ ProtobufWriter) error { return nil })

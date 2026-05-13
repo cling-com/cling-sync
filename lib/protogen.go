@@ -7,6 +7,8 @@ import (
 	"go/format"
 	"log"
 	"os"
+	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,7 +38,7 @@ func tokenize(src string) []token {
 			src = src[end+1:]
 		case unicode.IsLetter(rune(src[0])):
 			var value strings.Builder
-			for unicode.IsLetter(rune(src[0])) || unicode.IsDigit(rune(src[0])) || src[0] == '_' {
+			for unicode.IsLetter(rune(src[0])) || unicode.IsDigit(rune(src[0])) || src[0] == '_' || src[0] == '.' {
 				value.WriteString(string(src[0]))
 				src = src[1:]
 			}
@@ -61,10 +63,21 @@ type generator struct {
 	messages     []string
 	enums        []string
 	enumVariants map[string][]string
+	pkg          string
+	libPrefix    string
 }
 
-func newGenerator(tokens []token) *generator {
-	return &generator{tokens: tokens, enumVariants: map[string][]string{}}
+func newGenerator(tokens []token, pkg string) *generator {
+	libPrefix := ""
+	if pkg != "lib" {
+		libPrefix = "lib."
+	}
+	return &generator{
+		tokens:       tokens,
+		enumVariants: map[string][]string{},
+		pkg:          pkg,
+		libPrefix:    libPrefix,
+	}
 }
 
 func (g *generator) write(format string, args ...any) {
@@ -82,16 +95,6 @@ func (g *generator) next() token {
 	token := g.tokens[0]
 	g.tokens = g.tokens[1:]
 	return token
-}
-
-func (g *generator) expectVal(typ string, val string) string {
-	if g.tokens[0].typ != typ {
-		panic(fmt.Errorf("expected %q, got %s", typ, g.tokens[0]))
-	}
-	if g.tokens[0].val != val {
-		panic(fmt.Errorf("expected %q, got %q", val, g.tokens[0].val))
-	}
-	return g.next().val
 }
 
 func (g *generator) expectNum() int64 {
@@ -150,7 +153,10 @@ type constraints struct {
 func (g *generator) parseConstraints() constraints {
 	g.expect("[")
 	g.expect("(")
-	g.expectVal("word", "cling")
+	name := g.expect("word")
+	if name != "cling" && name != "lib.cling" {
+		panic(fmt.Errorf("unknown constraint option: %s", name))
+	}
 	g.expect(")")
 	g.expect("=")
 	g.expect("{")
@@ -221,46 +227,67 @@ func (f field) goTyp() string {
 	return typ
 }
 
+func qualifiedFunc(prefix, typ string) string {
+	if i := strings.LastIndex(typ, "."); i >= 0 {
+		return typ[:i+1] + prefix + typ[i+1:]
+	}
+	return prefix + typ
+}
+
 func (g *generator) genFieldValidate(structName string, f field) {
+	errorf := g.libPrefix + "Errorf"
 	if f.constraints.length != 0 && f.constraints.typ == "" {
 		g.write(
-			"if len(o.%[1]s) != %[2]d { return Errorf(\"%[3]s.%[1]s must have length %[2]d\")}",
+			"if len(o.%[1]s) != %[2]d { return %[4]s(\"%[3]s.%[1]s must have length %[2]d\")}",
 			f.name,
 			f.constraints.length,
 			structName,
+			errorf,
 		)
 	}
 	if f.constraints.max_length != 0 {
 		g.write(
-			"if len(o.%[1]s) > %[2]d { return Errorf(\"%[3]s.%[1]s must not be longer than %[2]d\")}",
+			"if len(o.%[1]s) > %[2]d { return %[4]s(\"%[3]s.%[1]s must not be longer than %[2]d\")}",
 			f.name,
 			f.constraints.max_length,
 			structName,
+			errorf,
 		)
 	}
 	if f.constraints.required != "" && f.constraints.required != "false" {
 		g.write(
-			"if o.%[1]s == nil && %[2]s { return Errorf(\"%[3]s.%[1]s must be set\")}",
+			"if o.%[1]s == nil && %[2]s { return %[4]s(\"%[3]s.%[1]s must be set\")}",
 			f.name,
 			strings.ReplaceAll(f.constraints.required, "this.", "o."),
 			structName,
+			errorf,
 		)
 	}
 	if f.constraints.inner_length != 0 && f.constraints.inner_typ == "" {
 		g.write("for _, v := range o.%s {", f.name)
-		g.write("if len(v) != %[1]d { return Errorf(\"every entry in %[2]s.%[3]s must have length %[1]d\")}",
+		g.write("if len(v) != %[1]d { return %[4]s(\"every entry in %[2]s.%[3]s must have length %[1]d\")}",
 			f.constraints.inner_length,
 			structName,
 			f.name,
+			errorf,
 		)
 		g.write("}")
 	}
 	if variants := g.enumVariants[f.protoTyp]; len(variants) > 0 && !f.constraints.bitmask {
 		g.write("switch o.%s {", f.name)
 		g.write("case %s:", strings.Join(variants, ", "))
-		g.write("default: return Errorf(\"%[1]s.%[2]s has invalid value %%d\", o.%[2]s)", structName, f.name)
+		g.write("default: return %[3]s(\"%[1]s.%[2]s has invalid value %%d\", o.%[2]s)",
+			structName, f.name, errorf)
 		g.write("}")
 	}
+}
+
+func (g *generator) isMessage(typ string) bool {
+	return slices.Contains(g.messages, typ) || strings.Contains(typ, ".")
+}
+
+func (g *generator) isEnum(typ string) bool {
+	return slices.Contains(g.enums, typ)
 }
 
 func (g *generator) genUnmarshall(structName string, fields []field) {
@@ -284,7 +311,7 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 			read("b", "r.ReadBytes()")
 			if f.constraints.typ != "" {
 				// Custom string-backed type: call `New<Type>(string)` which returns `(<Type>, error)`.
-				read("pv", fmt.Sprintf("New%s(string(b))", f.constraints.typ))
+				read("pv", fmt.Sprintf("%s(string(b))", qualifiedFunc("New", f.constraints.typ)))
 				return "pv"
 			}
 			return "string(b)"
@@ -294,6 +321,9 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 		case "int64":
 			read("i", "r.ReadVarint()")
 			return "i"
+		case "uint64":
+			read("u", "r.ReadUint64()")
+			return "u"
 		case "bytes":
 			cast, length := f.constraints.typ, f.constraints.length
 			if f.repeated {
@@ -305,15 +335,15 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 				if f.repeated {
 					label = "every entry in " + label
 				}
-				g.write("if len(b) != %d { return %s{}, Errorf(\"%s must have length %d\") }",
-					length, structName, label, length)
+				g.write("if len(b) != %d { return %s{}, %s(\"%s must have length %d\") }",
+					length, structName, g.libPrefix+"Errorf", label, length)
 			}
 			if cast == "" {
 				return "b"
 			}
 			return fmt.Sprintf("%s(b)", cast)
 		}
-		if slices.Contains(g.enums, f.protoTyp) {
+		if g.isEnum(f.protoTyp) {
 			read("u", "r.ReadUint32()")
 			return fmt.Sprintf("%s(u)", f.protoTyp)
 		}
@@ -325,9 +355,10 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 	g.write("switch tag {")
 	for _, f := range fields {
 		g.write("case %d:", f.tag)
-		if slices.Contains(g.messages, f.protoTyp) {
+		if g.isMessage(f.protoTyp) {
 			read("b", "r.ReadBytes()")
-			g.write("v, err := Unmarshall%s(NewProtobufReader(b))", f.protoTyp)
+			g.write("v, err := %s(%sNewProtobufReader(b))",
+				qualifiedFunc("Unmarshall", f.protoTyp), g.libPrefix)
 			g.write("if err != nil { return %s{}, err }", structName)
 			assign(f, "v")
 			continue
@@ -371,12 +402,14 @@ func (g *generator) genFieldMarshall(f field) {
 			varint(fmt.Sprintf("int64(%s)", variable))
 		case "int64":
 			varint(variable)
+		case "uint64":
+			checkErr(fmt.Sprintf("w.WriteUint64(%d, %s)", f.tag, variable))
 		case "bytes":
 			checkErr(fmt.Sprintf("w.WriteBytes(%d, %s[:])", f.tag, variable))
 		default:
-			if slices.Contains(g.messages, typ) {
+			if g.isMessage(typ) {
 				checkErr(fmt.Sprintf("w.WriteMessage(%d, %s.Marshall)", f.tag, variable))
-			} else if slices.Contains(g.enums, typ) {
+			} else if g.isEnum(typ) {
 				varint(fmt.Sprintf("int64(%s)", variable))
 			} else {
 				panic(fmt.Errorf("unknown type: %s", typ))
@@ -430,7 +463,7 @@ func (g *generator) genMessage() {
 	g.write("}\n")
 
 	// Write marshal function.
-	g.write("func (o *%s) Marshall(w ProtobufWriter) error {", structName)
+	g.write("func (o *%s) Marshall(w %sProtobufWriter) error {", structName, g.libPrefix)
 	g.write("if err := o.Validate(); err != nil { return err }")
 	for _, field := range fields {
 		g.genFieldMarshall(field)
@@ -440,13 +473,13 @@ func (g *generator) genMessage() {
 
 	// Write marshalled-size function.
 	g.write("func (o *%s) MarshallSize() int {", structName)
-	g.write("sw := NewProtobufSizeWriter()")
+	g.write("sw := %sNewProtobufSizeWriter()", g.libPrefix)
 	g.write("_ = o.Marshall(sw)")
 	g.write("return sw.Size()")
 	g.write("}\n")
 
 	// Write unmarshal function.
-	g.write("func Unmarshall%[1]s(r * ProtobufReader) (%[1]s, error) {", structName)
+	g.write("func Unmarshall%[1]s(r * %[2]sProtobufReader) (%[1]s, error) {", structName, g.libPrefix)
 	g.write("o := %s{}", structName)
 	g.genUnmarshall(structName, fields)
 	g.write("if err := o.Validate(); err != nil { return %s{}, err }", structName)
@@ -456,13 +489,21 @@ func (g *generator) genMessage() {
 
 func (g *generator) gen() string {
 	g.write("// Generated from format.proto - DO NOT EDIT\n")
-	g.write("//nolint:gocritic,exhaustruct,funlen,wrapcheck")
-	g.write("package lib\n")
+	g.write("//nolint:gocritic,exhaustruct,funlen,wrapcheck,nolintlint")
+	g.write("package %s\n", g.pkg)
+	if g.pkg != "lib" {
+		g.write("import \"github.com/flunderpero/cling-sync/lib\"\n")
+	}
 	for len(g.tokens) > 0 {
 		switch g.expect("word") {
 		case "syntax":
-			// Ignore
 			g.expect("=")
+			g.expect("string")
+			g.expect(";")
+		case "package":
+			g.expect("word")
+			g.expect(";")
+		case "import":
 			g.expect("string")
 			g.expect(";")
 		case "enum":
@@ -486,13 +527,25 @@ func snakeToPascal(s string) string {
 	return sb.String()
 }
 
+// goPackageName extracts the Go package name from the proto's
+// `option go_package = "<path>";` directive.
+func goPackageName(src string) string {
+	re := regexp.MustCompile(`option\s+go_package\s*=\s*"([^"]+)"`)
+	m := re.FindStringSubmatch(src)
+	if len(m) < 2 {
+		log.Fatal("format.proto must declare `option go_package = \"...\"`")
+	}
+	return path.Base(m[1])
+}
+
 func main() {
 	src, err := os.ReadFile("format.proto")
 	if err != nil {
 		log.Fatal(err)
 	}
+	pkg := goPackageName(string(src))
 	tokens := tokenize(string(src))
-	code := newGenerator(tokens).gen()
+	code := newGenerator(tokens, pkg).gen()
 	formatted, err := format.Source([]byte(code))
 	if err != nil {
 		log.Fatal("error formatting generated code: ", err.Error(), "\n", code)

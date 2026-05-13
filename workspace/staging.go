@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	StagingCacheVersion uint16 = 1
-	cacheDir                   = workspaceDir + "/cache"
-	cacheFinalDir              = cacheDir + "/staging"
-	cacheTempDirPrefix         = ".staging-tmp-"
+	cacheDir           = workspaceDir + "/cache"
+	cacheFinalDir      = cacheDir + "/staging"
+	cacheTempDirPrefix = ".staging-tmp-"
 )
 
 type StagingEntryMonitor interface {
@@ -103,12 +102,12 @@ func NewStaging( //nolint:funlen
 		}
 		if err := staging.add(stagingEntry); err != nil {
 			// todo: We should report the error to the monitor.
-			if endErr := mon.OnEnd(localPath, false, stagingEntry.Metadata); endErr != nil {
+			if endErr := mon.OnEnd(localPath, false, &stagingEntry.Metadata); endErr != nil {
 				return lib.WrapErrorf(endErr, "staging monitor end failed for %s", localPath)
 			}
 			return lib.WrapErrorf(err, "failed to add path %s to staging (as %s)", localPath, repoPath)
 		}
-		if err := mon.OnEnd(localPath, false, stagingEntry.Metadata); err != nil {
+		if err := mon.OnEnd(localPath, false, &stagingEntry.Metadata); err != nil {
 			return lib.WrapErrorf(err, "staging monitor end failed for %s", localPath)
 		}
 		return nil
@@ -208,7 +207,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 				// Write an add for all remaining staging entries.
 				for {
 					if stg != nil { // The current one might be nil.
-						if err := add(stg.RepoPath, lib.RevisionEntryKindAdd, *stg.Metadata); err != nil {
+						if err := add(stg.RepoPath, lib.RevisionEntryKindAdd, stg.Metadata); err != nil {
 							return nil, err
 						}
 					}
@@ -233,7 +232,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 		if c == 0 { //nolint:gocritic
 			if !stg.Metadata.IsEqualRestorableAttributes(rev.Metadata, restorableMetadataFlag) {
 				// Write an update.
-				if err := add(stg.RepoPath, lib.RevisionEntryKindUpdate, *stg.Metadata); err != nil {
+				if err := add(stg.RepoPath, lib.RevisionEntryKindUpdate, stg.Metadata); err != nil {
 					return nil, err
 				}
 			}
@@ -241,7 +240,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			rev = nil
 		} else if c < 0 {
 			// Write an add.
-			if err := add(stg.RepoPath, lib.RevisionEntryKindAdd, *stg.Metadata); err != nil {
+			if err := add(stg.RepoPath, lib.RevisionEntryKindAdd, stg.Metadata); err != nil {
 				return nil, err
 			}
 			stg = nil
@@ -273,138 +272,6 @@ func (s *Staging) add(stagingEntry *StagingEntry) error {
 		return err //nolint:wrapcheck
 	}
 	return nil
-}
-
-type StagingEntry struct {
-	RepoPath  lib.Path
-	Metadata  *lib.PathMetadata
-	CTimeSec  int64
-	CTimeNSec int32
-	Size      int64
-	Inode     uint64
-}
-
-func NewStagingEntry(
-	path lib.Path,
-	fileInfo fs.FileInfo,
-	fileSize int64,
-	fileHash lib.Sha256,
-	blockIds []lib.BlockId,
-) (*StagingEntry, error) {
-	stat, err := lib.EnhancedStat(fileInfo)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to get metadata for %s", path)
-	}
-	if fileInfo.IsDir() {
-		if fileSize != 0 {
-			return nil, lib.Errorf("file size mismatch: %d vs 0", fileSize)
-		}
-	} else {
-		if fileInfo.Size() != fileSize {
-			return nil, lib.Errorf("file size mismatch: %d vs %d", fileInfo.Size(), fileSize)
-		}
-	}
-	md := lib.NewPathMetadataFromFileInfo(fileInfo, fileHash, blockIds)
-	return &StagingEntry{
-		RepoPath:  path,
-		Metadata:  &md,
-		CTimeSec:  stat.CTimeSec,
-		CTimeNSec: stat.CTimeNSec,
-		Size:      fileSize,
-		Inode:     stat.Inode,
-	}, nil
-}
-
-func (e *StagingEntry) HasChanged(other *StagingEntry) bool {
-	return e.CTimeSec != other.CTimeSec || e.CTimeNSec != other.CTimeNSec || e.Inode != other.Inode ||
-		e.Size != other.Size
-}
-
-func MarshalStagingEntry(e *StagingEntry, w io.Writer) error {
-	bw := lib.NewBinaryWriter(w)
-	bw.Write(StagingCacheVersion)
-	bw.WriteString(e.RepoPath.String())
-	if err := lib.MarshalPathMetadata(e.Metadata, w); err != nil {
-		return lib.WrapErrorf(err, "failed to marshal file metadata for %s", e.RepoPath)
-	}
-	bw.Write(e.CTimeSec)
-	bw.Write(e.CTimeNSec)
-	bw.Write(e.Size)
-	bw.Write(e.Inode)
-	return bw.Err
-}
-
-func UnmarshalStagingEntry(r io.Reader) (*StagingEntry, error) {
-	entry := &StagingEntry{} //nolint:exhaustruct
-	br := lib.NewBinaryReader(r)
-	var version uint16
-	br.Read(&version)
-	if br.Err == nil && version != StagingCacheVersion {
-		return nil, lib.Errorf("unsupported staging cache version: %d", version)
-	}
-	pathStr := br.ReadString()
-	path, err := lib.NewPath(pathStr)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to unmarshal path")
-	}
-	entry.RepoPath = path
-	md, err := lib.UnmarshalPathMetadata(r)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to unmarshal file metadata")
-	}
-	entry.Metadata = md
-	br.Read(&entry.CTimeSec)
-	br.Read(&entry.CTimeNSec)
-	br.Read(&entry.Size)
-	br.Read(&entry.Inode)
-	return entry, br.Err
-}
-
-func MarshalledStagingCacheSize(e *StagingEntry) int {
-	return 2 + // Version
-		2 + e.RepoPath.Len() + // Path
-		4 + e.Metadata.MarshallSize() + // Metadata (length-prefixed protobuf)
-		8 + // CTimeSec
-		4 + // CTimeNSec
-		8 + // Size
-		8 // Inode
-}
-
-func StagingEntryPathFilter(pathFilter lib.PathFilter) func(e *StagingEntry) bool {
-	if pathFilter == nil {
-		return nil
-	}
-	return func(e *StagingEntry) bool {
-		return pathFilter.Include(e.RepoPath, e.Metadata.FileMode.IsDir())
-	}
-}
-
-func StagingEntryPathCompare(a, b *StagingEntry) int {
-	return strings.Compare(lib.PathCompareString(a.RepoPath, a.Metadata.FileMode.IsDir()),
-		lib.PathCompareString(b.RepoPath, b.Metadata.FileMode.IsDir()))
-}
-
-func NewStagingCacheWriter(fs lib.FS, maxChunkSize int) *lib.TempWriter[StagingEntry] {
-	return lib.NewTempWriter(
-		StagingEntryPathCompare,
-		MarshalStagingEntry,
-		MarshalledStagingCacheSize,
-		UnmarshalStagingEntry,
-		fs,
-		maxChunkSize,
-	)
-}
-
-func OpenStagingCache(fs lib.FS, maxChunksInCache int) (*lib.TempCache[StagingEntry], error) {
-	temp, err := lib.OpenTemp(fs, UnmarshalStagingEntry)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to open temp")
-	}
-	cache, err := lib.NewTempCache(temp, StagingCacheKey, maxChunksInCache)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to create new TempCache")
-	}
-	return cache, nil
 }
 
 type StagingCache struct {
@@ -445,10 +312,6 @@ func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
 		cacheWriter:  cacheWriter,
 		cache:        cache,
 	}, nil
-}
-
-func StagingCacheKey(stagingEntry *StagingEntry) string {
-	return lib.PathCompareString(stagingEntry.RepoPath, stagingEntry.Metadata.FileMode.IsDir())
 }
 
 // Return the metadata either from the cache or compute it.

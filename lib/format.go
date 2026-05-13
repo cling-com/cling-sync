@@ -1,6 +1,6 @@
 // Generated from format.proto - DO NOT EDIT
 
-//nolint:gocritic,exhaustruct,funlen,wrapcheck
+//nolint:gocritic,exhaustruct,funlen,wrapcheck,nolintlint
 package lib
 
 type Compression uint32
