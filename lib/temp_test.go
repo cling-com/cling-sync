@@ -17,7 +17,7 @@ func TestTemp(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
-		sut := NewRevisionEntryTempWriter(fs, 500)
+		sut := NewRevisionEntryTempWriter(fs, 400)
 
 		add := func(path string, mode FileMode) {
 			err := sut.Add(
@@ -70,7 +70,7 @@ func TestTemp(t *testing.T) {
 
 		// First, try with a chunk size that *exactly* fits 3 entries.
 		entry := td.RevisionEntry("1.txt", RevisionEntryKindAdd)
-		sut := NewRevisionEntryTempWriter(fs, RevisionEntryMarshalledSize(entry)*3)
+		sut := NewRevisionEntryTempWriter(fs, RevisionEntryDiskSize(entry)*3)
 		for i := range 3 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryKindAdd))
 			assert.NoError(err)
@@ -81,7 +81,7 @@ func TestTemp(t *testing.T) {
 		assert.Equal(1, sut.chunks, "chunk should have been rotated")
 
 		// Now, try with a chunk size that is on byte smaller than 3 entries.
-		sut = NewRevisionEntryTempWriter(fs, RevisionEntryMarshalledSize(entry)*3-1)
+		sut = NewRevisionEntryTempWriter(fs, RevisionEntryDiskSize(entry)*3-1)
 		for i := range 2 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryKindAdd))
 			assert.NoError(err)
@@ -229,7 +229,7 @@ func TestTempCache(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
-		sut := NewRevisionEntryTempWriter(fs, 500)
+		sut := NewRevisionEntryTempWriter(fs, 400)
 		add := func(path string, mode FileMode) {
 			err := sut.Add(
 				&RevisionEntry{Kind: RevisionEntryKindAdd, Path: Path{path}, Metadata: *td.PathMetadata(mode)},
@@ -282,7 +282,7 @@ func TestTempCache(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
-		sut := NewRevisionEntryTempWriter(fs, 500)
+		sut := NewRevisionEntryTempWriter(fs, 400)
 		add := func(path string, mode FileMode) {
 			err := sut.Add(
 				&RevisionEntry{Kind: RevisionEntryKindAdd, Path: Path{path}, Metadata: *td.PathMetadata(mode)},

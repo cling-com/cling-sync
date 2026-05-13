@@ -16,7 +16,11 @@ func TestFormatMarshall(t *testing.T) {
 	err := exec.Command("protoc", "--version").Run()
 	assert.NoError(err)
 
-	check := func(name string, msg interface{ Marshall(*ProtobufWriter) error }, unmarshall any, expected string) {
+	type marshaller interface {
+		Marshall(ProtobufWriter) error
+		MarshallSize() int
+	}
+	check := func(name string, msg marshaller, unmarshall any, expected string) {
 		t.Run(name, func(t *testing.T) {
 			assert := NewAssert(t)
 			w := NewProtobufWriter(make([]byte, 4096))
@@ -25,6 +29,7 @@ func TestFormatMarshall(t *testing.T) {
 				dedent(expected),
 				protocDecode(t, reflect.TypeOf(msg).Elem().Name(), w.Bytes()),
 			)
+			assert.Equal(len(w.Bytes()), msg.MarshallSize(), "MarshallSize must match the encoded length")
 			out := reflect.ValueOf(unmarshall).Call(
 				[]reflect.Value{reflect.ValueOf(NewProtobufReader(w.Bytes()))},
 			)

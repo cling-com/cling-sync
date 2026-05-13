@@ -1,6 +1,6 @@
 // Generated from format.proto - DO NOT EDIT
 
-//nolint:gocritic,exhaustruct,funlen
+//nolint:gocritic,exhaustruct,funlen,wrapcheck
 package lib
 
 type Compression uint32
@@ -39,7 +39,7 @@ func (o *BlockHeader1) Validate() error {
 	return nil
 }
 
-func (o *BlockHeader1) Marshall(w *ProtobufWriter) error {
+func (o *BlockHeader1) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -71,6 +71,12 @@ func (o *BlockHeader1) Marshall(w *ProtobufWriter) error {
 		return err
 	}
 	return nil
+}
+
+func (o *BlockHeader1) MarshallSize() int {
+	sw := NewProtobufSizeWriter()
+	_ = o.Marshall(sw)
+	return sw.Size()
 }
 
 func UnmarshallBlockHeader1(r *ProtobufReader) (BlockHeader1, error) {
@@ -141,7 +147,7 @@ func (o *Block1) Validate() error {
 	return nil
 }
 
-func (o *Block1) Marshall(w *ProtobufWriter) error {
+func (o *Block1) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -152,6 +158,12 @@ func (o *Block1) Marshall(w *ProtobufWriter) error {
 		return err
 	}
 	return nil
+}
+
+func (o *Block1) MarshallSize() int {
+	sw := NewProtobufSizeWriter()
+	_ = o.Marshall(sw)
+	return sw.Size()
 }
 
 func UnmarshallBlock1(r *ProtobufReader) (Block1, error) {
@@ -195,7 +207,7 @@ func (o *Timestamp) Validate() error {
 	return nil
 }
 
-func (o *Timestamp) Marshall(w *ProtobufWriter) error {
+func (o *Timestamp) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -212,6 +224,12 @@ func (o *Timestamp) Marshall(w *ProtobufWriter) error {
 		return err
 	}
 	return nil
+}
+
+func (o *Timestamp) MarshallSize() int {
+	sw := NewProtobufSizeWriter()
+	_ = o.Marshall(sw)
+	return sw.Size()
 }
 
 func UnmarshallTimestamp(r *ProtobufReader) (Timestamp, error) {
@@ -288,7 +306,7 @@ func (o *PathMetadata) Validate() error {
 	return nil
 }
 
-func (o *PathMetadata) Marshall(w *ProtobufWriter) error {
+func (o *PathMetadata) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -342,6 +360,12 @@ func (o *PathMetadata) Marshall(w *ProtobufWriter) error {
 		}
 	}
 	return nil
+}
+
+func (o *PathMetadata) MarshallSize() int {
+	sw := NewProtobufSizeWriter()
+	_ = o.Marshall(sw)
+	return sw.Size()
 }
 
 func UnmarshallPathMetadata(r *ProtobufReader) (PathMetadata, error) {
@@ -458,7 +482,7 @@ func (o *RevisionEntry) Validate() error {
 	return nil
 }
 
-func (o *RevisionEntry) Marshall(w *ProtobufWriter) error {
+func (o *RevisionEntry) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -475,6 +499,12 @@ func (o *RevisionEntry) Marshall(w *ProtobufWriter) error {
 		return err
 	}
 	return nil
+}
+
+func (o *RevisionEntry) MarshallSize() int {
+	sw := NewProtobufSizeWriter()
+	_ = o.Marshall(sw)
+	return sw.Size()
 }
 
 func UnmarshallRevisionEntry(r *ProtobufReader) (RevisionEntry, error) {
@@ -534,7 +564,7 @@ func (o *RevisionEntryChunk) Validate() error {
 	return nil
 }
 
-func (o *RevisionEntryChunk) Marshall(w *ProtobufWriter) error {
+func (o *RevisionEntryChunk) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -544,6 +574,12 @@ func (o *RevisionEntryChunk) Marshall(w *ProtobufWriter) error {
 		}
 	}
 	return nil
+}
+
+func (o *RevisionEntryChunk) MarshallSize() int {
+	sw := NewProtobufSizeWriter()
+	_ = o.Marshall(sw)
+	return sw.Size()
 }
 
 func UnmarshallRevisionEntryChunk(r *ProtobufReader) (RevisionEntryChunk, error) {
@@ -591,7 +627,7 @@ func (o *Revision1) Validate() error {
 	return nil
 }
 
-func (o *Revision1) Marshall(w *ProtobufWriter) error {
+func (o *Revision1) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -617,6 +653,12 @@ func (o *Revision1) Marshall(w *ProtobufWriter) error {
 		}
 	}
 	return nil
+}
+
+func (o *Revision1) MarshallSize() int {
+	sw := NewProtobufSizeWriter()
+	_ = o.Marshall(sw)
+	return sw.Size()
 }
 
 func UnmarshallRevision1(r *ProtobufReader) (Revision1, error) {

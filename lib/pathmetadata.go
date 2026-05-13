@@ -59,19 +59,6 @@ func (p *PathMetadata) HasSymLinkTarget() bool {
 	return p.SymLinkTarget != nil
 }
 
-// MarshalledSize returns a rough upper-bound estimate of the protobuf-encoded
-// size of this PathMetadata. It is only used for chunk-size budgeting in
-// TempWriter and is intentionally over-estimated. This will be removed in
-// a follow-up commit.
-func (p *PathMetadata) MarshalledSize() int {
-	n := 128 // fixed-field overhead + slack
-	n += len(p.BlockIds) * 35
-	if p.HasSymLinkTarget() {
-		n += len(*p.SymLinkTarget) + 4
-	}
-	return n
-}
-
 type RestorableMetadataFlag uint8
 
 const (
@@ -125,10 +112,12 @@ func (p *PathMetadata) IsEqualRestorableAttributes(other PathMetadata, flags Res
 }
 
 // MarshalPathMetadata writes a length-prefixed, protobuf-encoded PathMetadata
-// to w. This io.Writer wrapper bridges the existing RevisionEntry marshalling;
-// it will be removed when RevisionEntry is replaced by RevisionEntry1.
+// to w. This io.Writer wrapper bridges callers that still operate on byte
+// streams; it will go away once those callers move to ProtobufWriter directly.
 func MarshalPathMetadata(p *PathMetadata, w io.Writer) error {
-	buf := make([]byte, p.MarshalledSize()+1024)
+	// +64 covers WriteMessage's 10-bytes-per-nesting-level scratch space.
+	// Goes away with the hand-written wrapper.
+	buf := make([]byte, p.MarshallSize()+64)
 	pw := NewProtobufWriter(buf)
 	if err := p.Marshall(pw); err != nil {
 		return WrapErrorf(err, "failed to marshal path metadata")

@@ -22,29 +22,6 @@ func TestPathMetadata(t *testing.T) {
 		assert.Equal(*sut, *read)
 	})
 
-	t.Run("MarshalledSize is an upper bound", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		var buf bytes.Buffer
-		sut := td.PathMetadata(0)
-		err := MarshalPathMetadata(sut, &buf)
-		assert.NoError(err)
-		assert.Equal(true, buf.Len() <= sut.MarshalledSize())
-
-		link := "some/symlink"
-		sut.SymLinkTarget = &link
-		buf.Reset()
-		err = MarshalPathMetadata(sut, &buf)
-		assert.NoError(err)
-		assert.Equal(true, buf.Len() <= sut.MarshalledSize())
-
-		sut.BlockIds = append(sut.BlockIds, td.BlockId("3"))
-		buf.Reset()
-		err = MarshalPathMetadata(sut, &buf)
-		assert.NoError(err)
-		assert.Equal(true, buf.Len() <= sut.MarshalledSize())
-	})
-
 	t.Run("IsEqualRestorableAttributes", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

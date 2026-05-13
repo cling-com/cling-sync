@@ -41,22 +41,20 @@ func RevisionEntryPathFilter(pathFilter PathFilter) func(e *RevisionEntry) bool 
 	}
 }
 
-// RevisionEntryMarshalledSize returns a rough upper-bound estimate of the
-// length-prefixed protobuf-encoded RevisionEntry. It is only used for
-// chunk-size budgeting in TempWriter and will be removed once TempWriter
-// switches to ProtobufWriter directly.
-func RevisionEntryMarshalledSize(r *RevisionEntry) int {
-	return 4 + // length prefix
-		1 + // kind tag + varint
-		2 + r.Path.Len() + // path tag + length + bytes
-		2 + r.Metadata.MarshalledSize() // metadata tag + length + payload
+// RevisionEntryDiskSize returns the exact number of bytes that
+// MarshalRevisionEntry would emit for r (the 4-byte length prefix plus
+// the protobuf payload).
+func RevisionEntryDiskSize(r *RevisionEntry) int {
+	return 4 + r.MarshallSize()
 }
 
 // MarshalRevisionEntry writes a length-prefixed, protobuf-encoded
 // RevisionEntry to w. This io.Writer wrapper bridges TempWriter; it will
 // be removed when TempWriter is migrated to ProtobufWriter/Reader.
 func MarshalRevisionEntry(r *RevisionEntry, w io.Writer) error {
-	buf := make([]byte, RevisionEntryMarshalledSize(r)+1024)
+	// +64 covers WriteMessage's 10-bytes-per-nesting-level scratch space.
+	// Goes away with the hand-written wrapper.
+	buf := make([]byte, r.MarshallSize()+64)
 	pw := NewProtobufWriter(buf)
 	if err := r.Marshall(pw); err != nil {
 		return WrapErrorf(err, "failed to marshal revision entry %s", r.Path)
@@ -95,7 +93,7 @@ func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) *TempWriter[RevisionEnt
 	return NewTempWriter(
 		RevisionEntryPathCompare,
 		MarshalRevisionEntry,
-		RevisionEntryMarshalledSize,
+		RevisionEntryDiskSize,
 		UnmarshalRevisionEntry,
 		fs,
 		maxChunkSize,

@@ -27,20 +27,20 @@ func TestRevisionEntry(t *testing.T) {
 		test(RevisionEntryKindDelete)
 	})
 
-	t.Run("MarshalledSize is an upper bound", func(t *testing.T) {
+	t.Run("RevisionEntryDiskSize is exact", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		var buf bytes.Buffer
 		sut := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		err := MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
-		assert.Equal(true, buf.Len() <= RevisionEntryMarshalledSize(sut))
+		assert.Equal(buf.Len(), RevisionEntryDiskSize(sut))
 
 		sut = td.RevisionEntry("a.txt", RevisionEntryKindDelete)
 		buf.Reset()
 		err = MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
-		assert.Equal(true, buf.Len() <= RevisionEntryMarshalledSize(sut))
+		assert.Equal(buf.Len(), RevisionEntryDiskSize(sut))
 	})
 
 	t.Run("RevisionPathCompare", func(t *testing.T) {

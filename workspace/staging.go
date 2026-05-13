@@ -363,7 +363,7 @@ func UnmarshalStagingEntry(r io.Reader) (*StagingEntry, error) {
 func MarshalledStagingCacheSize(e *StagingEntry) int {
 	return 2 + // Version
 		2 + e.RepoPath.Len() + // Path
-		e.Metadata.MarshalledSize() + // Metadata
+		4 + e.Metadata.MarshallSize() + // Metadata (length-prefixed protobuf)
 		8 + // CTimeSec
 		4 + // CTimeNSec
 		8 + // Size

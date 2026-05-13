@@ -3,7 +3,28 @@
 //go:generate go run protogen.go
 package lib
 
-type ProtobufWriter struct {
+type ProtobufWriter interface {
+	WriteTag(field, wireType int) error
+	WriteVarint(v int64) error
+	WriteBytes(field int, v []byte) error
+	WriteMessage(field int, marshall func(ProtobufWriter) error) error
+}
+
+func VarintLen(v int64) int {
+	u := uint64(v) //nolint:gosec
+	n := 1
+	for u > 0x7f {
+		u >>= 7
+		n++
+	}
+	return n
+}
+
+func TagLen(field, wireType int) int {
+	return VarintLen(int64(field<<3 | wireType))
+}
+
+type ProtobufBytesWriter struct {
 	out    []byte
 	offset int
 }
@@ -17,15 +38,15 @@ type ProtobufWriter struct {
 // Errors are not recoverable: by the time a write fails, the writer may
 // have advanced past the tag (and possibly the length prefix) of the
 // failing field. Callers must discard `Bytes()` on any Write* error.
-func NewProtobufWriter(out []byte) *ProtobufWriter {
-	return &ProtobufWriter{out, 0}
+func NewProtobufWriter(out []byte) *ProtobufBytesWriter {
+	return &ProtobufBytesWriter{out, 0}
 }
 
-func (w *ProtobufWriter) Bytes() []byte {
+func (w *ProtobufBytesWriter) Bytes() []byte {
 	return w.out[0:w.offset]
 }
 
-func (w *ProtobufWriter) WriteBytes(field int, v []byte) error {
+func (w *ProtobufBytesWriter) WriteBytes(field int, v []byte) error {
 	if err := w.WriteTag(field, 2); err != nil {
 		return err
 	}
@@ -39,7 +60,7 @@ func (w *ProtobufWriter) WriteBytes(field int, v []byte) error {
 	return nil
 }
 
-func (w *ProtobufWriter) WriteMessage(field int, marshall func(*ProtobufWriter) error) error {
+func (w *ProtobufBytesWriter) WriteMessage(field int, marshall func(ProtobufWriter) error) error {
 	if err := w.WriteTag(field, 2); err != nil {
 		return err
 	}
@@ -62,11 +83,11 @@ func (w *ProtobufWriter) WriteMessage(field int, marshall func(*ProtobufWriter) 
 	return nil
 }
 
-func (w *ProtobufWriter) WriteTag(field, wireType int) error {
+func (w *ProtobufBytesWriter) WriteTag(field, wireType int) error {
 	return w.WriteVarint(int64(field<<3 | wireType))
 }
 
-func (w *ProtobufWriter) WriteVarint(v_ int64) error {
+func (w *ProtobufBytesWriter) WriteVarint(v_ int64) error {
 	v := uint64(v_) //nolint:gosec
 	for v > 0x7f {
 		if w.offset >= len(w.out) {
@@ -81,6 +102,42 @@ func (w *ProtobufWriter) WriteVarint(v_ int64) error {
 	}
 	w.out[w.offset] = byte(v)
 	w.offset++
+	return nil
+}
+
+type ProtobufSizeWriter struct {
+	size int
+}
+
+func NewProtobufSizeWriter() *ProtobufSizeWriter {
+	return &ProtobufSizeWriter{size: 0}
+}
+
+func (w *ProtobufSizeWriter) Size() int {
+	return w.size
+}
+
+func (w *ProtobufSizeWriter) WriteTag(field, wireType int) error {
+	w.size += TagLen(field, wireType)
+	return nil
+}
+
+func (w *ProtobufSizeWriter) WriteVarint(v int64) error {
+	w.size += VarintLen(v)
+	return nil
+}
+
+func (w *ProtobufSizeWriter) WriteBytes(field int, v []byte) error {
+	w.size += TagLen(field, 2) + VarintLen(int64(len(v))) + len(v)
+	return nil
+}
+
+func (w *ProtobufSizeWriter) WriteMessage(field int, marshall func(ProtobufWriter) error) error {
+	inner := NewProtobufSizeWriter()
+	if err := marshall(inner); err != nil {
+		return err
+	}
+	w.size += TagLen(field, 2) + VarintLen(int64(inner.size)) + inner.size
 	return nil
 }
 

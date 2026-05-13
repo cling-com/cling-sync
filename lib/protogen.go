@@ -430,12 +430,19 @@ func (g *generator) genMessage() {
 	g.write("}\n")
 
 	// Write marshal function.
-	g.write("func (o *%s) Marshall(w * ProtobufWriter) error {", structName)
+	g.write("func (o *%s) Marshall(w ProtobufWriter) error {", structName)
 	g.write("if err := o.Validate(); err != nil { return err }")
 	for _, field := range fields {
 		g.genFieldMarshall(field)
 	}
 	g.write("return nil")
+	g.write("}\n")
+
+	// Write marshalled-size function.
+	g.write("func (o *%s) MarshallSize() int {", structName)
+	g.write("sw := NewProtobufSizeWriter()")
+	g.write("_ = o.Marshall(sw)")
+	g.write("return sw.Size()")
 	g.write("}\n")
 
 	// Write unmarshal function.
@@ -449,7 +456,7 @@ func (g *generator) genMessage() {
 
 func (g *generator) gen() string {
 	g.write("// Generated from format.proto - DO NOT EDIT\n")
-	g.write("//nolint:gocritic,exhaustruct,funlen")
+	g.write("//nolint:gocritic,exhaustruct,funlen,wrapcheck")
 	g.write("package lib\n")
 	for len(g.tokens) > 0 {
 		switch g.expect("word") {

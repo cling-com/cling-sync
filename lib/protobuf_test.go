@@ -147,7 +147,7 @@ func TestProtoWriteMessage(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			assert := NewAssert(t)
 			w := NewProtobufWriter(make([]byte, 4096))
-			err := w.WriteMessage(fieldNumber, func(ww *ProtobufWriter) error {
+			err := w.WriteMessage(fieldNumber, func(ww ProtobufWriter) error {
 				return ww.WriteBytes(1, inner)
 			})
 			assert.NoError(err)
@@ -192,7 +192,7 @@ func TestProtoWriteMessage(t *testing.T) {
 	t.Run("empty inner", func(t *testing.T) {
 		assert := NewAssert(t)
 		w := NewProtobufWriter(make([]byte, 4096))
-		err := w.WriteMessage(1, func(_ *ProtobufWriter) error { return nil })
+		err := w.WriteMessage(1, func(_ ProtobufWriter) error { return nil })
 		assert.NoError(err)
 		assert.Equal([]byte{0x0A, 0x00}, w.Bytes())
 	})
@@ -202,7 +202,75 @@ func TestProtoWriteMessage(t *testing.T) {
 		assert := NewAssert(t)
 		w := NewProtobufWriter(make([]byte, 4096))
 		boom := Errorf("boom")
-		err := w.WriteMessage(1, func(_ *ProtobufWriter) error { return boom })
+		err := w.WriteMessage(1, func(_ ProtobufWriter) error { return boom })
+		assert.ErrorIs(err, boom)
+	})
+}
+
+// ProtobufSizeWriter never writes anything; it only sums the number of
+// bytes ProtobufBytesWriter would produce. The contract is: for any
+// sequence of Write* calls, sw.Size() must equal len(bw.Bytes()).
+func TestProtoSizeWriter(t *testing.T) {
+	check := func(name string, write func(w ProtobufWriter) error) {
+		t.Run(name, func(t *testing.T) {
+			assert := NewAssert(t)
+			bw := NewProtobufWriter(make([]byte, 4096))
+			assert.NoError(write(bw))
+			sw := NewProtobufSizeWriter()
+			assert.NoError(write(sw))
+			assert.Equal(len(bw.Bytes()), sw.Size())
+		})
+	}
+
+	check("WriteVarint zero", func(w ProtobufWriter) error { return w.WriteVarint(0) })
+	check("WriteVarint 1-byte boundary", func(w ProtobufWriter) error { return w.WriteVarint(127) })
+	check("WriteVarint 2-byte boundary", func(w ProtobufWriter) error { return w.WriteVarint(128) })
+	check("WriteVarint max int64", func(w ProtobufWriter) error { return w.WriteVarint(math.MaxInt64) })
+	check("WriteVarint -1 (10-byte)", func(w ProtobufWriter) error { return w.WriteVarint(-1) })
+
+	check("WriteTag field 1 wire 0", func(w ProtobufWriter) error { return w.WriteTag(1, 0) })
+	check("WriteTag field 16 wire 2", func(w ProtobufWriter) error { return w.WriteTag(16, 2) })
+
+	check("WriteBytes empty", func(w ProtobufWriter) error { return w.WriteBytes(1, nil) })
+	check("WriteBytes short", func(w ProtobufWriter) error { return w.WriteBytes(1, []byte("hi")) })
+	check("WriteBytes 128 (2-byte length)", func(w ProtobufWriter) error {
+		return w.WriteBytes(1, bytes.Repeat([]byte{0xAB}, 128))
+	})
+
+	check("WriteMessage empty", func(w ProtobufWriter) error {
+		return w.WriteMessage(1, func(_ ProtobufWriter) error { return nil })
+	})
+	check("WriteMessage one field", func(w ProtobufWriter) error {
+		return w.WriteMessage(1, func(ww ProtobufWriter) error { return ww.WriteBytes(1, []byte("hi")) })
+	})
+	check("WriteMessage nested", func(w ProtobufWriter) error {
+		return w.WriteMessage(2, func(ww ProtobufWriter) error {
+			return ww.WriteMessage(1, func(www ProtobufWriter) error {
+				return www.WriteBytes(1, bytes.Repeat([]byte{0xAB}, 200))
+			})
+		})
+	})
+
+	check("mixed calls", func(w ProtobufWriter) error {
+		if err := w.WriteTag(1, 0); err != nil {
+			return err
+		}
+		if err := w.WriteVarint(42); err != nil {
+			return err
+		}
+		if err := w.WriteBytes(2, []byte("hello")); err != nil {
+			return err
+		}
+		return w.WriteMessage(3, func(ww ProtobufWriter) error {
+			return ww.WriteVarint(0xDEADBEEF)
+		})
+	})
+
+	t.Run("inner error propagates", func(t *testing.T) {
+		assert := NewAssert(t)
+		sw := NewProtobufSizeWriter()
+		boom := Errorf("boom")
+		err := sw.WriteMessage(1, func(_ ProtobufWriter) error { return boom })
 		assert.ErrorIs(err, boom)
 	})
 }
@@ -244,7 +312,7 @@ func newLibProtoTester(tb testing.TB) *libProtoTester {
 	return &libProtoTester{tb}
 }
 
-func libEncode(write func(*ProtobufWriter) error) []byte {
+func libEncode(write func(ProtobufWriter) error) []byte {
 	w := NewProtobufWriter(make([]byte, 4096))
 	if err := write(w); err != nil {
 		panic(err)
@@ -253,7 +321,7 @@ func libEncode(write func(*ProtobufWriter) error) []byte {
 }
 
 func (l *libProtoTester) encodeBytes(fn int, v []byte) []byte {
-	return libEncode(func(w *ProtobufWriter) error { return w.WriteBytes(fn, v) })
+	return libEncode(func(w ProtobufWriter) error { return w.WriteBytes(fn, v) })
 }
 
 // protocProtoTester invokes `protoc --encode` to produce canonical wire bytes.
