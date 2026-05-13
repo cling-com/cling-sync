@@ -207,7 +207,7 @@ func (m *DefaultStagingMonitor) OnStart(path lib.Path, dirEntry fs.DirEntry) err
 	return nil
 }
 
-func (m *DefaultStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) error {
+func (m *DefaultStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.PathMetadata) error {
 	if err := m.cancel(); err != nil {
 		return err
 	}

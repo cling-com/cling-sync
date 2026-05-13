@@ -14,7 +14,7 @@ type EnhancedStat_t struct {
 	Inode     uint64
 }
 
-func EnhanceMetadata(md *FileMetadata, fileInfo fs.FileInfo) {
+func EnhanceMetadata(md *PathMetadata, fileInfo fs.FileInfo) {
 }
 
 func EnhancedStat(fileInfo fs.FileInfo) (*EnhancedStat_t, error) {

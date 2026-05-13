@@ -266,7 +266,7 @@ const (
 	FileModeSticky     FileMode = 0x4000
 )
 
-type File struct {
+type PathMetadata struct {
 	FileMode      FileMode
 	Mtime         Timestamp
 	Size          int64
@@ -278,17 +278,17 @@ type File struct {
 	Birthtime     *Timestamp
 }
 
-func (o *File) Validate() error {
+func (o *PathMetadata) Validate() error {
 	if len(o.BlockIds) > 4294967295 {
-		return Errorf("File.BlockIds must not be longer than 4294967295")
+		return Errorf("PathMetadata.BlockIds must not be longer than 4294967295")
 	}
 	if o.SymLinkTarget == nil && o.FileMode&FileModeSymlink != 0 {
-		return Errorf("File.SymLinkTarget must be set")
+		return Errorf("PathMetadata.SymLinkTarget must be set")
 	}
 	return nil
 }
 
-func (o *File) Marshall(w *ProtobufWriter) error {
+func (o *PathMetadata) Marshall(w *ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -344,93 +344,93 @@ func (o *File) Marshall(w *ProtobufWriter) error {
 	return nil
 }
 
-func UnmarshallFile(r *ProtobufReader) (File, error) {
-	o := File{}
+func UnmarshallPathMetadata(r *ProtobufReader) (PathMetadata, error) {
+	o := PathMetadata{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
-			return File{}, err
+			return PathMetadata{}, err
 		}
 		switch tag {
 		case 1:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			o.FileMode = FileMode(u)
 		case 2:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			v, err := UnmarshallTimestamp(NewProtobufReader(b))
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			o.Mtime = v
 		case 3:
 			i, err := r.ReadVarint()
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			o.Size = i
 		case 4:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			if len(b) != 32 {
-				return File{}, Errorf("File.FileHash must have length 32")
+				return PathMetadata{}, Errorf("PathMetadata.FileHash must have length 32")
 			}
 			o.FileHash = Sha256(b)
 		case 5:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			if len(b) != 32 {
-				return File{}, Errorf("every entry in File.BlockIds must have length 32")
+				return PathMetadata{}, Errorf("every entry in PathMetadata.BlockIds must have length 32")
 			}
 			o.BlockIds = append(o.BlockIds, BlockId(b))
 		case 6:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			v := string(b)
 			o.SymLinkTarget = &v
 		case 7:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			v := u
 			o.Uid = &v
 		case 8:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			v := u
 			o.Gid = &v
 		case 9:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			v, err := UnmarshallTimestamp(NewProtobufReader(b))
 			if err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 			o.Birthtime = &v
 		default:
 			if err := r.Skip(wireType); err != nil {
-				return File{}, err
+				return PathMetadata{}, err
 			}
 		}
 	}
 	if err := o.Validate(); err != nil {
-		return File{}, err
+		return PathMetadata{}, err
 	}
 	return o, nil
 }
@@ -444,9 +444,9 @@ const (
 )
 
 type RevisionEntry1 struct {
-	Kind RevisionEntryKind
-	Path Path
-	File File
+	Kind     RevisionEntryKind
+	Path     Path
+	Metadata PathMetadata
 }
 
 func (o *RevisionEntry1) Validate() error {
@@ -471,7 +471,7 @@ func (o *RevisionEntry1) Marshall(w *ProtobufWriter) error {
 	if err := w.WriteBytes(2, []byte(o.Path.String())); err != nil {
 		return err
 	}
-	if err := w.WriteMessage(3, o.File.Marshall); err != nil {
+	if err := w.WriteMessage(3, o.Metadata.Marshall); err != nil {
 		return err
 	}
 	return nil
@@ -506,11 +506,11 @@ func UnmarshallRevisionEntry1(r *ProtobufReader) (RevisionEntry1, error) {
 			if err != nil {
 				return RevisionEntry1{}, err
 			}
-			v, err := UnmarshallFile(NewProtobufReader(b))
+			v, err := UnmarshallPathMetadata(NewProtobufReader(b))
 			if err != nil {
 				return RevisionEntry1{}, err
 			}
-			o.File = v
+			o.Metadata = v
 		default:
 			if err := r.Skip(wireType); err != nil {
 				return RevisionEntry1{}, err

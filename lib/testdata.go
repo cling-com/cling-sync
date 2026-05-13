@@ -62,20 +62,24 @@ func (td TestData) Path(p string) Path {
 	return Path{p}
 }
 
-func (td TestData) FileMetadata(mode FileMode) *FileMetadata {
-	return &FileMetadata{
-		FileMode:      mode,
-		MTimeSec:      4567890,
-		MTimeNSec:     567890,
-		Size:          67890,
-		FileHash:      td.SHA256("1"),
-		BlockIds:      []BlockId{td.BlockId("1"), td.BlockId("2")},
-		SymlinkTarget: "some/target",
-		UID:           7890,
-		GID:           890,
-		BirthtimeSec:  90,
-		BirthtimeNSec: 12345,
+func (td TestData) PathMetadata(mode FileMode) *PathMetadata {
+	uid, gid := uint32(7890), uint32(890)
+	birth := Timestamp{Sec: 90, Nsec: 12345}
+	md := &PathMetadata{ //nolint:exhaustruct
+		FileMode:  mode,
+		Mtime:     Timestamp{Sec: 4567890, Nsec: 567890},
+		Size:      67890,
+		FileHash:  td.SHA256("1"),
+		BlockIds:  []BlockId{td.BlockId("1"), td.BlockId("2")},
+		Uid:       &uid,
+		Gid:       &gid,
+		Birthtime: &birth,
 	}
+	if mode.IsSymlink() {
+		link := "some/target"
+		md.SymLinkTarget = &link
+	}
+	return md
 }
 
 func (td TestData) RevisionEntry(path string, entryType RevisionEntryType) *RevisionEntry {
@@ -90,7 +94,7 @@ func (td TestData) RevisionEntryExt(
 ) *RevisionEntry {
 	sha := sha256.New()
 	sha.Write([]byte(content))
-	md := td.FileMetadata(mode)
+	md := td.PathMetadata(mode)
 	md.FileHash = Sha256(sha.Sum(nil))
 	md.Size = int64(len(content))
 	p, err := NewPath(path)
@@ -355,21 +359,13 @@ func (f *TestFS) Sha256(path string) Sha256 {
 	return CalculateSha256(data)
 }
 
-func (f *TestFS) FileMetadata(path string) *FileMetadata {
+func (f *TestFS) PathMetadata(path string) *PathMetadata {
 	f.t.Helper()
 	stat := f.Stat(path)
-	md := &FileMetadata{
-		FileMode:      NewFileMode(stat.Mode()),
-		MTimeSec:      stat.ModTime().Unix(),
-		MTimeNSec:     int32(stat.ModTime().Nanosecond()), //nolint:gosec
-		Size:          stat.Size(),
-		FileHash:      Sha256{},
-		BlockIds:      nil,
-		SymlinkTarget: "",
-		UID:           0xffffffff,
-		GID:           0xffffffff,
-		BirthtimeSec:  -1,
-		BirthtimeNSec: -1,
+	md := &PathMetadata{ //nolint:exhaustruct
+		FileMode: NewFileMode(stat.Mode()),
+		Mtime:    Timestamp{Sec: stat.ModTime().Unix(), Nsec: uint32(stat.ModTime().Nanosecond())}, //nolint:gosec
+		Size:     stat.Size(),
 	}
 	if stat.IsDir() {
 		md.Size = 0

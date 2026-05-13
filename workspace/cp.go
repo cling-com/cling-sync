@@ -5,7 +5,6 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
-	"time"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
@@ -213,12 +212,12 @@ func restore( //nolint:funlen
 func restoreFileMode(
 	fs lib.FS,
 	path string,
-	md *lib.FileMetadata,
+	md *lib.PathMetadata,
 	restorableMetadataFlag lib.RestorableMetadataFlag,
 ) error {
 	if md.HasUID() && md.HasGID() && restorableMetadataFlag&lib.RestorableMetadataOwnership != 0 {
-		if err := fs.Chown(path, int(md.UID), int(md.GID)); err != nil {
-			return lib.WrapErrorf(err, "failed to restore file owner %d and group %d for %s", md.UID, md.GID, path)
+		if err := fs.Chown(path, int(*md.Uid), int(*md.Gid)); err != nil {
+			return lib.WrapErrorf(err, "failed to restore file owner %d and group %d for %s", *md.Uid, *md.Gid, path)
 		}
 	}
 	if restorableMetadataFlag&lib.RestorableMetadataMode != 0 {
@@ -227,7 +226,7 @@ func restoreFileMode(
 		}
 	}
 	if restorableMetadataFlag&lib.RestorableMetadataMTime != 0 {
-		mtime := time.Unix(md.MTimeSec, int64(md.MTimeNSec))
+		mtime := md.MTime()
 		if err := fs.Chmtime(path, mtime); err != nil {
 			return lib.WrapErrorf(err, "failed to restore mtime %s for %s", mtime, path)
 		}

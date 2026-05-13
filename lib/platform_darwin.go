@@ -13,12 +13,12 @@ type EnhancedStat_t struct {
 	Inode     uint64
 }
 
-func EnhanceMetadata(md *FileMetadata, fileInfo fs.FileInfo) {
+func EnhanceMetadata(md *PathMetadata, fileInfo fs.FileInfo) {
 	if stat, ok := fileInfo.Sys().(*syscall.Stat_t); ok {
-		md.GID = stat.Gid
-		md.UID = stat.Uid
-		md.BirthtimeSec = stat.Birthtimespec.Sec
-		md.BirthtimeNSec = int32(stat.Birthtimespec.Nsec) //nolint:gosec
+		uid, gid := stat.Uid, stat.Gid
+		md.Uid = &uid
+		md.Gid = &gid
+		md.Birthtime = &Timestamp{Sec: stat.Birthtimespec.Sec, Nsec: uint32(stat.Birthtimespec.Nsec)} //nolint:gosec
 	}
 }
 

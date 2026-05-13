@@ -171,7 +171,7 @@ func (m *TestStagingMonitor) OnStart(path lib.Path, dirEntry fs.DirEntry) error 
 	return nil
 }
 
-func (m *TestStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) error {
+func (m *TestStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.PathMetadata) error {
 	return nil
 }
 

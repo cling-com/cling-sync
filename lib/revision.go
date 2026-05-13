@@ -109,10 +109,10 @@ func RevisionEntryPathCompareString(e *RevisionEntry) string {
 type RevisionEntry struct {
 	Path     Path
 	Type     RevisionEntryType
-	Metadata *FileMetadata
+	Metadata *PathMetadata
 }
 
-func NewRevisionEntry(path Path, typ RevisionEntryType, md *FileMetadata) (RevisionEntry, error) {
+func NewRevisionEntry(path Path, typ RevisionEntryType, md *PathMetadata) (RevisionEntry, error) {
 	return RevisionEntry{Path: path, Type: typ, Metadata: md}, nil
 }
 
@@ -125,11 +125,11 @@ func MarshalRevisionEntry(r *RevisionEntry, w io.Writer) error {
 	bw := NewBinaryWriter(w)
 	bw.WriteString(r.Path.String())
 	bw.Write(r.Type)
-	if err := MarshalFileMetadata(r.Metadata, w); err != nil {
-		return WrapErrorf(err, "failed to marshal revision entry %s", r.Path)
-	}
 	if bw.Err != nil {
 		return WrapErrorf(bw.Err, "failed to marshal revision entry %s", r.Path)
+	}
+	if err := MarshalPathMetadata(r.Metadata, w); err != nil {
+		return WrapErrorf(err, "failed to marshal revision entry %s", r.Path)
 	}
 	return nil
 }
@@ -146,14 +146,14 @@ func UnmarshalRevisionEntry(r io.Reader) (*RevisionEntry, error) {
 		return nil, WrapErrorf(err, "failed to unmarshal revision entry, invalid path %q", path)
 	}
 	br.Read(&re.Type)
-	metadata, err := UnmarshalFileMetadata(r)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to unmarshal file metadata for revision entry %s", re.Path)
-	}
-	re.Metadata = metadata
 	if br.Err != nil {
 		return nil, WrapErrorf(br.Err, "failed to unmarshal revision entry")
 	}
+	metadata, err := UnmarshalPathMetadata(r)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to unmarshal path metadata for revision entry %s", re.Path)
+	}
+	re.Metadata = metadata
 	return &re, nil
 }
 

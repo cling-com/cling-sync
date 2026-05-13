@@ -63,7 +63,7 @@ enum FileMode {
     FileMode_sticky      = 0x4000;
 }
 
-message File {
+message PathMetadata {
     FileMode file_mode = 1 [(cling) = {bitmask: true}];
     Timestamp mtime = 2;
     int64 size = 3;
@@ -85,7 +85,7 @@ message RevisionEntry1 {
     RevisionEntryKind kind = 1;
     // A deterministic utf8 representation of a file-system path.
     string path = 2 [(cling) = {type: "Path"}];
-    File file = 3;
+    PathMetadata metadata = 3;
 }
 
 message RevisionEntryChunk {

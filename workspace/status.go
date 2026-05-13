@@ -11,7 +11,7 @@ import (
 type StatusFile struct {
 	Path     lib.Path
 	Type     lib.RevisionEntryType
-	Metadata *lib.FileMetadata
+	Metadata *lib.PathMetadata
 }
 
 func (f StatusFile) Format() string {

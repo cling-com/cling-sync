@@ -34,7 +34,7 @@ func (c *Commit) Add(entry *RevisionEntry) error {
 
 // Make sure that the directory `path` exists in the current head of the repository.
 // If some parent directory does not exist, it will be created with the given
-// `NewEmptyDirFileMetadata` metadata.
+// `NewEmptyDirPathMetadata` metadata.
 func (c *Commit) EnsureDirExists(
 	path Path,
 	snapshotCache *TempCache[RevisionEntry],
@@ -50,7 +50,7 @@ func (c *Commit) EnsureDirExists(
 			snapshotRevisionId,
 		)
 	}
-	md := NewEmptyDirFileMetadata(time.Now())
+	md := NewEmptyDirPathMetadata(time.Now())
 	p := path
 	for !p.IsEmpty() {
 		// Check whether we already have the directory.

@@ -12,11 +12,11 @@ import (
 
 type LsFile struct {
 	Path     lib.Path
-	Metadata *lib.FileMetadata
+	Metadata *lib.PathMetadata
 }
 
 func (f *LsFile) String() string {
-	mtime := time.Unix(f.Metadata.MTimeSec, int64(f.Metadata.MTimeNSec)).Format(time.RFC3339)
+	mtime := f.Metadata.MTime().Format(time.RFC3339)
 	return fmt.Sprintf(
 		"%s %12d %s %s",
 		f.Metadata.FileMode.String(),
@@ -36,7 +36,7 @@ type LsFormat struct {
 }
 
 func (f *LsFile) Format(format *LsFormat) string {
-	mtime := time.Unix(f.Metadata.MTimeSec, int64(f.Metadata.MTimeNSec))
+	mtime := f.Metadata.MTime()
 	var mtimeStr string
 	switch format.TimestampFormat {
 	case "relative":

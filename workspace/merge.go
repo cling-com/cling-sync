@@ -253,7 +253,7 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 				entry.Path,
 			)
 		}
-		var md *lib.FileMetadata
+		var md *lib.PathMetadata
 		if existsInRemote && entry.Metadata.FileHash == remoteEntry.Metadata.FileHash {
 			if entry.Metadata.IsEqualRestorableAttributes(remoteEntry.Metadata, m.opts.RestorableMetadataFlag) {
 				// The file did not change at all, we can skip it completely.
@@ -743,9 +743,9 @@ func AddFileToRepository(
 	repository *lib.Repository,
 	entry *lib.RevisionEntry,
 	mon CommitMonitor,
-) (lib.FileMetadata, error) {
+) (lib.PathMetadata, error) {
 	if fileInfo.IsDir() {
-		return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil), nil
+		return lib.NewPathMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil), nil
 	}
 	// Fast path: If the entry already has BlockIds and the size of the file did
 	// not change, only calculate the hash.
@@ -754,7 +754,7 @@ func AddFileToRepository(
 		entry.Metadata.Size == fileInfo.Size() {
 		md, err := computeFileHash(fs, path, fileInfo)
 		if err != nil {
-			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to create file metadata")
+			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to create file metadata")
 		}
 		if bytes.Equal(md.FileHash[:], entry.Metadata.FileHash[:]) {
 			md.BlockIds = entry.Metadata.BlockIds
@@ -766,7 +766,7 @@ func AddFileToRepository(
 	fileHash := sha256.New()
 	f, err := fs.OpenRead(path.String())
 	if err != nil {
-		return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
+		return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
 	}
 	defer f.Close() //nolint:errcheck
 	// Read blocks and add them to the repository.
@@ -777,21 +777,21 @@ func AddFileToRepository(
 			break
 		}
 		if err != nil {
-			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to read file %s", path)
+			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to read file %s", path)
 		}
 		if _, err := fileHash.Write(data); err != nil {
-			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to update file hash")
+			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to update file hash")
 		}
 		blockId, bytesWritten, err := repository.WriteBlock(data)
 		if err != nil {
-			return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to write block")
+			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to write block")
 		}
 		if err := mon.OnAddBlock(entry, blockId, len(data), bytesWritten); err != nil {
-			return lib.FileMetadata{}, lib.WrapErrorf(err, "commit monitor add block failed for %s", path)
+			return lib.PathMetadata{}, lib.WrapErrorf(err, "commit monitor add block failed for %s", path)
 		}
 		blockIds = append(blockIds, blockId)
 	}
-	return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256(fileHash.Sum(nil)), blockIds), nil
+	return lib.NewPathMetadataFromFileInfo(fileInfo, lib.Sha256(fileHash.Sum(nil)), blockIds), nil
 }
 
 // Create a `Staging` from `ws.WorkspacePath` and a `lib.RevisionSnapshot` based on the

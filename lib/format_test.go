@@ -74,12 +74,12 @@ func TestFormatMarshall(t *testing.T) {
 		encrypted_data_size: 1024
 	`)
 
-	check("File minimal", &File{
+	check("PathMetadata minimal", &PathMetadata{
 		FileMode: 0o644,
 		Mtime:    Timestamp{Sec: 1234567890, Nsec: 500000000},
 		Size:     42,
 		FileHash: sha256Hash("h"),
-	}, UnmarshallFile, `
+	}, UnmarshallPathMetadata, `
 		file_mode: 420
 		mtime {
 		  sec: 1234567890
@@ -92,7 +92,7 @@ func TestFormatMarshall(t *testing.T) {
 	uid, gid := uint32(1000), uint32(100)
 	link := "/etc/passwd"
 	birthtime := Timestamp{Sec: 999, Nsec: 1}
-	check("File fully set", &File{
+	check("PathMetadata fully set", &PathMetadata{
 		FileMode:      FileModeSymlink | 0o777,
 		Mtime:         Timestamp{Sec: 1234567890, Nsec: 500000000},
 		Size:          128,
@@ -102,7 +102,7 @@ func TestFormatMarshall(t *testing.T) {
 		Uid:           &uid,
 		Gid:           &gid,
 		Birthtime:     &birthtime,
-	}, UnmarshallFile, `
+	}, UnmarshallPathMetadata, `
 		file_mode: 2559
 		mtime {
 		  sec: 1234567890
@@ -124,7 +124,7 @@ func TestFormatMarshall(t *testing.T) {
 	check("RevisionEntry1", &RevisionEntry1{
 		Kind: RevisionEntryKindUpdate,
 		Path: td.Path("foo/bar.txt"),
-		File: File{
+		Metadata: PathMetadata{
 			FileMode: 0o644,
 			Mtime:    Timestamp{Sec: 1234567890, Nsec: 500000000},
 			Size:     42,
@@ -133,7 +133,7 @@ func TestFormatMarshall(t *testing.T) {
 	}, UnmarshallRevisionEntry1, `
 		kind: RevisionEntryKind_update
 		path: "foo/bar.txt"
-		file {
+		metadata {
 		  file_mode: 420
 		  mtime {
 		    sec: 1234567890
@@ -149,7 +149,7 @@ func TestFormatMarshall(t *testing.T) {
 			{
 				Kind: RevisionEntryKindUpdate,
 				Path: td.Path("foo/bar.txt"),
-				File: File{
+				Metadata: PathMetadata{
 					FileMode: 0o644,
 					Mtime:    Timestamp{Sec: 1234567890, Nsec: 500000000},
 					Size:     42,
@@ -161,7 +161,7 @@ func TestFormatMarshall(t *testing.T) {
 		entries {
 		  kind: RevisionEntryKind_update
 		  path: "foo/bar.txt"
-		  file {
+		  metadata {
 		    file_mode: 420
 		    mtime {
 		      sec: 1234567890
@@ -201,12 +201,12 @@ func TestFormatUnmarshallLength(t *testing.T) {
 		_, err := UnmarshallBlockHeader1(NewProtobufReader(w.Bytes()))
 		assert.Error(err, "BlockHeader1.Dek must have length 32")
 	})
-	t.Run("File block_ids entry wrong length", func(t *testing.T) {
+	t.Run("PathMetadata block_ids entry wrong length", func(t *testing.T) {
 		assert := NewAssert(t)
 		w := NewProtobufWriter(make([]byte, 4096))
 		assert.NoError(w.WriteBytes(5, make([]byte, 31)))
-		_, err := UnmarshallFile(NewProtobufReader(w.Bytes()))
-		assert.Error(err, "every entry in File.BlockIds must have length 32")
+		_, err := UnmarshallPathMetadata(NewProtobufReader(w.Bytes()))
+		assert.Error(err, "every entry in PathMetadata.BlockIds must have length 32")
 	})
 	t.Run("uint32 varint overflow", func(t *testing.T) {
 		assert := NewAssert(t)
@@ -216,16 +216,16 @@ func TestFormatUnmarshallLength(t *testing.T) {
 		_, err := UnmarshallBlockHeader1(NewProtobufReader(w.Bytes()))
 		assert.Error(err, "uint32 varint out of range")
 	})
-	t.Run("nested error propagates from File via RevisionEntry1", func(t *testing.T) {
+	t.Run("nested error propagates from PathMetadata via RevisionEntry1", func(t *testing.T) {
 		assert := NewAssert(t)
-		file := NewProtobufWriter(make([]byte, 64))
-		assert.NoError(file.WriteBytes(4, make([]byte, 31))) // wrong-length file_hash
+		md := NewProtobufWriter(make([]byte, 64))
+		assert.NoError(md.WriteBytes(4, make([]byte, 31))) // wrong-length file_hash
 		entry := NewProtobufWriter(make([]byte, 128))
 		assert.NoError(entry.WriteTag(1, 0))
 		assert.NoError(entry.WriteVarint(int64(RevisionEntryKindUpdate)))
-		assert.NoError(entry.WriteBytes(3, file.Bytes()))
+		assert.NoError(entry.WriteBytes(3, md.Bytes()))
 		_, err := UnmarshallRevisionEntry1(NewProtobufReader(entry.Bytes()))
-		assert.Error(err, "File.FileHash must have length 32")
+		assert.Error(err, "PathMetadata.FileHash must have length 32")
 	})
 }
 
@@ -286,18 +286,18 @@ func TestFormatValidate(t *testing.T) {
 	// Timestamp: no validation rules.
 	check("Timestamp zero value", &Timestamp{}, "")
 
-	// File: file_hash length (unreachable), block_ids cap (impractical 2^32-1),
-	//       sym_link_target required if FileMode has Symlink bit.
+	// PathMetadata: file_hash length (unreachable), block_ids cap (impractical 2^32-1),
+	//               sym_link_target required if FileMode has Symlink bit.
 	link := "/etc/passwd"
-	check("File zero value", &File{}, "")
-	check("File non-symlink, no target", &File{
+	check("PathMetadata zero value", &PathMetadata{}, "")
+	check("PathMetadata non-symlink, no target", &PathMetadata{
 		FileMode: 0o644,
 	}, "")
-	check("File symlink with target", &File{
+	check("PathMetadata symlink with target", &PathMetadata{
 		FileMode:      FileModeSymlink,
 		SymLinkTarget: &link,
 	}, "")
-	check("File symlink without target", &File{
+	check("PathMetadata symlink without target", &PathMetadata{
 		FileMode: FileModeSymlink,
 	}, "SymLinkTarget must be set")
 

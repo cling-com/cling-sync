@@ -21,7 +21,7 @@ const (
 
 type StagingEntryMonitor interface {
 	OnStart(path lib.Path, dirEntry fs.DirEntry) error
-	OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) error
+	OnEnd(path lib.Path, excluded bool, metadata *lib.PathMetadata) error
 }
 
 type Staging struct {
@@ -164,7 +164,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 		return nil, lib.WrapErrorf(err, "failed to create commit directory")
 	}
 	finalWriter := lib.NewRevisionEntryTempWriter(final, lib.MaxBlockDataSize)
-	add := func(path lib.Path, typ lib.RevisionEntryType, md *lib.FileMetadata) error {
+	add := func(path lib.Path, typ lib.RevisionEntryType, md *lib.PathMetadata) error {
 		re, err := lib.NewRevisionEntry(path, typ, md)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to create revision entry for path %s", path)
@@ -280,7 +280,7 @@ func (s *Staging) add(stagingEntry *StagingEntry) error {
 
 type StagingEntry struct {
 	RepoPath  lib.Path
-	Metadata  *lib.FileMetadata
+	Metadata  *lib.PathMetadata
 	CTimeSec  int64
 	CTimeNSec int32
 	Size      int64
@@ -307,7 +307,7 @@ func NewStagingEntry(
 			return nil, lib.Errorf("file size mismatch: %d vs %d", fileInfo.Size(), fileSize)
 		}
 	}
-	md := lib.NewFileMetadataFromFileInfo(fileInfo, fileHash, blockIds)
+	md := lib.NewPathMetadataFromFileInfo(fileInfo, fileHash, blockIds)
 	return &StagingEntry{
 		RepoPath:  path,
 		Metadata:  &md,
@@ -327,7 +327,7 @@ func MarshalStagingEntry(e *StagingEntry, w io.Writer) error {
 	bw := lib.NewBinaryWriter(w)
 	bw.Write(StagingCacheVersion)
 	bw.WriteString(e.RepoPath.String())
-	if err := lib.MarshalFileMetadata(e.Metadata, w); err != nil {
+	if err := lib.MarshalPathMetadata(e.Metadata, w); err != nil {
 		return lib.WrapErrorf(err, "failed to marshal file metadata for %s", e.RepoPath)
 	}
 	bw.Write(e.CTimeSec)
@@ -351,7 +351,7 @@ func UnmarshalStagingEntry(r io.Reader) (*StagingEntry, error) {
 		return nil, lib.WrapErrorf(err, "failed to unmarshal path")
 	}
 	entry.RepoPath = path
-	md, err := lib.UnmarshalFileMetadata(r)
+	md, err := lib.UnmarshalPathMetadata(r)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to unmarshal file metadata")
 	}
@@ -457,7 +457,7 @@ func StagingCacheKey(stagingEntry *StagingEntry) string {
 // Return the metadata either from the cache or compute it.
 // Update the cache.
 func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs.FileInfo) (*StagingEntry, error) {
-	var fileMetadata *lib.FileMetadata
+	var fileMetadata *lib.PathMetadata
 	var stagingEntry *StagingEntry
 	var err error
 	if c.cache != nil {
@@ -478,7 +478,7 @@ func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs
 			}
 			if !newEntry.HasChanged(existingEntry) {
 				stagingEntry = newEntry
-				md := lib.NewFileMetadataFromFileInfo(
+				md := lib.NewPathMetadataFromFileInfo(
 					fileInfo,
 					existingEntry.Metadata.FileHash,
 					existingEntry.Metadata.BlockIds,
@@ -551,18 +551,18 @@ func (c *StagingCache) Cleanup() error {
 	return nil
 }
 
-func computeFileHash(fs lib.FS, path lib.Path, fileInfo fs.FileInfo) (lib.FileMetadata, error) {
+func computeFileHash(fs lib.FS, path lib.Path, fileInfo fs.FileInfo) (lib.PathMetadata, error) {
 	if fileInfo.IsDir() {
-		return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil), nil
+		return lib.NewPathMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil), nil
 	}
 	f, err := fs.OpenRead(path.String())
 	if err != nil {
-		return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
+		return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
 	}
 	defer f.Close() //nolint:errcheck
 	fileHash := sha256.New()
 	if _, err := io.Copy(fileHash, f); err != nil {
-		return lib.FileMetadata{}, lib.WrapErrorf(err, "failed to read file %s", path)
+		return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to read file %s", path)
 	}
-	return lib.NewFileMetadataFromFileInfo(fileInfo, lib.Sha256(fileHash.Sum(nil)), nil), nil
+	return lib.NewPathMetadataFromFileInfo(fileInfo, lib.Sha256(fileHash.Sum(nil)), nil), nil
 }

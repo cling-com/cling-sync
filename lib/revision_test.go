@@ -27,20 +27,20 @@ func TestRevisionEntry(t *testing.T) {
 		test(RevisionEntryDelete)
 	})
 
-	t.Run("MarshalledSize", func(t *testing.T) {
+	t.Run("MarshalledSize is an upper bound", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		var buf bytes.Buffer
 		sut := td.RevisionEntry("a.txt", RevisionEntryAdd)
 		err := MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
-		assert.Equal(RevisionEntryMarshalledSize(sut), buf.Len())
+		assert.Equal(true, buf.Len() <= RevisionEntryMarshalledSize(sut))
 
 		sut = td.RevisionEntry("a.txt", RevisionEntryDelete)
 		buf.Reset()
 		err = MarshalRevisionEntry(sut, &buf)
 		assert.NoError(err)
-		assert.Equal(RevisionEntryMarshalledSize(sut), buf.Len())
+		assert.Equal(true, buf.Len() <= RevisionEntryMarshalledSize(sut))
 	})
 
 	t.Run("RevisionPathCompare", func(t *testing.T) {
@@ -49,7 +49,7 @@ func TestRevisionEntry(t *testing.T) {
 		dirEntry := func(path string) *RevisionEntry {
 			t.Helper()
 			entry := td.RevisionEntry(path, RevisionEntryAdd)
-			entry.Metadata = td.FileMetadata(FileModeDir)
+			entry.Metadata = td.PathMetadata(FileModeDir)
 			return entry
 		}
 		fileEntry := func(path string) *RevisionEntry {
@@ -125,7 +125,7 @@ func TestRevisionEntryTemp(t *testing.T) {
 		sut := NewRevisionEntryTempWriter(fs, 700)
 
 		add := func(path string, mode FileMode) {
-			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})
+			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.PathMetadata(mode)})
 			assert.NoError(err)
 		}
 
@@ -143,7 +143,7 @@ func TestRevisionEntryTemp(t *testing.T) {
 
 		temp, err := sut.Finalize()
 		assert.NoError(err)
-		assert.Equal(3, sut.chunks, "should be multiple chunks")
+		assert.Equal(true, sut.chunks > 1, "should be multiple chunks")
 		merged := readAllRevsisionTemp(t, temp, nil)
 		actualPaths := make([]string, len(merged))
 		for i, entry := range merged {

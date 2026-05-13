@@ -28,7 +28,7 @@ func TestStaging(t *testing.T) {
 		assert.NoError(err)
 		assert.NoError(commit.Add(td.RevisionEntryExt("a.txt", lib.RevisionEntryAdd, 0o600, "a")))
 		bDirEntry := td.RevisionEntry("b", lib.RevisionEntryAdd)
-		bDirEntry.Metadata = w.FileMetadata("b")
+		bDirEntry.Metadata = w.PathMetadata("b")
 		assert.NoError(commit.Add(bDirEntry))
 		assert.NoError(commit.Add(td.RevisionEntryExt("b/remote.txt", lib.RevisionEntryAdd, 0o123, "rrr")))
 		remoteRev1, err := commit.Commit(td.CommitInfo())
@@ -141,7 +141,7 @@ func (m *cancelStagingMonitor) OnStart(path lib.Path, dirEntry fs.DirEntry) erro
 	return lib.ErrCancel
 }
 
-func (m *cancelStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.FileMetadata) error {
+func (m *cancelStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.PathMetadata) error {
 	return nil
 }
 
@@ -153,7 +153,7 @@ func TestStagingCache(t *testing.T) {
 		var buf bytes.Buffer
 		sut := StagingEntry{
 			RepoPath:  td.Path("a.txt"),
-			Metadata:  td.FileMetadata(0o600),
+			Metadata:  td.PathMetadata(0o600),
 			CTimeSec:  123,
 			CTimeNSec: 456,
 			Inode:     789,
@@ -173,7 +173,7 @@ func TestStagingCache(t *testing.T) {
 		tempWriter := NewStagingCacheWriter(fs, lib.MaxBlockDataSize)
 		a := StagingEntry{
 			RepoPath:  td.Path("a.txt"),
-			Metadata:  td.FileMetadata(0o600),
+			Metadata:  td.PathMetadata(0o600),
 			CTimeSec:  123,
 			CTimeNSec: 456,
 			Size:      789,
@@ -181,7 +181,7 @@ func TestStagingCache(t *testing.T) {
 		}
 		b := StagingEntry{
 			RepoPath:  td.Path("b.txt"),
-			Metadata:  td.FileMetadata(0o700),
+			Metadata:  td.PathMetadata(0o700),
 			CTimeSec:  234,
 			CTimeNSec: 567,
 			Size:      890,
@@ -222,7 +222,7 @@ func TestStagingCache(t *testing.T) {
 		fileInfo, err := w.Workspace.FS.Stat("dir/a.txt")
 		assert.NoError(err)
 		// Note: We set a different mode here to verify that the mode is not taken from the cache.
-		amd := td.FileMetadata(0o777)
+		amd := td.PathMetadata(0o777)
 		amd.FileHash = td.SHA256("from_cache")
 		a, err := NewStagingEntry(td.Path("dir/a.txt"), fileInfo, fileInfo.Size(), amd.FileHash, amd.BlockIds)
 		assert.NoError(err)

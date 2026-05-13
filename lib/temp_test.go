@@ -20,7 +20,7 @@ func TestTemp(t *testing.T) {
 		sut := NewRevisionEntryTempWriter(fs, 500)
 
 		add := func(path string, mode FileMode) {
-			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})
+			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.PathMetadata(mode)})
 			assert.NoError(err)
 		}
 
@@ -229,7 +229,7 @@ func TestTempCache(t *testing.T) {
 		fs := td.NewFS(t)
 		sut := NewRevisionEntryTempWriter(fs, 500)
 		add := func(path string, mode FileMode) {
-			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})
+			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.PathMetadata(mode)})
 			assert.NoError(err)
 		}
 
@@ -280,7 +280,7 @@ func TestTempCache(t *testing.T) {
 		fs := td.NewFS(t)
 		sut := NewRevisionEntryTempWriter(fs, 500)
 		add := func(path string, mode FileMode) {
-			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.FileMetadata(mode)})
+			err := sut.Add(&RevisionEntry{Path{path}, RevisionEntryAdd, td.PathMetadata(mode)})
 			assert.NoError(err)
 		}
 
