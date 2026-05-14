@@ -883,8 +883,8 @@ func assertSameRepositoryHistory(t *testing.T, src, dst *lib.Repository) {
 		dstRevision, err := dst.ReadRevision(dstRevisionId, buf)
 		assert.NoError(err)
 		assert.Equal(srcRevision, dstRevision)
-		srcRevisionId = srcRevision.Parent
-		dstRevisionId = dstRevision.Parent
+		srcRevisionId = srcRevision.ParentRevisionId
+		dstRevisionId = dstRevision.ParentRevisionId
 	}
 	assert.Equal(true, dstRevisionId.IsRoot())
 }

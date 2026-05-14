@@ -26,13 +26,13 @@ type RevisionLog struct {
 //	Commit message
 func (l *RevisionLog) Long() string {
 	r := l.Revision
-	date := time.Unix(r.TimestampSec, int64(r.TimestampNSec)).Format(time.RFC1123)
+	date := r.Timestamp.Time().Format(time.RFC1123)
 	return fmt.Sprintf(
 		"Revision: %s\nAuthor:   %s\nDate:     %s\n\n    %s",
 		l.RevisionId,
-		strings.ReplaceAll(r.Author, "\n", " "),
+		strings.ReplaceAll(derefString(r.Author), "\n", " "),
 		date,
-		strings.ReplaceAll(r.Message, "\n", "\n    "),
+		strings.ReplaceAll(derefString(r.Message), "\n", "\n    "),
 	)
 }
 
@@ -41,8 +41,15 @@ func (l *RevisionLog) Long() string {
 // <RevisionId> <Date> <Message>
 func (l *RevisionLog) Short() string {
 	r := l.Revision
-	date := time.Unix(r.TimestampSec, int64(r.TimestampNSec)).Format(time.RFC3339)
-	return fmt.Sprintf("%s %s %s", l.RevisionId, date, strings.ReplaceAll(r.Message, "\n", " "))
+	date := r.Timestamp.Time().Format(time.RFC3339)
+	return fmt.Sprintf("%s %s %s", l.RevisionId, date, strings.ReplaceAll(derefString(r.Message), "\n", " "))
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 type LogOptions struct {
@@ -90,7 +97,7 @@ func Log(repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
 		if opts.PathFilter == nil || matchedAtLeastOnePath {
 			logs = append(logs, RevisionLog{revisionId, revision, files})
 		}
-		revisionId = revision.Parent
+		revisionId = revision.ParentRevisionId
 	}
 	return logs, nil
 }

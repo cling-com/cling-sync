@@ -33,7 +33,7 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 		if err != nil {
 			return WrapErrorf(err, "failed to read revision %s", revisionId)
 		}
-		for _, blockId := range revision.Blocks {
+		for _, blockId := range revision.BlockIds {
 			length, duplicate, err := VerifyBlock(repository, blocksSeen, nil, blockId, blockBuf)
 			if err != nil {
 				return WrapErrorf(err, "failed to check block %s of revision %s", blockId, revisionId)
@@ -90,7 +90,7 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 			}
 			lastEntry = entry
 		}
-		revisionId = revision.Parent
+		revisionId = revision.ParentRevisionId
 	}
 	return nil
 }

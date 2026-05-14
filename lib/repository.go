@@ -381,7 +381,7 @@ func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision
 	if err != nil {
 		return Revision{}, WrapErrorf(err, "failed to read revision %s", revisionId)
 	}
-	rev, err := UnmarshalRevision(bytes.NewReader(data))
+	rev, err := UnmarshallRevision(NewProtobufReader(data))
 	if err != nil {
 		return Revision{}, WrapErrorf(err, "failed to unmarshal revision %s", revisionId)
 	}
@@ -392,10 +392,10 @@ func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision
 // A revision can only reference the current head as their parent.
 // Return `ErrHeadChanged` if the head has changed during the commit.
 func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
-	if len(revision.Blocks) == 0 {
+	if len(revision.BlockIds) == 0 {
 		return RevisionId{}, Errorf("revision is empty")
 	}
-	for _, blockId := range revision.Blocks {
+	for _, blockId := range revision.BlockIds {
 		exists, err := r.storage.HasBlock(blockId)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to check if block %s exists", blockId)
@@ -413,19 +413,20 @@ func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to get head revision")
 	}
-	if revision.Parent != head {
+	if revision.ParentRevisionId != head {
 		return RevisionId{}, WrapErrorf(
 			ErrHeadChanged,
 			"revision parent %s does not match current head %s",
-			revision.Parent,
+			revision.ParentRevisionId,
 			head,
 		)
 	}
-	revBuf := bytes.NewBuffer([]byte{})
-	if err := MarshalRevision(revision, revBuf); err != nil {
+	revBuf := make([]byte, revision.MarshallSize())
+	pw := NewProtobufWriter(revBuf)
+	if err := revision.Marshall(pw); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to marshal revision")
 	}
-	blockId, _, err := r.WriteBlock(revBuf.Bytes())
+	blockId, _, err := r.WriteBlock(pw.Bytes())
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write revision block")
 	}

@@ -122,14 +122,12 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 		}
 		blockIds = append(blockIds, blockId)
 	}
-	now := time.Now()
 	revision := &Revision{
-		TimestampSec:  now.Unix(),
-		TimestampNSec: int32(now.Nanosecond()), //nolint:gosec
-		Message:       info.Message,
-		Author:        info.Author,
-		Parent:        c.BaseRevision,
-		Blocks:        blockIds,
+		Timestamp:        NewTimestampNow(),
+		Message:          &info.Message,
+		Author:           &info.Author,
+		ParentRevisionId: c.BaseRevision,
+		BlockIds:         blockIds,
 	}
 	revisionId, err := c.repository.WriteRevision(revision)
 	if err != nil {

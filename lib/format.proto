@@ -93,7 +93,7 @@ message RevisionEntryChunk {
     repeated RevisionEntry entries = 1 [(cling) = {max_length: 0xFFFFFF}];
 }
 
-message Revision1 {
+message Revision {
     Timestamp timestamp = 1;
     bytes parent_revision_id = 2 [(cling) = {type: "RevisionId", length: 32}];
     string message = 3 [(cling) = {required: "false"}];

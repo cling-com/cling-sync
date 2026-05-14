@@ -195,8 +195,8 @@ func assertSameHistory(t *testing.T, src, dst *TestRepository) {
 		assert.NoError(err)
 		assert.Equal(srcRevision, dstRevision)
 		assert.Equal(src.RevisionInfos(srcRevisionId), dst.RevisionInfos(dstRevisionId))
-		srcRevisionId = srcRevision.Parent
-		dstRevisionId = dstRevision.Parent
+		srcRevisionId = srcRevision.ParentRevisionId
+		dstRevisionId = dstRevision.ParentRevisionId
 	}
 
 	assert.Equal(true, dstRevisionId.IsRoot())

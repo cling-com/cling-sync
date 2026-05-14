@@ -9,14 +9,13 @@ import (
 // given FileInfo. Platform-specific fields (UID/GID/Birthtime) are filled
 // in via EnhanceMetadata.
 func NewPathMetadataFromFileInfo(fileInfo fs.FileInfo, fileHash Sha256, blockIds []BlockId) PathMetadata {
-	mtime := fileInfo.ModTime().UTC()
 	var size int64
 	if !fileInfo.IsDir() {
 		size = fileInfo.Size()
 	}
 	md := PathMetadata{ //nolint:exhaustruct
 		FileMode: NewFileMode(fileInfo.Mode()),
-		Mtime:    Timestamp{Sec: mtime.Unix(), Nsec: uint32(mtime.Nanosecond())}, //nolint:gosec
+		Mtime:    NewTimestampFromTime(fileInfo.ModTime()),
 		Size:     size,
 		FileHash: fileHash,
 		BlockIds: blockIds,
@@ -28,7 +27,7 @@ func NewPathMetadataFromFileInfo(fileInfo fs.FileInfo, fileHash Sha256, blockIds
 // NewEmptyDirPathMetadata returns a PathMetadata representing a directory
 // created at the given time. UID/GID are left unset; Birthtime is set to mtime.
 func NewEmptyDirPathMetadata(mtime time.Time) PathMetadata {
-	ts := Timestamp{Sec: mtime.Unix(), Nsec: uint32(mtime.Nanosecond())} //nolint:gosec
+	ts := NewTimestampFromTime(mtime)
 	birth := ts
 	return PathMetadata{ //nolint:exhaustruct
 		FileMode:  0o700 | FileModeDir,

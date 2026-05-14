@@ -21,7 +21,7 @@ func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS
 			return nil, WrapErrorf(err, "failed to read revision: %s", r)
 		}
 		revisions = append(revisions, &revision)
-		r = revision.Parent
+		r = revision.ParentRevisionId
 	}
 	tempWriter := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
 	if err := revisionNWayMerge(repository, revisions, tempWriter, buf); err != nil {

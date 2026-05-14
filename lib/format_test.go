@@ -51,10 +51,10 @@ func TestFormatMarshall(t *testing.T) {
 		encrypted_data: "payload"
 	`)
 
-	check("Revision1 minimal", &Revision1{
+	check("Revision minimal", &Revision{
 		Timestamp:        Timestamp{Sec: 1234567890, Nsec: 500000000},
 		ParentRevisionId: revisionId("a"),
-	}, UnmarshallRevision1, `
+	}, UnmarshallRevision, `
 		timestamp {
 		  sec: 1234567890
 		  nsec: 500000000
@@ -176,13 +176,13 @@ func TestFormatMarshall(t *testing.T) {
 	`)
 
 	msg, author := "hello", "alice"
-	check("Revision1 fully set", &Revision1{
+	check("Revision fully set", &Revision{
 		Timestamp:        Timestamp{Sec: 1234567890, Nsec: 500000000},
 		ParentRevisionId: revisionId("a"),
 		Message:          &msg,
 		Author:           &author,
 		BlockIds:         []BlockId{blockId("b"), blockId("c")},
-	}, UnmarshallRevision1, `
+	}, UnmarshallRevision, `
 		timestamp {
 		  sec: 1234567890
 		  nsec: 500000000
@@ -309,13 +309,13 @@ func TestFormatValidate(t *testing.T) {
 	// RevisionEntryChunk: entries cap is 2^24-1 — too large to materialize.
 	check("RevisionEntryChunk zero value", &RevisionEntryChunk{}, "")
 
-	// Revision1: parent_revision_id length (unreachable for [32]byte),
-	//            block_ids cap of 65535.
-	check("Revision1 zero value", &Revision1{}, "")
-	check("Revision1 block_ids at boundary", &Revision1{
+	// Revision: parent_revision_id length (unreachable for [32]byte),
+	//           block_ids cap of 65535.
+	check("Revision zero value", &Revision{}, "")
+	check("Revision block_ids at boundary", &Revision{
 		BlockIds: make([]BlockId, 65535),
 	}, "")
-	check("Revision1 block_ids oversize", &Revision1{
+	check("Revision block_ids oversize", &Revision{
 		BlockIds: make([]BlockId, 65536),
 	}, "BlockIds must not be longer than 65535")
 }

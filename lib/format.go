@@ -612,7 +612,7 @@ func UnmarshallRevisionEntryChunk(r *ProtobufReader) (*RevisionEntryChunk, error
 	return o, nil
 }
 
-type Revision1 struct {
+type Revision struct {
 	Timestamp        Timestamp
 	ParentRevisionId RevisionId
 	Message          *string
@@ -620,14 +620,14 @@ type Revision1 struct {
 	BlockIds         []BlockId
 }
 
-func (o *Revision1) Validate() error {
+func (o *Revision) Validate() error {
 	if len(o.BlockIds) > 65535 {
-		return Errorf("Revision1.BlockIds must not be longer than 65535")
+		return Errorf("Revision.BlockIds must not be longer than 65535")
 	}
 	return nil
 }
 
-func (o *Revision1) Marshall(w ProtobufWriter) error {
+func (o *Revision) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -655,14 +655,14 @@ func (o *Revision1) Marshall(w ProtobufWriter) error {
 	return nil
 }
 
-func (o *Revision1) MarshallSize() int {
+func (o *Revision) MarshallSize() int {
 	sw := NewProtobufSizeWriter()
 	_ = o.Marshall(sw)
 	return sw.Size()
 }
 
-func UnmarshallRevision1(r *ProtobufReader) (*Revision1, error) {
-	o := &Revision1{}
+func UnmarshallRevision(r *ProtobufReader) (*Revision, error) {
+	o := &Revision{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
@@ -685,7 +685,7 @@ func UnmarshallRevision1(r *ProtobufReader) (*Revision1, error) {
 				return nil, err
 			}
 			if len(b) != 32 {
-				return nil, Errorf("Revision1.ParentRevisionId must have length 32")
+				return nil, Errorf("Revision.ParentRevisionId must have length 32")
 			}
 			o.ParentRevisionId = RevisionId(b)
 		case 3:
@@ -708,7 +708,7 @@ func UnmarshallRevision1(r *ProtobufReader) (*Revision1, error) {
 				return nil, err
 			}
 			if len(b) != 32 {
-				return nil, Errorf("every entry in Revision1.BlockIds must have length 32")
+				return nil, Errorf("every entry in Revision.BlockIds must have length 32")
 			}
 			o.BlockIds = append(o.BlockIds, BlockId(b))
 		default:

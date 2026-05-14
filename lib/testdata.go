@@ -105,13 +105,14 @@ func (td TestData) RevisionEntryExt(
 }
 
 func (td TestData) Revision(parent RevisionId) *Revision {
+	msg := "test message"
+	author := "test author"
 	return &Revision{
-		TimestampSec:  123456789,
-		TimestampNSec: 12345,
-		Message:       "test message",
-		Author:        "test author",
-		Parent:        parent,
-		Blocks:        []BlockId{td.BlockId("1")},
+		Timestamp:        Timestamp{Sec: 123456789, Nsec: 12345},
+		Message:          &msg,
+		Author:           &author,
+		ParentRevisionId: parent,
+		BlockIds:         []BlockId{td.BlockId("1")},
 	}
 }
 

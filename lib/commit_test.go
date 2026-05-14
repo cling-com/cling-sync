@@ -28,9 +28,9 @@ func TestCommit(t *testing.T) {
 
 		revision, entries, err := readRevision(r.Repository, revisionId)
 		assert.NoError(err)
-		assert.Equal(true, revision.Parent.IsRoot())
-		assert.Equal("test author", revision.Author)
-		assert.Equal("test message", revision.Message)
+		assert.Equal(true, revision.ParentRevisionId.IsRoot())
+		assert.Equal("test author", *revision.Author)
+		assert.Equal("test message", *revision.Message)
 		assert.Equal([]*RevisionEntry{e1, e2, e3}, entries)
 
 		// Add a second revision.
@@ -43,9 +43,9 @@ func TestCommit(t *testing.T) {
 
 		revision, entries, err = readRevision(r.Repository, revisionId2)
 		assert.NoError(err)
-		assert.Equal(revisionId, revision.Parent)
-		assert.Equal("test author2", revision.Author)
-		assert.Equal("test message2", revision.Message)
+		assert.Equal(revisionId, revision.ParentRevisionId)
+		assert.Equal("test author2", *revision.Author)
+		assert.Equal("test message2", *revision.Message)
 		assert.Equal([]*RevisionEntry{e4}, entries)
 	})
 
@@ -72,13 +72,14 @@ func TestCommit(t *testing.T) {
 		// Change the head.
 		blockId, _, err := r.WriteBlock([]byte{1, 2, 3})
 		assert.NoError(err)
+		msg := "test message"
+		author := "test author"
 		_, err = r.WriteRevision(&Revision{
-			TimestampSec:  123456789,
-			TimestampNSec: 1234,
-			Message:       "test message",
-			Author:        "test author",
-			Parent:        head,
-			Blocks:        []BlockId{blockId},
+			Timestamp:        Timestamp{Sec: 123456789, Nsec: 1234},
+			Message:          &msg,
+			Author:           &author,
+			ParentRevisionId: head,
+			BlockIds:         []BlockId{blockId},
 		})
 		assert.NoError(err)
 

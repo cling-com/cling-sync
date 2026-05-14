@@ -56,11 +56,11 @@ func SyncRepository( //nolint:funlen
 			return WrapErrorf(err, "failed to read revision %s", baseRefId)
 		}
 		revisionsToSync[baseRefId] = &revision
-		baseRefId = revision.Parent
-		if revision.Parent == dstRevisionId {
+		baseRefId = revision.ParentRevisionId
+		if revision.ParentRevisionId == dstRevisionId {
 			break
 		}
-		if revision.Parent.IsRoot() {
+		if revision.ParentRevisionId.IsRoot() {
 			return WrapErrorf(err, "destination and source don't have a common revision")
 		}
 	}
@@ -111,7 +111,7 @@ func SyncRepository( //nolint:funlen
 		if err := copyBlock(BlockId(revisionId)); err != nil {
 			return err
 		}
-		for _, blockId := range revision.Blocks {
+		for _, blockId := range revision.BlockIds {
 			if err := copyBlock(blockId); err != nil {
 				return err
 			}

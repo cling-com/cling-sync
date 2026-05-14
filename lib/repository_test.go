@@ -404,13 +404,14 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		blockId, _, err := r.WriteBlock([]byte{1, 2, 3})
 		assert.NoError(err)
 
+		msg := "test message"
+		author := "test author"
 		revision := Revision{
-			TimestampSec:  time.Now().Unix(),
-			TimestampNSec: 1234,
-			Message:       "test message",
-			Author:        "test author",
-			Blocks:        []BlockId{blockId},
-			Parent:        head,
+			Timestamp:        Timestamp{Sec: time.Now().Unix(), Nsec: 1234},
+			Message:          &msg,
+			Author:           &author,
+			BlockIds:         []BlockId{blockId},
+			ParentRevisionId: head,
 		}
 		revisionId, err := r.WriteRevision(&revision)
 		assert.NoError(err)
@@ -431,13 +432,14 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		blockId, _, err := r.WriteBlock([]byte{1, 2, 3})
 		assert.NoError(err)
 
+		msg := "test message"
+		author := "test author"
 		revision := Revision{
-			TimestampSec:  time.Now().Unix(),
-			TimestampNSec: 1234,
-			Message:       "test message",
-			Author:        "test author",
-			Blocks:        []BlockId{blockId},
-			Parent:        revisionId,
+			Timestamp:        Timestamp{Sec: time.Now().Unix(), Nsec: 1234},
+			Message:          &msg,
+			Author:           &author,
+			BlockIds:         []BlockId{blockId},
+			ParentRevisionId: revisionId,
 		}
 		_, err = r.WriteRevision(&revision)
 		assert.ErrorIs(err, ErrHeadChanged)
