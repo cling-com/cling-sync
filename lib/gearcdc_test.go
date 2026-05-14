@@ -145,20 +145,6 @@ func TestGearCDCBasics(t *testing.T) {
 			expectedHappyPath[10],
 		}, test(t, modified))
 	})
-	t.Run("Legacy version1 constant GearCDCTable", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		original := "lore ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
-		assert.Equal([]string{
-			"lore ipsum dol",
-			"or sit amet, conse",
-			"ctetur adipiscing",
-			" elit, sed do eiusmo",
-			"d tempor incididunt",
-			" ut labore et dol",
-			"ore magna aliqua.",
-		}, testExtended(t, original, version1GearCDCTable, (1<<3)-1, 10, 20))
-	})
 }
 
 func TestGearCDCWithDefaults(t *testing.T) {

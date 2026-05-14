@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math/bits"
-	"slices"
 	"strings"
 )
 
@@ -155,16 +154,9 @@ func OpenRepository(storage Storage, passphrase []byte) (*Repository, error) {
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from KEK")
 	}
-	var gearCDCTable GearCDCTable
-	if !slices.ContainsFunc(keys.GearCDCSeed[:], func(x byte) bool { return x != 0 }) {
-		// All zero GearCDCSeed means we have to fall back to the constant seed
-		// we used back in the early days.
-		gearCDCTable = version1GearCDCTable
-	} else {
-		gearCDCTable, err = NewGearCDCTable(keys.GearCDCSeed)
-		if err != nil {
-			return nil, WrapErrorf(err, "failed to create GearCDCTable")
-		}
+	gearCDCTable, err := NewGearCDCTable(keys.GearCDCSeed)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to create GearCDCTable")
 	}
 	return &Repository{storage, kekCipher, keys.BlockIdHmacKey, gearCDCTable}, nil
 }
