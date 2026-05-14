@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"bytes"
 	cryptoCipher "crypto/cipher"
 	"errors"
 	"strings"
@@ -100,64 +99,62 @@ func (w *Workspace) Head() (lib.RevisionId, error) {
 	return ref, nil
 }
 
-var ErrRepositoryKeysNotFound = lib.Errorf("repository keys not found")
+var ErrSavedPassphraseNotFound = lib.Errorf("saved passphrase not found")
 
-const repositoryKeysFileName = "keys.enc"
+const savedPassphraseFileName = "passphrase.enc"
 
-func (w *Workspace) WriteRepositoryKeys(keys *lib.RepositoryKeys, cipher cryptoCipher.AEAD) error {
-	marshalBuf := bytes.NewBuffer(nil)
-	if err := lib.MarshalRepositoryKeys(keys, marshalBuf); err != nil {
-		return lib.WrapErrorf(err, "failed to serialize repository keys")
-	}
-	encBuf := make([]byte, lib.TotalCipherOverhead+marshalBuf.Len())
-	encrypted, err := lib.Encrypt(marshalBuf.Bytes(), cipher, []byte(repositoryKeysFileName), encBuf)
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to encrypt repository keys")
+// WriteSavedPassphrase AEAD-encrypts `passphrase` with `cipher` and stores
+// the ciphertext as a workspace control file. The encryption key (which
+// `cipher` was built from) is meant to live in the system keychain; the
+// two-layer scheme means neither alone unlocks the repository.
+func (w *Workspace) WriteSavedPassphrase(passphrase []byte, cipher cryptoCipher.AEAD) error {
+	encrypted := make([]byte, len(passphrase)+lib.TotalCipherOverhead)
+	if _, err := lib.Encrypt(passphrase, cipher, []byte(savedPassphraseFileName), encrypted); err != nil {
+		return lib.WrapErrorf(err, "failed to encrypt saved passphrase")
 	}
 	if err := w.Storage.WriteControlFile(
 		lib.ControlFileSectionSecurity,
-		repositoryKeysFileName,
+		savedPassphraseFileName,
 		encrypted,
 	); err != nil {
-		return lib.WrapErrorf(err, "failed to copy repository keys to local storage")
+		return lib.WrapErrorf(err, "failed to write saved passphrase")
 	}
 	return nil
 }
 
-func (w *Workspace) HasRepositoryKeys() bool {
-	ok, err := w.Storage.HasControlFile(lib.ControlFileSectionSecurity, repositoryKeysFileName)
+func (w *Workspace) HasSavedPassphrase() bool {
+	ok, err := w.Storage.HasControlFile(lib.ControlFileSectionSecurity, savedPassphraseFileName)
 	if err != nil {
 		return false
 	}
 	return ok
 }
 
-func (w *Workspace) ReadRepositoryKeys(cipher cryptoCipher.AEAD) (*lib.RepositoryKeys, error) {
-	ok, err := w.Storage.HasControlFile(lib.ControlFileSectionSecurity, repositoryKeysFileName)
+func (w *Workspace) ReadSavedPassphrase(cipher cryptoCipher.AEAD) ([]byte, error) {
+	ok, err := w.Storage.HasControlFile(lib.ControlFileSectionSecurity, savedPassphraseFileName)
 	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to check if repository keys exist")
+		return nil, lib.WrapErrorf(err, "failed to check for saved passphrase")
 	}
 	if !ok {
-		return nil, ErrRepositoryKeysNotFound
+		return nil, ErrSavedPassphraseNotFound
 	}
-	encrypted, err := w.Storage.ReadControlFile(lib.ControlFileSectionSecurity, repositoryKeysFileName)
+	encrypted, err := w.Storage.ReadControlFile(lib.ControlFileSectionSecurity, savedPassphraseFileName)
 	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to read repository keys")
+		return nil, lib.WrapErrorf(err, "failed to read saved passphrase")
 	}
-	decrypted, err := lib.Decrypt(encrypted, cipher, []byte(repositoryKeysFileName), make([]byte, len(encrypted)))
+	plaintext, err := lib.Decrypt(encrypted, cipher, []byte(savedPassphraseFileName), make([]byte, len(encrypted)))
 	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to decrypt repository keys")
+		return nil, lib.WrapErrorf(err, "failed to decrypt saved passphrase")
 	}
-	keys, err := lib.UnmarshalRepositoryKeys(bytes.NewReader(decrypted))
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to parse repository keys")
-	}
-	return keys, nil
+	return plaintext, nil
 }
 
-func (w *Workspace) DeleteRepositoryKeys() error {
-	if err := w.Storage.DeleteControlFile(lib.ControlFileSectionSecurity, repositoryKeysFileName); err != nil {
-		return lib.WrapErrorf(err, "failed to delete local repository keys")
+func (w *Workspace) DeleteSavedPassphrase() error {
+	if err := w.Storage.DeleteControlFile(lib.ControlFileSectionSecurity, savedPassphraseFileName); err != nil {
+		if errors.Is(err, lib.ErrControlFileNotFound) {
+			return nil
+		}
+		return lib.WrapErrorf(err, "failed to delete saved passphrase")
 	}
 	return nil
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"math/bits"
 	"slices"
 	"strings"
@@ -47,7 +46,7 @@ var (
 	ErrHeadChanged  = Errorf("head changed during commit")
 )
 
-type MasterKeyInfo struct {
+type masterKeyInfo struct {
 	EncryptionVersion       uint16
 	EncryptedKEK            EncryptedKey
 	Argon2id                Argon2id
@@ -55,7 +54,7 @@ type MasterKeyInfo struct {
 	EncryptedGearCDCSeed    EncryptedKey
 }
 
-type RepositoryKeys struct {
+type repositoryKeys struct {
 	KEK            RawKey
 	BlockIdHmacKey RawKey
 	GearCDCSeed    RawKey
@@ -126,14 +125,14 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 			len(encryptedGearCDCSeed),
 		)
 	}
-	masterKeyInfo := MasterKeyInfo{
+	mki := masterKeyInfo{
 		EncryptionVersion,
 		EncryptedKey(encryptedKEK),
 		argon2id,
 		EncryptedKey(encryptedBlockIdHmacKey),
 		EncryptedKey(encryptedGearCDCSeed),
 	}
-	toml, headerComment := createRepositoryConfig(masterKeyInfo)
+	toml, headerComment := createRepositoryConfig(mki)
 	if err := storage.Init(toml, headerComment); err != nil {
 		return nil, WrapErrorf(err, "failed to initialize storage")
 	}
@@ -148,14 +147,10 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 }
 
 func OpenRepository(storage Storage, passphrase []byte) (*Repository, error) {
-	keys, err := DecryptRepositoryKeys(storage, passphrase)
+	keys, err := decryptrepositoryKeys(storage, passphrase)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt repository keys")
 	}
-	return OpenRepositoryWithKeys(storage, keys)
-}
-
-func OpenRepositoryWithKeys(storage Storage, keys *RepositoryKeys) (*Repository, error) {
 	kekCipher, err := NewCipher(keys.KEK)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from KEK")
@@ -175,23 +170,23 @@ func OpenRepositoryWithKeys(storage Storage, keys *RepositoryKeys) (*Repository,
 }
 
 // Read the encrypted keys from the storage config (`repository.toml`) and decrypt them.
-func DecryptRepositoryKeys(storage Storage, passphrase []byte) (*RepositoryKeys, error) {
+func decryptrepositoryKeys(storage Storage, passphrase []byte) (*repositoryKeys, error) {
 	toml, err := storage.Open()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to open storage")
 	}
-	masterKeyInfo, err := parseRepositoryConfig(toml)
+	mki, err := parseRepositoryConfig(toml)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to parse repository config")
 	}
-	if masterKeyInfo.EncryptionVersion != EncryptionVersion {
+	if mki.EncryptionVersion != EncryptionVersion {
 		return nil, Errorf(
 			"unsupported repository version %d, want %d",
-			masterKeyInfo.EncryptionVersion,
+			mki.EncryptionVersion,
 			EncryptionVersion,
 		)
 	}
-	userKey, err := DeriveUserKey(passphrase, masterKeyInfo.Argon2id)
+	userKey, err := DeriveUserKey(passphrase, mki.Argon2id)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to derive user-key from passphrase")
 	}
@@ -200,15 +195,15 @@ func DecryptRepositoryKeys(storage Storage, passphrase []byte) (*RepositoryKeys,
 		return nil, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from user-key")
 	}
 	kek := make([]byte, RawKeySize)
-	kek, err = Decrypt(masterKeyInfo.EncryptedKEK[:], cipher, masterKeyInfo.Argon2id.Salt[:], kek)
+	kek, err = Decrypt(mki.EncryptedKEK[:], cipher, mki.Argon2id.Salt[:], kek)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt KEK with user-key")
 	}
 	blockIdHmacKey := make([]byte, RawKeySize)
 	blockIdHmacKey, err = Decrypt(
-		masterKeyInfo.EncryptedBlockIdHmacKey[:],
+		mki.EncryptedBlockIdHmacKey[:],
 		cipher,
-		masterKeyInfo.Argon2id.Salt[:],
+		mki.Argon2id.Salt[:],
 		blockIdHmacKey,
 	)
 	if err != nil {
@@ -216,15 +211,15 @@ func DecryptRepositoryKeys(storage Storage, passphrase []byte) (*RepositoryKeys,
 	}
 	gearCDCSeed := make([]byte, RawKeySize)
 	gearCDCSeed, err = Decrypt(
-		masterKeyInfo.EncryptedGearCDCSeed[:],
+		mki.EncryptedGearCDCSeed[:],
 		cipher,
-		masterKeyInfo.Argon2id.Salt[:],
+		mki.Argon2id.Salt[:],
 		gearCDCSeed,
 	)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt gear-cdc seed with user-key")
 	}
-	return &RepositoryKeys{
+	return &repositoryKeys{
 		KEK:            RawKey(kek),
 		BlockIdHmacKey: RawKey(blockIdHmacKey),
 		GearCDCSeed:    RawKey(gearCDCSeed),
@@ -483,7 +478,7 @@ func ReadRef(storage Storage, name string) (RevisionId, error) {
 	return RevisionId(data), nil
 }
 
-func parseRepositoryConfig(toml Toml) (*MasterKeyInfo, error) {
+func parseRepositoryConfig(toml Toml) (*masterKeyInfo, error) {
 	i, ok := toml.GetIntValue("storage", "version")
 	if !ok {
 		return nil, Errorf("missing or invalid key `storage.version` in repository config")
@@ -498,7 +493,7 @@ func parseRepositoryConfig(toml Toml) (*MasterKeyInfo, error) {
 	if i != int(EncryptionVersion) {
 		return nil, Errorf("unsupported repository version %d, want %d", i, EncryptionVersion)
 	}
-	masterKeyInfo := &MasterKeyInfo{ //nolint:exhaustruct
+	mki := &masterKeyInfo{ //nolint:exhaustruct
 		EncryptionVersion: uint16(i),
 	}
 	parseRecoveryCode := func(key string, expectedLen int) ([]byte, error) {
@@ -520,7 +515,7 @@ func parseRepositoryConfig(toml Toml) (*MasterKeyInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	masterKeyInfo.EncryptedKEK = EncryptedKey(c)
+	mki.EncryptedKEK = EncryptedKey(c)
 	passphraseDerivation, ok := toml.GetValue("encryption", "passphrase-derivation")
 	if !ok {
 		return nil, Errorf("missing key `encryption.passphrase-derivation`")
@@ -529,67 +524,34 @@ func parseRepositoryConfig(toml Toml) (*MasterKeyInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	masterKeyInfo.Argon2id = argon2id
+	mki.Argon2id = argon2id
 	c, err = parseRecoveryCode("encrypted-block-id-hmac", EncryptedKeySize)
 	if err != nil {
 		return nil, err
 	}
-	masterKeyInfo.EncryptedBlockIdHmacKey = EncryptedKey(c)
+	mki.EncryptedBlockIdHmacKey = EncryptedKey(c)
 	c, err = parseRecoveryCode("encrypted-gear-cdc-seed", EncryptedKeySize)
 	if err != nil {
 		return nil, err
 	}
-	masterKeyInfo.EncryptedGearCDCSeed = EncryptedKey(c)
-	return masterKeyInfo, nil
+	mki.EncryptedGearCDCSeed = EncryptedKey(c)
+	return mki, nil
 }
 
-func createRepositoryConfig(masterKeyInfo MasterKeyInfo) (Toml, string) {
+func createRepositoryConfig(mki masterKeyInfo) (Toml, string) {
 	toml := Toml{
 		"encryption": {
-			"version":                      fmt.Sprintf("%d", masterKeyInfo.EncryptionVersion),
-			"passphrase-derivation":        masterKeyInfo.Argon2id.Marshal(),
-			"encrypted-key-encryption-key": FormatRecoveryCode(masterKeyInfo.EncryptedKEK[:]),
-			"encrypted-block-id-hmac":      FormatRecoveryCode(masterKeyInfo.EncryptedBlockIdHmacKey[:]),
-			"encrypted-gear-cdc-seed":      FormatRecoveryCode(masterKeyInfo.EncryptedGearCDCSeed[:]),
+			"version":                      fmt.Sprintf("%d", mki.EncryptionVersion),
+			"passphrase-derivation":        mki.Argon2id.Marshal(),
+			"encrypted-key-encryption-key": FormatRecoveryCode(mki.EncryptedKEK[:]),
+			"encrypted-block-id-hmac":      FormatRecoveryCode(mki.EncryptedBlockIdHmacKey[:]),
+			"encrypted-gear-cdc-seed":      FormatRecoveryCode(mki.EncryptedGearCDCSeed[:]),
 		},
 		"storage": {
 			"version": fmt.Sprintf("%d", StorageVersion),
 		},
 	}
 	return toml, RepositoryConfigHeaderComment
-}
-
-func MarshalRepositoryKeys(keys *RepositoryKeys, w io.Writer) error {
-	bw := NewBinaryWriter(w)
-	bw.Write(EncryptionVersion)
-	bw.Write(keys.KEK[:])
-	bw.Write(keys.BlockIdHmacKey[:])
-	bw.Write(keys.GearCDCSeed[:])
-	return bw.Err
-}
-
-func UnmarshalRepositoryKeys(r io.Reader) (*RepositoryKeys, error) {
-	br := NewBinaryReader(r)
-	var version uint16
-	br.Read(&version)
-	if br.Err != nil {
-		return nil, WrapErrorf(br.Err, "failed to parse repository keys")
-	}
-	if version != EncryptionVersion {
-		// todo: Return a fixed error we can react to.
-		return nil, Errorf("unsupported repository keys version %d, want %d", version, EncryptionVersion)
-	}
-	var kek RawKey
-	br.Read(&kek)
-	var blockIdHmacKey RawKey
-	br.Read(&blockIdHmacKey)
-	var gearCDCSeed RawKey
-	br.Read(&gearCDCSeed)
-	return &RepositoryKeys{
-		KEK:            kek,
-		BlockIdHmacKey: blockIdHmacKey,
-		GearCDCSeed:    gearCDCSeed,
-	}, nil
 }
 
 // Return the number of bytes to pad the given input size

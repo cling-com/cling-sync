@@ -45,14 +45,18 @@ setup() {
         cd test
         rm -rf work
 
+        # Mock keychain persists across runs; clear it so leftover entries
+        # don't poison fresh test repositories.
+        rm -f "${TMPDIR:-/tmp}/mock_keychain.txt"
+
         mkdir work
         cd work
         mkdir workspace repository
         cd workspace
         echo -n "$passphrase" | cling-sync --passphrase-from-stdin init ../repository
 
-    log $cyan">>> Save the repository keys"
-        cmd "echo -n '$passphrase' | cling-sync --passphrase-from-stdin security save-keys"
+    log $cyan">>> Save the repository passphrase"
+        cmd "echo -n '$passphrase' | cling-sync --passphrase-from-stdin security save-passphrase"
 }
 
 cmd() {

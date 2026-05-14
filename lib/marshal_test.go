@@ -1,9 +1,7 @@
 package lib
 
 import (
-	"bytes"
 	"crypto/rand"
-	"encoding/binary"
 	"io"
 	"strings"
 	"testing"
@@ -127,101 +125,5 @@ func TestRecoveryCode(t *testing.T) {
 			assert.NoError(err)
 			assert.Equal(original, parsed)
 		}
-	})
-}
-
-func TestBinaryWriter(t *testing.T) {
-	t.Parallel()
-	t.Run("Happy path", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		var buf bytes.Buffer
-		sut := NewBinaryWriter(&buf)
-		sut.Write(int8(0x41))
-		sut.Write(int8(0x20))
-		sut.Write([]byte("string"))
-		assert.NoError(sut.Err)
-		assert.Equal("A string", buf.String())
-	})
-	t.Run("WriteString", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		var buf bytes.Buffer
-		sut := NewBinaryWriter(&buf)
-		// Test with Unicode characters from different ranges.
-		input := "ASCII 💡 中文 кириллица العربية" //nolint:gosmopolitan
-		sut.WriteString(input)
-		assert.NoError(sut.Err)
-		lengthBytes := buf.Bytes()[0:2]
-		length := binary.LittleEndian.Uint16(lengthBytes)
-		payload := buf.Bytes()[2:]
-		assert.Equal(input, string(payload))
-		assert.Equal(int(length), len(payload))
-	})
-	t.Run("WriteLen", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		var buf bytes.Buffer
-		sut := NewBinaryWriter(&buf)
-		sut.WriteLen(1)
-		assert.NoError(sut.Err)
-		sut.WriteLen(-1)
-		assert.Error(sut.Err, "length must be positive: -1")
-		sut.Err = nil
-		sut.WriteLen(65535)
-		assert.NoError(sut.Err)
-		sut.WriteLen(65536)
-		assert.Error(sut.Err, "length too long: 65536")
-	})
-}
-
-func TestBinaryReader(t *testing.T) {
-	t.Parallel()
-	t.Run("Happy path", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		buf := bytes.NewBuffer([]byte{0x41, 0x06, 0x00, 's', 't', 'r', 'i', 'n', 'g'})
-		sut := NewBinaryReader(buf)
-		var b uint8
-		sut.Read(&b)
-		assert.NoError(sut.Err)
-		assert.Equal(uint8(0x41), b)
-		s := sut.ReadString()
-		assert.NoError(sut.Err)
-		assert.Equal("string", s)
-	})
-	t.Run("ReadLen returns 0 in case of an error", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		buf := bytes.NewBuffer([]byte{0x10, 0x00})
-		sut := NewBinaryReader(buf)
-		// Simulate a previous call has failed.
-		sut.Err = Errorf("previous error")
-		l := sut.ReadLen()
-		assert.Equal(0, l)
-	})
-	t.Run("ReadString returns an empty string in case of an error", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		var buf bytes.Buffer
-		bw := NewBinaryWriter(&buf)
-		bw.WriteString("string")
-		sut := NewBinaryReader(&buf)
-		// Simulate a previous call has failed.
-		sut.Err = Errorf("previous error")
-		s := sut.ReadString()
-		assert.Equal("", s)
-	})
-}
-
-func TestFixedBufWriter(t *testing.T) {
-	t.Parallel()
-	t.Run("Writing past the buffer returns io.ErrShortBuffer", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		sut := NewFixedBufWriter(make([]byte, 4))
-		n, err := sut.Write([]byte("abcde"))
-		assert.ErrorIs(err, io.ErrShortBuffer)
-		assert.Equal(0, n)
 	})
 }

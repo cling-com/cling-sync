@@ -137,7 +137,7 @@ func TestHappyPath(t *testing.T) {
 		workspace1Ls := sut.Ls()
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "../repository", "../workspace2")
 		t.Chdir("../workspace2")
-		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 		sut.ClingSync("merge", "--no-progress")
 		workspace2Ls := sut.Ls()
 		assert.Equal(workspace1Ls, workspace2Ls)
@@ -296,12 +296,12 @@ func TestChmodChtimeChown(t *testing.T) {
 	{
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "../repository", "../workspace2")
 		t.Chdir("../workspace2")
-		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 		sut.ClingSync("merge", "--no-progress")
 
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "../repository", "../workspace3")
 		t.Chdir("../workspace3")
-		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 		sut.ClingSync("merge", "--no-progress")
 		t.Chdir("../workspace")
 	}
@@ -465,7 +465,7 @@ func TestPathPrefix(t *testing.T) {
 			"../workspace2",
 		)
 		t.Chdir("../workspace2")
-		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 		ls := sut.ClingSync("ls")
 		assert.Equal("", ls)
 	}
@@ -651,7 +651,7 @@ func TestRepositoryOverHTTP(t *testing.T) {
 		workspace1Ls := sut.Ls()
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "http://localhost:9123", "../workspace2")
 		t.Chdir("../workspace2")
-		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 		sut.ClingSync("merge", "--no-progress")
 		workspace2Ls := sut.Ls()
 		assert.Equal(workspace1Ls, workspace2Ls)
@@ -736,7 +736,7 @@ func NewSut(t *testing.T) *Sut {
 	fs := lib.NewRealFS(".")
 	sut := &Sut{td.NewTestFS(t, fs), t, assert}
 	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "init", "../repository")
-	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-keys")
+	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 
 	return sut
 }
