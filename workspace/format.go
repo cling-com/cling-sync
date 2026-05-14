@@ -57,6 +57,9 @@ func UnmarshallStagingEntry(r *lib.ProtobufReader) (*StagingEntry, error) {
 		}
 		switch tag {
 		case 1:
+			if wireType != 2 {
+				return nil, lib.Errorf("StagingEntry.RepoPath: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -67,6 +70,9 @@ func UnmarshallStagingEntry(r *lib.ProtobufReader) (*StagingEntry, error) {
 			}
 			o.RepoPath = pv
 		case 2:
+			if wireType != 2 {
+				return nil, lib.Errorf("StagingEntry.Metadata: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -77,6 +83,9 @@ func UnmarshallStagingEntry(r *lib.ProtobufReader) (*StagingEntry, error) {
 			}
 			o.Metadata = *v
 		case 3:
+			if wireType != 2 {
+				return nil, lib.Errorf("StagingEntry.Ctime: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -87,12 +96,18 @@ func UnmarshallStagingEntry(r *lib.ProtobufReader) (*StagingEntry, error) {
 			}
 			o.Ctime = *v
 		case 4:
+			if wireType != 0 {
+				return nil, lib.Errorf("StagingEntry.Size: unexpected wire type %d, want 0", wireType)
+			}
 			i, err := r.ReadVarint()
 			if err != nil {
 				return nil, err
 			}
 			o.Size = i
 		case 5:
+			if wireType != 0 {
+				return nil, lib.Errorf("StagingEntry.Inode: unexpected wire type %d, want 0", wireType)
+			}
 			u, err := r.ReadUint64()
 			if err != nil {
 				return nil, err
@@ -148,6 +163,9 @@ func UnmarshallStagingEntryChunk(r *lib.ProtobufReader) (*StagingEntryChunk, err
 		}
 		switch tag {
 		case 1:
+			if wireType != 2 {
+				return nil, lib.Errorf("StagingEntryChunk.Entries: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err

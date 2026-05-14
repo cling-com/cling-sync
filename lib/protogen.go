@@ -294,6 +294,24 @@ func (g *generator) isEnum(typ string) bool {
 	return slices.Contains(g.enums, typ)
 }
 
+// wireTypeFor returns the protobuf wire type a field's tag must carry on
+// the wire. 0 = varint, 2 = length-delimited.
+func (g *generator) wireTypeFor(f field) int {
+	switch f.protoTyp {
+	case "string", "bytes":
+		return 2
+	case "uint32", "uint64", "int64":
+		return 0
+	}
+	if g.isMessage(f.protoTyp) {
+		return 2
+	}
+	if g.isEnum(f.protoTyp) {
+		return 0
+	}
+	panic(fmt.Errorf("unknown type for wire type: %s", f.protoTyp))
+}
+
 func (g *generator) genUnmarshall(structName string, fields []field) {
 	assign := func(f field, expr string) {
 		switch {
@@ -359,6 +377,10 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 	g.write("switch tag {")
 	for _, f := range fields {
 		g.write("case %d:", f.tag)
+		g.write(
+			"if wireType != %d { return nil, %s(\"%s.%s: unexpected wire type %%d, want %d\", wireType) }",
+			g.wireTypeFor(f), g.libPrefix+"Errorf", structName, f.name, g.wireTypeFor(f),
+		)
 		if g.isMessage(f.protoTyp) {
 			read("b", "r.ReadBytes()")
 			g.write("v, err := %s(%sNewProtobufReader(b))",

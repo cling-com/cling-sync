@@ -179,18 +179,9 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		// Make sure we picked `len(writeData)` so that padding is added.
 		assert.Greater(Padme(uint64(len(writeData))), uint64(len(writeData)))
 
-		block, err := UnmarshallBlock(NewProtobufReader(onDisk))
-		assert.NoError(err)
-		headerTagOffset := 0
-		headerFieldEnd := 1 + VarintLen(int64(len(block.EncryptedHeader))) + len(block.EncryptedHeader)
-		dataTagOffset := headerFieldEnd
-
 		buf := NewBlockBuf()
 		prev := -1
 		for i := range onDisk {
-			if i == headerTagOffset || i == dataTagOffset {
-				continue
-			}
 			// Restore the previous flip and confirm the block reads again.
 			if prev >= 0 {
 				onDisk[prev] ^= 1

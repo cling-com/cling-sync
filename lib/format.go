@@ -69,18 +69,27 @@ func UnmarshallBlockHeader(r *ProtobufReader) (*BlockHeader, error) {
 		}
 		switch tag {
 		case 1:
+			if wireType != 0 {
+				return nil, Errorf("BlockHeader.Version: unexpected wire type %d, want 0", wireType)
+			}
 			u, err := r.ReadUint32()
 			if err != nil {
 				return nil, err
 			}
 			o.Version = u
 		case 2:
+			if wireType != 0 {
+				return nil, Errorf("BlockHeader.Compression: unexpected wire type %d, want 0", wireType)
+			}
 			u, err := r.ReadUint32()
 			if err != nil {
 				return nil, err
 			}
 			o.Compression = Compression(u)
 		case 3:
+			if wireType != 2 {
+				return nil, Errorf("BlockHeader.Dek: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -90,6 +99,9 @@ func UnmarshallBlockHeader(r *ProtobufReader) (*BlockHeader, error) {
 			}
 			o.Dek = RawKey(b)
 		case 4:
+			if wireType != 0 {
+				return nil, Errorf("BlockHeader.EncryptedDataSize: unexpected wire type %d, want 0", wireType)
+			}
 			u, err := r.ReadUint32()
 			if err != nil {
 				return nil, err
@@ -150,12 +162,18 @@ func UnmarshallBlock(r *ProtobufReader) (*Block, error) {
 		}
 		switch tag {
 		case 1:
+			if wireType != 2 {
+				return nil, Errorf("Block.EncryptedHeader: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
 			}
 			o.EncryptedHeader = b
 		case 2:
+			if wireType != 2 {
+				return nil, Errorf("Block.EncryptedData: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -216,12 +234,18 @@ func UnmarshallTimestamp(r *ProtobufReader) (*Timestamp, error) {
 		}
 		switch tag {
 		case 1:
+			if wireType != 0 {
+				return nil, Errorf("Timestamp.Sec: unexpected wire type %d, want 0", wireType)
+			}
 			i, err := r.ReadVarint()
 			if err != nil {
 				return nil, err
 			}
 			o.Sec = i
 		case 2:
+			if wireType != 0 {
+				return nil, Errorf("Timestamp.Nsec: unexpected wire type %d, want 0", wireType)
+			}
 			u, err := r.ReadUint32()
 			if err != nil {
 				return nil, err
@@ -352,12 +376,18 @@ func UnmarshallPathMetadata(r *ProtobufReader) (*PathMetadata, error) {
 		}
 		switch tag {
 		case 1:
+			if wireType != 0 {
+				return nil, Errorf("PathMetadata.FileMode: unexpected wire type %d, want 0", wireType)
+			}
 			u, err := r.ReadUint32()
 			if err != nil {
 				return nil, err
 			}
 			o.FileMode = FileMode(u)
 		case 2:
+			if wireType != 2 {
+				return nil, Errorf("PathMetadata.Mtime: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -368,12 +398,18 @@ func UnmarshallPathMetadata(r *ProtobufReader) (*PathMetadata, error) {
 			}
 			o.Mtime = *v
 		case 3:
+			if wireType != 0 {
+				return nil, Errorf("PathMetadata.Size: unexpected wire type %d, want 0", wireType)
+			}
 			i, err := r.ReadVarint()
 			if err != nil {
 				return nil, err
 			}
 			o.Size = i
 		case 4:
+			if wireType != 2 {
+				return nil, Errorf("PathMetadata.FileHash: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -383,6 +419,9 @@ func UnmarshallPathMetadata(r *ProtobufReader) (*PathMetadata, error) {
 			}
 			o.FileHash = Sha256(b)
 		case 5:
+			if wireType != 2 {
+				return nil, Errorf("PathMetadata.BlockIds: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -392,6 +431,9 @@ func UnmarshallPathMetadata(r *ProtobufReader) (*PathMetadata, error) {
 			}
 			o.BlockIds = append(o.BlockIds, BlockId(b))
 		case 6:
+			if wireType != 2 {
+				return nil, Errorf("PathMetadata.SymLinkTarget: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -399,6 +441,9 @@ func UnmarshallPathMetadata(r *ProtobufReader) (*PathMetadata, error) {
 			v := string(b)
 			o.SymLinkTarget = &v
 		case 7:
+			if wireType != 0 {
+				return nil, Errorf("PathMetadata.Uid: unexpected wire type %d, want 0", wireType)
+			}
 			u, err := r.ReadUint32()
 			if err != nil {
 				return nil, err
@@ -406,6 +451,9 @@ func UnmarshallPathMetadata(r *ProtobufReader) (*PathMetadata, error) {
 			v := u
 			o.Uid = &v
 		case 8:
+			if wireType != 0 {
+				return nil, Errorf("PathMetadata.Gid: unexpected wire type %d, want 0", wireType)
+			}
 			u, err := r.ReadUint32()
 			if err != nil {
 				return nil, err
@@ -413,6 +461,9 @@ func UnmarshallPathMetadata(r *ProtobufReader) (*PathMetadata, error) {
 			v := u
 			o.Gid = &v
 		case 9:
+			if wireType != 2 {
+				return nil, Errorf("PathMetadata.Birthtime: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -491,12 +542,18 @@ func UnmarshallRevisionEntry(r *ProtobufReader) (*RevisionEntry, error) {
 		}
 		switch tag {
 		case 1:
+			if wireType != 0 {
+				return nil, Errorf("RevisionEntry.Kind: unexpected wire type %d, want 0", wireType)
+			}
 			u, err := r.ReadUint32()
 			if err != nil {
 				return nil, err
 			}
 			o.Kind = RevisionEntryKind(u)
 		case 2:
+			if wireType != 2 {
+				return nil, Errorf("RevisionEntry.Path: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -507,6 +564,9 @@ func UnmarshallRevisionEntry(r *ProtobufReader) (*RevisionEntry, error) {
 			}
 			o.Path = pv
 		case 3:
+			if wireType != 2 {
+				return nil, Errorf("RevisionEntry.Metadata: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -566,6 +626,9 @@ func UnmarshallRevisionEntryChunk(r *ProtobufReader) (*RevisionEntryChunk, error
 		}
 		switch tag {
 		case 1:
+			if wireType != 2 {
+				return nil, Errorf("RevisionEntryChunk.Entries: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -649,12 +712,18 @@ func UnmarshallRevision(r *ProtobufReader) (*Revision, error) {
 		}
 		switch tag {
 		case 1:
+			if wireType != 2 {
+				return nil, Errorf("Revision.Magic: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
 			}
 			o.Magic = string(b)
 		case 2:
+			if wireType != 2 {
+				return nil, Errorf("Revision.Timestamp: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -665,6 +734,9 @@ func UnmarshallRevision(r *ProtobufReader) (*Revision, error) {
 			}
 			o.Timestamp = *v
 		case 3:
+			if wireType != 2 {
+				return nil, Errorf("Revision.ParentRevisionId: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -674,6 +746,9 @@ func UnmarshallRevision(r *ProtobufReader) (*Revision, error) {
 			}
 			o.ParentRevisionId = RevisionId(b)
 		case 4:
+			if wireType != 2 {
+				return nil, Errorf("Revision.Message: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -681,6 +756,9 @@ func UnmarshallRevision(r *ProtobufReader) (*Revision, error) {
 			v := string(b)
 			o.Message = &v
 		case 5:
+			if wireType != 2 {
+				return nil, Errorf("Revision.Author: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -688,6 +766,9 @@ func UnmarshallRevision(r *ProtobufReader) (*Revision, error) {
 			v := string(b)
 			o.Author = &v
 		case 6:
+			if wireType != 2 {
+				return nil, Errorf("Revision.BlockIds: unexpected wire type %d, want 2", wireType)
+			}
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
