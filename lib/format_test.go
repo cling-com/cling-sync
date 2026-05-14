@@ -147,7 +147,7 @@ func TestFormatMarshall(t *testing.T) {
 	`)
 
 	check("RevisionEntryChunk", &RevisionEntryChunk{
-		Entries: []RevisionEntry{
+		Entries: []*RevisionEntry{
 			{
 				Kind: RevisionEntryKindUpdate,
 				Path: td.Path("foo/bar.txt"),

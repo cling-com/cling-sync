@@ -554,7 +554,7 @@ func UnmarshallRevisionEntry(r *ProtobufReader) (*RevisionEntry, error) {
 }
 
 type RevisionEntryChunk struct {
-	Entries []RevisionEntry
+	Entries []*RevisionEntry
 }
 
 func (o *RevisionEntryChunk) Validate() error {
@@ -599,7 +599,7 @@ func UnmarshallRevisionEntryChunk(r *ProtobufReader) (*RevisionEntryChunk, error
 			if err != nil {
 				return nil, err
 			}
-			o.Entries = append(o.Entries, *v)
+			o.Entries = append(o.Entries, v)
 		default:
 			if err := r.Skip(wireType); err != nil {
 				return nil, err

@@ -87,11 +87,7 @@ func OpenStagingCache(fs lib.FS, maxChunksInCache int) (*lib.TempCache[*StagingE
 type stagingEntryChunkMarshaller struct{}
 
 func (stagingEntryChunkMarshaller) MarshallAll(entries []*StagingEntry, w lib.ProtobufWriter) error {
-	chunk := StagingEntryChunk{Entries: make([]StagingEntry, len(entries))}
-	for i, e := range entries {
-		chunk.Entries[i] = *e
-	}
-	return chunk.Marshall(w)
+	return (&StagingEntryChunk{Entries: entries}).Marshall(w)
 }
 
 func (stagingEntryChunkMarshaller) UnmarshallAll(r *lib.ProtobufReader) ([]*StagingEntry, error) {
@@ -99,9 +95,5 @@ func (stagingEntryChunkMarshaller) UnmarshallAll(r *lib.ProtobufReader) ([]*Stag
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*StagingEntry, len(chunk.Entries))
-	for i := range chunk.Entries {
-		out[i] = &chunk.Entries[i]
-	}
-	return out, nil
+	return chunk.Entries, nil
 }

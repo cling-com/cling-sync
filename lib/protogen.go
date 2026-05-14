@@ -207,7 +207,7 @@ type field struct {
 	constraints constraints
 }
 
-func (f field) goTyp() string {
+func (g *generator) goTyp(f field) string {
 	typ := f.protoTyp
 	if typ == "bytes" {
 		typ = "[]byte"
@@ -219,7 +219,11 @@ func (f field) goTyp() string {
 		typ = f.constraints.inner_typ
 	}
 	if f.repeated {
-		typ = "[]" + typ
+		if g.isMessage(f.protoTyp) {
+			typ = "[]*" + typ
+		} else {
+			typ = "[]" + typ
+		}
 	}
 	if f.constraints.required != "" {
 		typ = "*" + typ
@@ -360,13 +364,11 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 			g.write("v, err := %s(%sNewProtobufReader(b))",
 				qualifiedFunc("Unmarshall", f.protoTyp), g.libPrefix)
 			g.write("if err != nil { return nil, err }")
-			// `v` is `*<T>`; the field is either `*<T>` (required:false) or
-			// `<T>` (value). Dereference when storing as value.
 			switch {
 			case f.constraints.required != "":
 				g.write("o.%s = v", f.name)
 			case f.repeated:
-				g.write("o.%[1]s = append(o.%[1]s, *v)", f.name)
+				g.write("o.%[1]s = append(o.%[1]s, v)", f.name)
 			default:
 				g.write("o.%s = *v", f.name)
 			}
@@ -459,7 +461,7 @@ func (g *generator) genMessage() {
 	// Write struct.
 	g.write("type %s struct {", structName)
 	for _, field := range fields {
-		g.write("%s %s", field.name, field.goTyp())
+		g.write("%s %s", field.name, g.goTyp(field))
 	}
 	g.write("}\n")
 

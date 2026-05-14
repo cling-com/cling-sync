@@ -111,7 +111,7 @@ func UnmarshallStagingEntry(r *lib.ProtobufReader) (*StagingEntry, error) {
 }
 
 type StagingEntryChunk struct {
-	Entries []StagingEntry
+	Entries []*StagingEntry
 }
 
 func (o *StagingEntryChunk) Validate() error {
@@ -156,7 +156,7 @@ func UnmarshallStagingEntryChunk(r *lib.ProtobufReader) (*StagingEntryChunk, err
 			if err != nil {
 				return nil, err
 			}
-			o.Entries = append(o.Entries, *v)
+			o.Entries = append(o.Entries, v)
 		default:
 			if err := r.Skip(wireType); err != nil {
 				return nil, err

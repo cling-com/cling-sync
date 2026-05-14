@@ -57,11 +57,7 @@ func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) *TempWriter[*RevisionEn
 type revisionEntryChunkMarshaller struct{}
 
 func (revisionEntryChunkMarshaller) MarshallAll(entries []*RevisionEntry, w ProtobufWriter) error {
-	chunk := RevisionEntryChunk{Entries: make([]RevisionEntry, len(entries))}
-	for i, e := range entries {
-		chunk.Entries[i] = *e
-	}
-	return chunk.Marshall(w)
+	return (&RevisionEntryChunk{Entries: entries}).Marshall(w)
 }
 
 func (revisionEntryChunkMarshaller) UnmarshallAll(r *ProtobufReader) ([]*RevisionEntry, error) {
@@ -69,11 +65,7 @@ func (revisionEntryChunkMarshaller) UnmarshallAll(r *ProtobufReader) ([]*Revisio
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*RevisionEntry, len(chunk.Entries))
-	for i := range chunk.Entries {
-		out[i] = &chunk.Entries[i]
-	}
-	return out, nil
+	return chunk.Entries, nil
 }
 
 func NewRevisionEntryTempCache(
