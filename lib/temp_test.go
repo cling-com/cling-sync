@@ -70,7 +70,7 @@ func TestTemp(t *testing.T) {
 
 		// First, try with a chunk size that *exactly* fits 3 entries.
 		entry := td.RevisionEntry("1.txt", RevisionEntryKindAdd)
-		sut := NewRevisionEntryTempWriter(fs, RevisionEntryDiskSize(entry)*3)
+		sut := NewRevisionEntryTempWriter(fs, marshallSize(entry)*3)
 		for i := range 3 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryKindAdd))
 			assert.NoError(err)
@@ -81,7 +81,7 @@ func TestTemp(t *testing.T) {
 		assert.Equal(1, sut.chunks, "chunk should have been rotated")
 
 		// Now, try with a chunk size that is on byte smaller than 3 entries.
-		sut = NewRevisionEntryTempWriter(fs, RevisionEntryDiskSize(entry)*3-1)
+		sut = NewRevisionEntryTempWriter(fs, marshallSize(entry)*3-1)
 		for i := range 2 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryKindAdd))
 			assert.NoError(err)
@@ -303,7 +303,7 @@ func TestTempCache(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(4, temp.Chunks())
 
-		loadedChunks := func(c *TempCache[RevisionEntry]) []int {
+		loadedChunks := func(c *TempCache[*RevisionEntry]) []int {
 			loaded := []int{}
 			for i, chunk := range c.cache {
 				if chunk != nil {
@@ -377,7 +377,7 @@ func BenchmarkRevisionTemp(b *testing.B) {
 	assert.NoError(err)
 }
 
-func readAllRevsisionTemp(t *testing.T, sut *Temp[RevisionEntry], pathFilter PathFilter) []*RevisionEntry {
+func readAllRevsisionTemp(t *testing.T, sut *Temp[*RevisionEntry], pathFilter PathFilter) []*RevisionEntry {
 	t.Helper()
 	assert := NewAssert(t)
 	merged := []*RevisionEntry{}

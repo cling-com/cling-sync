@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"bytes"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -9,40 +8,6 @@ import (
 
 func TestRevisionEntry(t *testing.T) {
 	t.Parallel()
-	t.Run("Marshal and Unmarshal", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		test := func(kind RevisionEntryKind) {
-			t.Helper()
-			var buf bytes.Buffer
-			sut := td.RevisionEntry("a.txt", kind)
-			err := MarshalRevisionEntry(sut, &buf)
-			assert.NoError(err)
-			read, err := UnmarshalRevisionEntry(&buf)
-			assert.NoError(err)
-			assert.Equal(sut, read)
-		}
-		test(RevisionEntryKindAdd)
-		test(RevisionEntryKindUpdate)
-		test(RevisionEntryKindDelete)
-	})
-
-	t.Run("RevisionEntryDiskSize is exact", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		var buf bytes.Buffer
-		sut := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
-		err := MarshalRevisionEntry(sut, &buf)
-		assert.NoError(err)
-		assert.Equal(buf.Len(), RevisionEntryDiskSize(sut))
-
-		sut = td.RevisionEntry("a.txt", RevisionEntryKindDelete)
-		buf.Reset()
-		err = MarshalRevisionEntry(sut, &buf)
-		assert.NoError(err)
-		assert.Equal(buf.Len(), RevisionEntryDiskSize(sut))
-	})
-
 	t.Run("RevisionPathCompare", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

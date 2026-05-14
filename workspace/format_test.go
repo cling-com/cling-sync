@@ -40,7 +40,7 @@ func TestFormatMarshall(t *testing.T) {
 				assert.NoError(out[1].Interface().(error))
 				return
 			}
-			assert.Equal(reflect.ValueOf(msg).Elem().Interface(), out[0].Interface())
+			assert.Equal(reflect.ValueOf(msg).Interface(), out[0].Interface())
 		})
 	}
 

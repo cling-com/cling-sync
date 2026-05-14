@@ -303,7 +303,7 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 	}
 	read := func(local, call string) {
 		g.write("%s, err := %s", local, call)
-		g.write("if err != nil { return %s{}, err }", structName)
+		g.write("if err != nil { return nil, err }")
 	}
 	readExpr := func(f field) string {
 		switch f.protoTyp {
@@ -335,8 +335,8 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 				if f.repeated {
 					label = "every entry in " + label
 				}
-				g.write("if len(b) != %d { return %s{}, %s(\"%s must have length %d\") }",
-					length, structName, g.libPrefix+"Errorf", label, length)
+				g.write("if len(b) != %d { return nil, %s(\"%s must have length %d\") }",
+					length, g.libPrefix+"Errorf", label, length)
 			}
 			if cast == "" {
 				return "b"
@@ -351,7 +351,7 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 	}
 	g.write("for !r.AtEnd() {")
 	g.write("tag, wireType, err := r.ReadTag()")
-	g.write("if err != nil { return %s{}, err }", structName)
+	g.write("if err != nil { return nil, err }")
 	g.write("switch tag {")
 	for _, f := range fields {
 		g.write("case %d:", f.tag)
@@ -359,8 +359,17 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 			read("b", "r.ReadBytes()")
 			g.write("v, err := %s(%sNewProtobufReader(b))",
 				qualifiedFunc("Unmarshall", f.protoTyp), g.libPrefix)
-			g.write("if err != nil { return %s{}, err }", structName)
-			assign(f, "v")
+			g.write("if err != nil { return nil, err }")
+			// `v` is `*<T>`; the field is either `*<T>` (required:false) or
+			// `<T>` (value). Dereference when storing as value.
+			switch {
+			case f.constraints.required != "":
+				g.write("o.%s = v", f.name)
+			case f.repeated:
+				g.write("o.%[1]s = append(o.%[1]s, *v)", f.name)
+			default:
+				g.write("o.%s = *v", f.name)
+			}
 			continue
 		}
 		expr := readExpr(f)
@@ -372,7 +381,7 @@ func (g *generator) genUnmarshall(structName string, fields []field) {
 		}
 	}
 	g.write("default:")
-	g.write("if err := r.Skip(wireType); err != nil { return %s{}, err }", structName)
+	g.write("if err := r.Skip(wireType); err != nil { return nil, err }")
 	g.write("}")
 	g.write("}")
 }
@@ -479,10 +488,10 @@ func (g *generator) genMessage() {
 	g.write("}\n")
 
 	// Write unmarshal function.
-	g.write("func Unmarshall%[1]s(r * %[2]sProtobufReader) (%[1]s, error) {", structName, g.libPrefix)
-	g.write("o := %s{}", structName)
+	g.write("func Unmarshall%[1]s(r * %[2]sProtobufReader) (*%[1]s, error) {", structName, g.libPrefix)
+	g.write("o := &%s{}", structName)
 	g.genUnmarshall(structName, fields)
-	g.write("if err := o.Validate(); err != nil { return %s{}, err }", structName)
+	g.write("if err := o.Validate(); err != nil { return nil, err }")
 	g.write("return o, nil")
 	g.write("}\n")
 }

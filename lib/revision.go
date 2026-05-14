@@ -1,9 +1,7 @@
 package lib
 
 import (
-	"bytes"
 	"encoding/hex"
-	"errors"
 	"io"
 )
 
@@ -72,25 +70,31 @@ func UnmarshalRevision(r io.Reader) (*Revision, error) {
 }
 
 // RevisionReader streams `RevisionEntry`s out of the blocks of a `Revision`.
+// Each block holds a `RevisionEntryChunk` — the same wire format as a
+// TempWriter chunk file.
 type RevisionReader struct {
-	revision   *Revision
-	repository *Repository
-	blockIndex int
-	current    io.Reader
+	revision     *Revision
+	repository   *Repository
+	blockIndex   int
+	current      []*RevisionEntry
+	currentIndex int
+	marshaller   revisionEntryChunkMarshaller
 }
 
 func NewRevisionReader(repository *Repository, revision *Revision) *RevisionReader {
 	return &RevisionReader{
-		revision:   revision,
-		repository: repository,
-		blockIndex: 0,
-		current:    nil,
+		revision:     revision,
+		repository:   repository,
+		blockIndex:   0,
+		current:      nil,
+		currentIndex: 0,
+		marshaller:   revisionEntryChunkMarshaller{},
 	}
 }
 
 // Return `io.EOF` if we are done.
 func (rr *RevisionReader) Read(buf BlockBuf) (*RevisionEntry, error) {
-	if rr.current == nil {
+	for rr.current == nil || rr.currentIndex == len(rr.current) {
 		if rr.blockIndex >= len(rr.revision.Blocks) {
 			return nil, io.EOF
 		}
@@ -99,17 +103,15 @@ func (rr *RevisionReader) Read(buf BlockBuf) (*RevisionEntry, error) {
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read block %s", blockId)
 		}
-		rr.blockIndex++
-		rr.current = bytes.NewBuffer(data)
-	}
-	re, err := UnmarshalRevisionEntry(rr.current)
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			// Go to next block.
-			rr.current = nil
-			return rr.Read(buf)
+		entries, err := rr.marshaller.UnmarshallAll(NewProtobufReader(data))
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to unmarshall block %s", blockId)
 		}
-		return nil, WrapErrorf(err, "failed to unmarshal revision entry")
+		rr.blockIndex++
+		rr.current = entries
+		rr.currentIndex = 0
 	}
-	return re, nil
+	entry := rr.current[rr.currentIndex]
+	rr.currentIndex++
+	return entry, nil
 }

@@ -10,7 +10,7 @@ import (
 	"slices"
 )
 
-func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS) (*Temp[RevisionEntry], error) {
+func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS) (*Temp[*RevisionEntry], error) {
 	// Build a list of all revisions.
 	revisions := make([]*Revision, 0)
 	r := revisionId
@@ -39,7 +39,7 @@ func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS
 func revisionNWayMerge(
 	repository *Repository,
 	revisions []*Revision,
-	tempWriter *TempWriter[RevisionEntry],
+	tempWriter *TempWriter[*RevisionEntry],
 	buf BlockBuf,
 ) error {
 	readers := make([]*RevisionReader, len(revisions))

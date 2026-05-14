@@ -14,6 +14,10 @@ message StagingEntry {
     uint64 inode = 5;
 }
 
+message StagingEntryChunk {
+    repeated StagingEntry entries = 1 [(lib.cling) = {max_length: 0xFFFFFF}];
+}
+
 // The following is only needed when used with `protoc` (which we don't use).
 
 option go_package = "github.com/flunderpero/cling-sync/workspace";

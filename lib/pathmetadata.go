@@ -1,8 +1,6 @@
 package lib
 
 import (
-	"encoding/binary"
-	"io"
 	"io/fs"
 	"time"
 )
@@ -109,41 +107,4 @@ func (p *PathMetadata) IsEqualRestorableAttributes(other PathMetadata, flags Res
 		return false
 	}
 	return true
-}
-
-// MarshalPathMetadata writes a length-prefixed, protobuf-encoded PathMetadata
-// to w. This io.Writer wrapper bridges callers that still operate on byte
-// streams; it will go away once those callers move to ProtobufWriter directly.
-func MarshalPathMetadata(p *PathMetadata, w io.Writer) error {
-	// +64 covers WriteMessage's 10-bytes-per-nesting-level scratch space.
-	// Goes away with the hand-written wrapper.
-	buf := make([]byte, p.MarshallSize()+64)
-	pw := NewProtobufWriter(buf)
-	if err := p.Marshall(pw); err != nil {
-		return WrapErrorf(err, "failed to marshal path metadata")
-	}
-	payload := pw.Bytes()
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(payload))); err != nil { //nolint:gosec
-		return WrapErrorf(err, "failed to write path metadata length")
-	}
-	if _, err := w.Write(payload); err != nil {
-		return WrapErrorf(err, "failed to write path metadata payload")
-	}
-	return nil
-}
-
-func UnmarshalPathMetadata(r io.Reader) (*PathMetadata, error) {
-	var l uint32
-	if err := binary.Read(r, binary.LittleEndian, &l); err != nil {
-		return nil, WrapErrorf(err, "failed to read path metadata length")
-	}
-	buf := make([]byte, l)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, WrapErrorf(err, "failed to read path metadata payload")
-	}
-	p, err := UnmarshallPathMetadata(NewProtobufReader(buf))
-	if err != nil {
-		return nil, err
-	}
-	return &p, nil
 }

@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -9,40 +8,6 @@ import (
 
 func TestStagingEntry(t *testing.T) {
 	t.Parallel()
-	t.Run("Marshal and Unmarshal", func(t *testing.T) {
-		t.Parallel()
-		assert := lib.NewAssert(t)
-		var buf bytes.Buffer
-		sut := StagingEntry{
-			RepoPath: td.Path("a.txt"),
-			Metadata: *td.PathMetadata(0o600),
-			Ctime:    lib.Timestamp{Sec: 123, Nsec: 456},
-			Size:     1234,
-			Inode:    789,
-		}
-		err := MarshalStagingEntry(&sut, &buf)
-		assert.NoError(err)
-		read, err := UnmarshalStagingEntry(&buf)
-		assert.NoError(err)
-		assert.Equal(sut, *read)
-	})
-
-	t.Run("StagingEntryDiskSize is exact", func(t *testing.T) {
-		t.Parallel()
-		assert := lib.NewAssert(t)
-		var buf bytes.Buffer
-		sut := StagingEntry{
-			RepoPath: td.Path("a.txt"),
-			Metadata: *td.PathMetadata(0o600),
-			Ctime:    lib.Timestamp{Sec: 1, Nsec: 2},
-			Size:     3,
-			Inode:    4,
-		}
-		err := MarshalStagingEntry(&sut, &buf)
-		assert.NoError(err)
-		assert.Equal(buf.Len(), StagingEntryDiskSize(&sut))
-	})
-
 	t.Run("TempWriter and TempCache round-trip", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)

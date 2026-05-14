@@ -17,11 +17,7 @@ func TestFormatMarshall(t *testing.T) {
 	err := exec.Command("protoc", "--version").Run()
 	assert.NoError(err)
 
-	type marshaller interface {
-		Marshall(ProtobufWriter) error
-		MarshallSize() int
-	}
-	check := func(name string, msg marshaller, unmarshall any, expected string) {
+	check := func(name string, msg Marshallable, unmarshall any, expected string) {
 		t.Run(name, func(t *testing.T) {
 			assert := NewAssert(t)
 			w := NewProtobufWriter(make([]byte, 4096))
@@ -38,7 +34,7 @@ func TestFormatMarshall(t *testing.T) {
 				assert.NoError(out[1].Interface().(error))
 				return
 			}
-			assert.Equal(reflect.ValueOf(msg).Elem().Interface(), out[0].Interface())
+			assert.Equal(reflect.ValueOf(msg).Interface(), out[0].Interface())
 		})
 	}
 
@@ -250,7 +246,7 @@ func TestFormatUnmarshallSkipUnknown(t *testing.T) {
 
 	ts, err := UnmarshallTimestamp(NewProtobufReader(w.Bytes()))
 	assert.NoError(err)
-	assert.Equal(Timestamp{Sec: 42, Nsec: 7}, ts)
+	assert.Equal(&Timestamp{Sec: 42, Nsec: 7}, ts)
 }
 
 func TestFormatValidate(t *testing.T) {

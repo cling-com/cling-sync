@@ -11,7 +11,7 @@ var ErrEmptyCommit = Errorf("empty commit")
 type Commit struct {
 	BaseRevision RevisionId
 	repository   *Repository
-	tempWriter   *TempWriter[RevisionEntry]
+	tempWriter   *TempWriter[*RevisionEntry]
 	tmpFS        FS
 	ensureDirs   []RevisionEntry
 }
@@ -37,7 +37,7 @@ func (c *Commit) Add(entry *RevisionEntry) error {
 // `NewEmptyDirPathMetadata` metadata.
 func (c *Commit) EnsureDirExists(
 	path Path,
-	snapshotCache *TempCache[RevisionEntry],
+	snapshotCache *TempCache[*RevisionEntry],
 	snapshotRevisionId RevisionId,
 ) error {
 	if path.IsEmpty() {
@@ -138,7 +138,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	return revisionId, nil
 }
 
-func (c *Commit) appendEnsureDirs(sorted *Temp[RevisionEntry]) (*Temp[RevisionEntry], error) {
+func (c *Commit) appendEnsureDirs(sorted *Temp[*RevisionEntry]) (*Temp[*RevisionEntry], error) {
 	// We have to rewrite the whole commit because we have to check whether
 	// the directories we want to add already exist.
 	tmpFS, err := c.tmpFS.MkSub("ensuredirs")

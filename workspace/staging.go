@@ -26,8 +26,8 @@ type StagingEntryMonitor interface {
 type Staging struct {
 	PathFilter lib.PathFilter
 	pathPrefix lib.Path
-	tempWriter *lib.TempWriter[StagingEntry]
-	temp       *lib.Temp[StagingEntry]
+	tempWriter *lib.TempWriter[*StagingEntry]
+	temp       *lib.Temp[*StagingEntry]
 	tmpFS      lib.FS
 }
 
@@ -121,7 +121,7 @@ func NewStaging( //nolint:funlen
 	return staging, nil
 }
 
-func (s *Staging) Finalize() (*lib.Temp[StagingEntry], error) {
+func (s *Staging) Finalize() (*lib.Temp[*StagingEntry], error) {
 	if s.temp == nil {
 		t, err := s.tempWriter.Finalize()
 		if err != nil {
@@ -140,9 +140,9 @@ func (s *Staging) Finalize() (*lib.Temp[StagingEntry], error) {
 //
 //	compareOwnership: If `true`, ownership of the file is compared.
 func (s *Staging) MergeWithSnapshot( //nolint:funlen
-	snapshot *lib.Temp[lib.RevisionEntry],
+	snapshot *lib.Temp[*lib.RevisionEntry],
 	restorableMetadataFlag lib.RestorableMetadataFlag,
-) (*lib.Temp[lib.RevisionEntry], error) {
+) (*lib.Temp[*lib.RevisionEntry], error) {
 	stgTemp, err := s.Finalize()
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
@@ -277,8 +277,8 @@ func (s *Staging) add(stagingEntry *StagingEntry) error {
 type StagingCache struct {
 	src          lib.FS
 	cacheTempDir string
-	cacheWriter  *lib.TempWriter[StagingEntry]
-	cache        *lib.TempCache[StagingEntry]
+	cacheWriter  *lib.TempWriter[*StagingEntry]
+	cache        *lib.TempCache[*StagingEntry]
 }
 
 func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
@@ -287,8 +287,8 @@ func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
 		return nil, lib.WrapErrorf(err, "failed to generate random string for cache temp dir")
 	}
 	cacheTempDir := filepath.Join(cacheDir, cacheTempDirPrefix+rand)
-	var cacheWriter *lib.TempWriter[StagingEntry]
-	var cache *lib.TempCache[StagingEntry]
+	var cacheWriter *lib.TempWriter[*StagingEntry]
+	var cache *lib.TempCache[*StagingEntry]
 	cacheTempFS, err := src.MkSub(cacheTempDir)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create cache tmp dir")

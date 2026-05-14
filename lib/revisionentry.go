@@ -1,9 +1,7 @@
 package lib
 
 import (
-	"encoding/binary"
 	"fmt"
-	"io"
 	"strings"
 )
 
@@ -41,65 +39,46 @@ func RevisionEntryPathFilter(pathFilter PathFilter) func(e *RevisionEntry) bool 
 	}
 }
 
-// RevisionEntryDiskSize returns the exact number of bytes that
-// MarshalRevisionEntry would emit for r (the 4-byte length prefix plus
-// the protobuf payload).
-func RevisionEntryDiskSize(r *RevisionEntry) int {
-	return 4 + r.MarshallSize()
-}
-
-// MarshalRevisionEntry writes a length-prefixed, protobuf-encoded
-// RevisionEntry to w. This io.Writer wrapper bridges TempWriter; it will
-// be removed when TempWriter is migrated to ProtobufWriter/Reader.
-func MarshalRevisionEntry(r *RevisionEntry, w io.Writer) error {
-	// +64 covers WriteMessage's 10-bytes-per-nesting-level scratch space.
-	// Goes away with the hand-written wrapper.
-	buf := make([]byte, r.MarshallSize()+64)
-	pw := NewProtobufWriter(buf)
-	if err := r.Marshall(pw); err != nil {
-		return WrapErrorf(err, "failed to marshal revision entry %s", r.Path)
-	}
-	payload := pw.Bytes()
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(payload))); err != nil { //nolint:gosec
-		return WrapErrorf(err, "failed to write revision entry length")
-	}
-	if _, err := w.Write(payload); err != nil {
-		return WrapErrorf(err, "failed to write revision entry payload")
-	}
-	return nil
-}
-
-func UnmarshalRevisionEntry(r io.Reader) (*RevisionEntry, error) {
-	var l uint32
-	if err := binary.Read(r, binary.LittleEndian, &l); err != nil {
-		return nil, WrapErrorf(err, "failed to read revision entry length")
-	}
-	buf := make([]byte, l)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, WrapErrorf(err, "failed to read revision entry payload")
-	}
-	e, err := UnmarshallRevisionEntry(NewProtobufReader(buf))
-	if err != nil {
-		return nil, err
-	}
-	return &e, nil
-}
-
 type RevisionEntryReader interface {
 	Read(buf BlockBuf) (*RevisionEntry, error)
 }
 
-func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) *TempWriter[RevisionEntry] {
-	return NewTempWriter(
+func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) *TempWriter[*RevisionEntry] {
+	return NewTempWriter[*RevisionEntry](
 		RevisionEntryPathCompare,
-		MarshalRevisionEntry,
-		RevisionEntryDiskSize,
-		UnmarshalRevisionEntry,
+		revisionEntryChunkMarshaller{},
 		fs,
 		maxChunkSize,
 	)
 }
 
-func NewRevisionEntryTempCache(temp *Temp[RevisionEntry], maxChunksInCache int) (*TempCache[RevisionEntry], error) {
+// revisionEntryChunkMarshaller serializes batches of `*RevisionEntry` via the
+// `RevisionEntryChunk` wire format.
+type revisionEntryChunkMarshaller struct{}
+
+func (revisionEntryChunkMarshaller) MarshallAll(entries []*RevisionEntry, w ProtobufWriter) error {
+	chunk := RevisionEntryChunk{Entries: make([]RevisionEntry, len(entries))}
+	for i, e := range entries {
+		chunk.Entries[i] = *e
+	}
+	return chunk.Marshall(w)
+}
+
+func (revisionEntryChunkMarshaller) UnmarshallAll(r *ProtobufReader) ([]*RevisionEntry, error) {
+	chunk, err := UnmarshallRevisionEntryChunk(r)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*RevisionEntry, len(chunk.Entries))
+	for i := range chunk.Entries {
+		out[i] = &chunk.Entries[i]
+	}
+	return out, nil
+}
+
+func NewRevisionEntryTempCache(
+	temp *Temp[*RevisionEntry],
+	maxChunksInCache int,
+) (*TempCache[*RevisionEntry], error) {
 	return NewTempCache(temp, RevisionEntryPathCompareString, maxChunksInCache)
 }

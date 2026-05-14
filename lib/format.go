@@ -79,55 +79,55 @@ func (o *BlockHeader1) MarshallSize() int {
 	return sw.Size()
 }
 
-func UnmarshallBlockHeader1(r *ProtobufReader) (BlockHeader1, error) {
-	o := BlockHeader1{}
+func UnmarshallBlockHeader1(r *ProtobufReader) (*BlockHeader1, error) {
+	o := &BlockHeader1{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
-			return BlockHeader1{}, err
+			return nil, err
 		}
 		switch tag {
 		case 1:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return BlockHeader1{}, err
+				return nil, err
 			}
 			o.Version = u
 		case 2:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return BlockHeader1{}, err
+				return nil, err
 			}
 			o.BlockKind = BlockKind(u)
 		case 3:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return BlockHeader1{}, err
+				return nil, err
 			}
 			o.Compression = Compression(u)
 		case 4:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return BlockHeader1{}, err
+				return nil, err
 			}
 			if len(b) != 32 {
-				return BlockHeader1{}, Errorf("BlockHeader1.Dek must have length 32")
+				return nil, Errorf("BlockHeader1.Dek must have length 32")
 			}
 			o.Dek = RawKey(b)
 		case 5:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return BlockHeader1{}, err
+				return nil, err
 			}
 			o.EncryptedDataSize = u
 		default:
 			if err := r.Skip(wireType); err != nil {
-				return BlockHeader1{}, err
+				return nil, err
 			}
 		}
 	}
 	if err := o.Validate(); err != nil {
-		return BlockHeader1{}, err
+		return nil, err
 	}
 	return o, nil
 }
@@ -166,34 +166,34 @@ func (o *Block1) MarshallSize() int {
 	return sw.Size()
 }
 
-func UnmarshallBlock1(r *ProtobufReader) (Block1, error) {
-	o := Block1{}
+func UnmarshallBlock1(r *ProtobufReader) (*Block1, error) {
+	o := &Block1{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
-			return Block1{}, err
+			return nil, err
 		}
 		switch tag {
 		case 1:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return Block1{}, err
+				return nil, err
 			}
 			o.EncryptedHeader = b
 		case 2:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return Block1{}, err
+				return nil, err
 			}
 			o.EncryptedData = b
 		default:
 			if err := r.Skip(wireType); err != nil {
-				return Block1{}, err
+				return nil, err
 			}
 		}
 	}
 	if err := o.Validate(); err != nil {
-		return Block1{}, err
+		return nil, err
 	}
 	return o, nil
 }
@@ -232,34 +232,34 @@ func (o *Timestamp) MarshallSize() int {
 	return sw.Size()
 }
 
-func UnmarshallTimestamp(r *ProtobufReader) (Timestamp, error) {
-	o := Timestamp{}
+func UnmarshallTimestamp(r *ProtobufReader) (*Timestamp, error) {
+	o := &Timestamp{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
-			return Timestamp{}, err
+			return nil, err
 		}
 		switch tag {
 		case 1:
 			i, err := r.ReadVarint()
 			if err != nil {
-				return Timestamp{}, err
+				return nil, err
 			}
 			o.Sec = i
 		case 2:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return Timestamp{}, err
+				return nil, err
 			}
 			o.Nsec = u
 		default:
 			if err := r.Skip(wireType); err != nil {
-				return Timestamp{}, err
+				return nil, err
 			}
 		}
 	}
 	if err := o.Validate(); err != nil {
-		return Timestamp{}, err
+		return nil, err
 	}
 	return o, nil
 }
@@ -368,93 +368,93 @@ func (o *PathMetadata) MarshallSize() int {
 	return sw.Size()
 }
 
-func UnmarshallPathMetadata(r *ProtobufReader) (PathMetadata, error) {
-	o := PathMetadata{}
+func UnmarshallPathMetadata(r *ProtobufReader) (*PathMetadata, error) {
+	o := &PathMetadata{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
-			return PathMetadata{}, err
+			return nil, err
 		}
 		switch tag {
 		case 1:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
 			o.FileMode = FileMode(u)
 		case 2:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
 			v, err := UnmarshallTimestamp(NewProtobufReader(b))
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
-			o.Mtime = v
+			o.Mtime = *v
 		case 3:
 			i, err := r.ReadVarint()
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
 			o.Size = i
 		case 4:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
 			if len(b) != 32 {
-				return PathMetadata{}, Errorf("PathMetadata.FileHash must have length 32")
+				return nil, Errorf("PathMetadata.FileHash must have length 32")
 			}
 			o.FileHash = Sha256(b)
 		case 5:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
 			if len(b) != 32 {
-				return PathMetadata{}, Errorf("every entry in PathMetadata.BlockIds must have length 32")
+				return nil, Errorf("every entry in PathMetadata.BlockIds must have length 32")
 			}
 			o.BlockIds = append(o.BlockIds, BlockId(b))
 		case 6:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
 			v := string(b)
 			o.SymLinkTarget = &v
 		case 7:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
 			v := u
 			o.Uid = &v
 		case 8:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
 			v := u
 			o.Gid = &v
 		case 9:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
 			v, err := UnmarshallTimestamp(NewProtobufReader(b))
 			if err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
-			o.Birthtime = &v
+			o.Birthtime = v
 		default:
 			if err := r.Skip(wireType); err != nil {
-				return PathMetadata{}, err
+				return nil, err
 			}
 		}
 	}
 	if err := o.Validate(); err != nil {
-		return PathMetadata{}, err
+		return nil, err
 	}
 	return o, nil
 }
@@ -507,48 +507,48 @@ func (o *RevisionEntry) MarshallSize() int {
 	return sw.Size()
 }
 
-func UnmarshallRevisionEntry(r *ProtobufReader) (RevisionEntry, error) {
-	o := RevisionEntry{}
+func UnmarshallRevisionEntry(r *ProtobufReader) (*RevisionEntry, error) {
+	o := &RevisionEntry{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
-			return RevisionEntry{}, err
+			return nil, err
 		}
 		switch tag {
 		case 1:
 			u, err := r.ReadUint32()
 			if err != nil {
-				return RevisionEntry{}, err
+				return nil, err
 			}
 			o.Kind = RevisionEntryKind(u)
 		case 2:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return RevisionEntry{}, err
+				return nil, err
 			}
 			pv, err := NewPath(string(b))
 			if err != nil {
-				return RevisionEntry{}, err
+				return nil, err
 			}
 			o.Path = pv
 		case 3:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return RevisionEntry{}, err
+				return nil, err
 			}
 			v, err := UnmarshallPathMetadata(NewProtobufReader(b))
 			if err != nil {
-				return RevisionEntry{}, err
+				return nil, err
 			}
-			o.Metadata = v
+			o.Metadata = *v
 		default:
 			if err := r.Skip(wireType); err != nil {
-				return RevisionEntry{}, err
+				return nil, err
 			}
 		}
 	}
 	if err := o.Validate(); err != nil {
-		return RevisionEntry{}, err
+		return nil, err
 	}
 	return o, nil
 }
@@ -582,32 +582,32 @@ func (o *RevisionEntryChunk) MarshallSize() int {
 	return sw.Size()
 }
 
-func UnmarshallRevisionEntryChunk(r *ProtobufReader) (RevisionEntryChunk, error) {
-	o := RevisionEntryChunk{}
+func UnmarshallRevisionEntryChunk(r *ProtobufReader) (*RevisionEntryChunk, error) {
+	o := &RevisionEntryChunk{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
-			return RevisionEntryChunk{}, err
+			return nil, err
 		}
 		switch tag {
 		case 1:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return RevisionEntryChunk{}, err
+				return nil, err
 			}
 			v, err := UnmarshallRevisionEntry(NewProtobufReader(b))
 			if err != nil {
-				return RevisionEntryChunk{}, err
+				return nil, err
 			}
-			o.Entries = append(o.Entries, v)
+			o.Entries = append(o.Entries, *v)
 		default:
 			if err := r.Skip(wireType); err != nil {
-				return RevisionEntryChunk{}, err
+				return nil, err
 			}
 		}
 	}
 	if err := o.Validate(); err != nil {
-		return RevisionEntryChunk{}, err
+		return nil, err
 	}
 	return o, nil
 }
@@ -661,64 +661,64 @@ func (o *Revision1) MarshallSize() int {
 	return sw.Size()
 }
 
-func UnmarshallRevision1(r *ProtobufReader) (Revision1, error) {
-	o := Revision1{}
+func UnmarshallRevision1(r *ProtobufReader) (*Revision1, error) {
+	o := &Revision1{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
-			return Revision1{}, err
+			return nil, err
 		}
 		switch tag {
 		case 1:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return Revision1{}, err
+				return nil, err
 			}
 			v, err := UnmarshallTimestamp(NewProtobufReader(b))
 			if err != nil {
-				return Revision1{}, err
+				return nil, err
 			}
-			o.Timestamp = v
+			o.Timestamp = *v
 		case 2:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return Revision1{}, err
+				return nil, err
 			}
 			if len(b) != 32 {
-				return Revision1{}, Errorf("Revision1.ParentRevisionId must have length 32")
+				return nil, Errorf("Revision1.ParentRevisionId must have length 32")
 			}
 			o.ParentRevisionId = RevisionId(b)
 		case 3:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return Revision1{}, err
+				return nil, err
 			}
 			v := string(b)
 			o.Message = &v
 		case 4:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return Revision1{}, err
+				return nil, err
 			}
 			v := string(b)
 			o.Author = &v
 		case 5:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return Revision1{}, err
+				return nil, err
 			}
 			if len(b) != 32 {
-				return Revision1{}, Errorf("every entry in Revision1.BlockIds must have length 32")
+				return nil, Errorf("every entry in Revision1.BlockIds must have length 32")
 			}
 			o.BlockIds = append(o.BlockIds, BlockId(b))
 		default:
 			if err := r.Skip(wireType); err != nil {
-				return Revision1{}, err
+				return nil, err
 			}
 		}
 	}
 	if err := o.Validate(); err != nil {
-		return Revision1{}, err
+		return nil, err
 	}
 	return o, nil
 }

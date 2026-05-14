@@ -2,9 +2,6 @@
 package lib
 
 import (
-	"bufio"
-	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -14,25 +11,48 @@ import (
 
 const DefaultTempChunkSize = 4 * 1024 * 1024
 
-type Temp[T any] struct {
-	fs        FS
-	chunks    int
-	unmarshal func(r io.Reader) (*T, error)
+// chunkMarshallingOverhead is the slack a chunk's marshal buffer needs on
+// top of the running budget (10 bytes per ProtobufBytesWriter.WriteMessage
+// nesting level — our deepest is RevisionEntryChunk → RevisionEntry →
+// PathMetadata → Timestamp, plus a little headroom).
+const chunkMarshallingOverhead = 64
+
+// Marshallable is the constraint for entry types stored by TempWriter/Temp.
+type Marshallable interface {
+	Marshall(ProtobufWriter) error
+	MarshallSize() int
 }
 
-func OpenTemp[T any](fs FS, unmarshal func(r io.Reader) (*T, error)) (*Temp[T], error) {
+// chunkMarshaller is the per-entry-type serializer for whole chunks. It is
+// intentionally unexported — implementations live in the package that owns
+// the entry type (e.g. `revisionEntryChunkMarshaller` in revisionentry.go,
+// `stagingEntryChunkMarshaller` in workspace) and are passed by value into
+// NewTempWriter / OpenTemp / NewRevisionReader. Go's structural interfaces
+// let external packages satisfy this without naming the type.
+type chunkMarshaller[T any] interface {
+	MarshallAll(entries []T, w ProtobufWriter) error
+	UnmarshallAll(r *ProtobufReader) ([]T, error)
+}
+
+type Temp[T Marshallable] struct {
+	fs         FS
+	chunks     int
+	marshaller chunkMarshaller[T]
+}
+
+func OpenTemp[T Marshallable](fs FS, marshaller chunkMarshaller[T]) (*Temp[T], error) {
 	chunks, err := fs.ReadDir(".")
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read temp files")
 	}
-	return &Temp[T]{fs, len(chunks), unmarshal}, nil
+	return &Temp[T]{fs, len(chunks), marshaller}, nil
 }
 
 func (t *Temp[T]) Chunks() int {
 	return t.chunks
 }
 
-func (t *Temp[T]) Reader(filter func(*T) bool) *TempReader[T] {
+func (t *Temp[T]) Reader(filter func(T) bool) *TempReader[T] {
 	return &TempReader[T]{
 		fs:           t.fs,
 		chunks:       t.chunks,
@@ -40,7 +60,7 @@ func (t *Temp[T]) Reader(filter func(*T) bool) *TempReader[T] {
 		current:      nil,
 		currentIndex: 0,
 		filter:       filter,
-		unmarshal:    t.unmarshal,
+		marshaller:   t.marshaller,
 	}
 }
 
@@ -51,25 +71,26 @@ func (t *Temp[T]) Remove() error {
 	return nil
 }
 
-type TempReader[T any] struct {
+type TempReader[T Marshallable] struct {
 	fs           FS
 	chunks       int
 	chunkIndex   int
-	current      []*T
+	current      []T
 	currentIndex int
-	filter       func(*T) bool
-	unmarshal    func(r io.Reader) (*T, error)
+	filter       func(T) bool
+	marshaller   chunkMarshaller[T]
 }
 
-func (tr *TempReader[T]) Read(buf BlockBuf) (*T, error) {
+func (tr *TempReader[T]) Read(buf BlockBuf) (T, error) {
+	var zero T
 	for {
 		if tr.current == nil || tr.currentIndex == len(tr.current) {
 			if tr.chunkIndex == tr.chunks {
-				return nil, io.EOF
+				return zero, io.EOF
 			}
 			entries, err := tr.ReadChunk(tr.chunkIndex)
 			if err != nil {
-				return nil, err
+				return zero, err
 			}
 			tr.current = entries
 			tr.currentIndex = 0
@@ -87,7 +108,7 @@ func (tr *TempReader[T]) Read(buf BlockBuf) (*T, error) {
 	}
 }
 
-func (tr *TempReader[T]) ReadChunk(i int) ([]*T, error) {
+func (tr *TempReader[T]) ReadChunk(i int) ([]T, error) {
 	if i < 0 || i >= tr.chunks {
 		return nil, Errorf("chunk index out of range")
 	}
@@ -95,25 +116,24 @@ func (tr *TempReader[T]) ReadChunk(i int) ([]*T, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := bytes.NewReader(data)
-	entries := []*T{}
-	for {
-		re, err := tr.unmarshal(r)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, WrapErrorf(err, "failed to unmarshal entry from chunk file %d", i)
-		}
-		if tr.filter != nil && !tr.filter(re) {
-			continue
-		}
-		entries = append(entries, re)
+	entries, err := tr.marshaller.UnmarshallAll(NewProtobufReader(data))
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to unmarshall chunk %d", i)
 	}
-	return entries, nil
+	if tr.filter == nil {
+		return entries, nil
+	}
+	filtered := entries[:0]
+	for _, e := range entries {
+		if tr.filter(e) {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered, nil
 }
 
-// This ignores the `filter` and reads all entries (obviously).
+// ReadChunkRaw returns the chunk's raw on-disk bytes (a marshalled chunk
+// message — same wire format as a repository revision block).
 func (tr *TempReader[T]) ReadChunkRaw(i int) ([]byte, error) {
 	if i < 0 || i >= tr.chunks {
 		return nil, Errorf("chunk index out of range")
@@ -129,35 +149,39 @@ func (tr *TempReader[T]) chunkFilename(index int) string {
 	return fmt.Sprintf("%d.sorted", index)
 }
 
-type TempWriter[T any] struct {
-	fs             FS
-	chunk          []*T
-	chunkSize      int
-	maxChunkSize   int
-	chunks         int
-	fileExt        string
-	compare        func(a, b *T) int
-	marshal        func(t *T, w io.Writer) error
-	marshalledSize func(t *T) int
-	unmarshal      func(r io.Reader) (*T, error)
+// marshallSize returns the size of the marshalled representation of `t`
+// including their protobuf overhead when used in a slice (tag + len).
+func marshallSize[T Marshallable](t T) int {
+	n := t.MarshallSize()
+	return TagLen(1, 2) + VarintLen(int64(n)) + n
+}
+
+type TempWriter[T Marshallable] struct {
+	fs           FS
+	chunk        []T
+	chunkSize    int
+	maxChunkSize int
+	chunks       int
+	fileExt      string
+	compare      func(a, b T) int
+	marshaller   chunkMarshaller[T]
 }
 
 // Create a new TempWriter.
 // Parameters:
 // - compare: A function that compares two entries. Two entries must never be equal.
-func NewTempWriter[T any](
-	compare func(a, b *T) int,
-	marshal func(t *T, w io.Writer) error,
-	marshalledSize func(t *T) int,
-	unmarshal func(r io.Reader) (*T, error),
+// - marshaller: Serializes a sorted batch of entries to a chunk file.
+func NewTempWriter[T Marshallable](
+	compare func(a, b T) int,
+	marshaller chunkMarshaller[T],
 	fs FS,
 	maxChunkSize int,
 ) *TempWriter[T] {
-	return &TempWriter[T]{fs, nil, 0, maxChunkSize, 0, "raw", compare, marshal, marshalledSize, unmarshal}
+	return &TempWriter[T]{fs, nil, 0, maxChunkSize, 0, "raw", compare, marshaller}
 }
 
-func (tw *TempWriter[T]) Add(t *T) error {
-	size := tw.marshalledSize(t)
+func (tw *TempWriter[T]) Add(t T) error {
+	size := marshallSize(t)
 	if tw.chunkSize > 0 && tw.chunkSize+size > tw.maxChunkSize {
 		if err := tw.rotateChunk(); err != nil {
 			return err
@@ -169,113 +193,87 @@ func (tw *TempWriter[T]) Add(t *T) error {
 }
 
 // Rotate the current chunk and then sort all chunks and return the merged result.
-func (tw *TempWriter[T]) Finalize() (*Temp[T], error) { //nolint:funlen
+func (tw *TempWriter[T]) Finalize() (*Temp[T], error) {
 	if err := tw.rotateChunk(); err != nil {
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
-	// Create a new RevisionTempWriter to store the sorted chunks.
-	sorted := NewTempWriter(tw.compare, tw.marshal, tw.marshalledSize, tw.unmarshal, tw.fs, tw.maxChunkSize)
+	sorted := NewTempWriter(tw.compare, tw.marshaller, tw.fs, tw.maxChunkSize)
 	sorted.fileExt = "sorted"
-	// Open all chunks with a buffered reader.
-	readerFiles := make([]io.ReadCloser, tw.chunks)
-	readers := make([]io.Reader, tw.chunks)
+	// Load each input chunk fully (chunks are bounded by maxChunkSize).
+	chunks := make([][]T, tw.chunks)
 	for i := range tw.chunks {
-		f, err := tw.fs.OpenRead(tw.chunkFilename(i))
+		data, err := ReadFile(tw.fs, tw.chunkFilename(i))
 		if err != nil {
-			return nil, WrapErrorf(err, "failed to open chunk file")
+			return nil, WrapErrorf(err, "failed to read chunk file %d", i)
 		}
-		defer f.Close() //nolint:errcheck
-		readerFiles[i] = f
-		readers[i] = bufio.NewReader(f)
-	}
-	type entry struct {
-		value      *T
-		chunkIndex int
-	}
-	// First, read the first entry of each file.
-	entries := make([]*entry, 0, len(readers))
-	for i, r := range readers {
-		// todo(perf): We should not need to unmarshal and the marshal all entries.
-		value, err := tw.unmarshal(r)
+		entries, err := tw.marshaller.UnmarshallAll(NewProtobufReader(data))
 		if err != nil {
-			if errors.Is(err, io.EOF) {
+			return nil, WrapErrorf(err, "failed to unmarshall chunk file %d", i)
+		}
+		chunks[i] = entries
+	}
+	// k-way merge.
+	cursors := make([]int, tw.chunks)
+	for {
+		minChunk := -1
+		for i, idx := range cursors {
+			if idx >= len(chunks[i]) {
 				continue
 			}
-			return nil, WrapErrorf(err, "failed to read from chunk %d", i)
-		}
-		entries = append(entries, &entry{value, i})
-	}
-	for len(entries) > 0 {
-		// Find the "smallest" entry.
-		minIndex := 0
-		for i := 1; i < len(entries); i++ {
-			c := tw.compare(entries[i].value, entries[minIndex].value)
+			if minChunk == -1 {
+				minChunk = i
+				continue
+			}
+			c := tw.compare(chunks[i][idx], chunks[minChunk][cursors[minChunk]])
 			if c == 0 {
-				return nil, Errorf("duplicate entry: %s", entries[i].value)
+				return nil, Errorf("duplicate entry: %v", chunks[i][idx])
 			}
 			if c < 0 {
-				minIndex = i
+				minChunk = i
 			}
 		}
-		// Write the "smallest" entry..
-		if err := sorted.Add(entries[minIndex].value); err != nil {
+		if minChunk == -1 {
+			break
+		}
+		if err := sorted.Add(chunks[minChunk][cursors[minChunk]]); err != nil {
 			return nil, WrapErrorf(err, "failed to write to target file")
 		}
-		// Read next entry from the same chunk.
-		chunkIdx := entries[minIndex].chunkIndex
-		value, err := tw.unmarshal(readers[chunkIdx])
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				entries = slices.Delete(entries, minIndex, minIndex+1)
-				continue
-			}
-			return nil, WrapErrorf(err, "failed to read next from chunk %d", chunkIdx)
-		}
-		entries[minIndex] = &entry{value, chunkIdx}
+		cursors[minChunk]++
 	}
 	if err := sorted.rotateChunk(); err != nil {
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
-	// Delete all chunk files.
+	// Delete all input chunk files.
 	for i := range tw.chunks {
-		if err := readerFiles[i].Close(); err != nil {
-			return nil, WrapErrorf(err, "failed to close chunk file")
-		}
 		if err := tw.fs.Remove(tw.chunkFilename(i)); err != nil {
 			return nil, WrapErrorf(err, "failed to remove chunk file")
 		}
 	}
-	return &Temp[T]{sorted.fs, sorted.chunks, sorted.unmarshal}, nil
+	return &Temp[T]{sorted.fs, sorted.chunks, sorted.marshaller}, nil
 }
 
-// Sort the current chunk, encrypt it, and write it to disk.
+// Sort the current chunk and serialize it as a typed chunk message.
 func (tw *TempWriter[T]) rotateChunk() error {
 	if len(tw.chunk) == 0 {
 		return nil
 	}
-	var err error
-	slices.SortFunc(tw.chunk, func(a, b *T) int {
+	var sortErr error
+	slices.SortFunc(tw.chunk, func(a, b T) int {
 		c := tw.compare(a, b)
 		if c == 0 {
-			err = Errorf("duplicate entry: %s", a)
+			sortErr = Errorf("duplicate entry: %v", a)
 		}
 		return c
 	})
-	if err != nil {
-		return err
+	if sortErr != nil {
+		return sortErr
 	}
-	file, err := tw.fs.OpenWrite(tw.chunkFilename(tw.chunks))
-	if err != nil {
-		return WrapErrorf(err, "failed to open chunk file")
+	buf := make([]byte, tw.chunkSize+chunkMarshallingOverhead)
+	pw := NewProtobufWriter(buf)
+	if err := tw.marshaller.MarshallAll(tw.chunk, pw); err != nil {
+		return WrapErrorf(err, "failed to marshall chunk")
 	}
-	defer file.Close() //nolint:errcheck
-	buf := bytes.NewBuffer(nil)
-	for _, entry := range tw.chunk {
-		if err := tw.marshal(entry, buf); err != nil {
-			return WrapErrorf(err, "failed to write to chunk file")
-		}
-	}
-	if err := WriteFile(tw.fs, tw.chunkFilename(tw.chunks), buf.Bytes()); err != nil {
+	if err := WriteFile(tw.fs, tw.chunkFilename(tw.chunks), pw.Bytes()); err != nil {
 		return WrapErrorf(err, "failed to write chunk file")
 	}
 	tw.chunk = nil
@@ -288,34 +286,36 @@ func (tw *TempWriter[T]) chunkFilename(index int) string {
 	return fmt.Sprintf("%d.%s", index, tw.fileExt)
 }
 
-type TempCache[T any] struct {
+type TempCache[T Marshallable] struct {
 	Source           *Temp[T]
 	maxChunksInCache int
 	reader           *TempReader[T]
-	cache            []map[string]*T
+	cache            []map[string]T
 	firstEntries     []string
 	lastAccessed     []int64
 	chunksInCache    int
-	cacheKey         func(*T) string
+	cacheKey         func(T) string
 	CacheMisses      int
 }
 
-func NewTempCache[T any](temp *Temp[T], cacheKey func(*T) string, maxChunksInCache int) (*TempCache[T], error) {
+func NewTempCache[T Marshallable](
+	temp *Temp[T],
+	cacheKey func(T) string,
+	maxChunksInCache int,
+) (*TempCache[T], error) {
 	firstEntries := make([]string, temp.Chunks())
-	cache := make([]map[string]*T, temp.Chunks())
+	cache := make([]map[string]T, temp.Chunks())
 	chunksInCache := 0
 	reader := temp.Reader(nil)
 	for i := range temp.Chunks() {
-		f, err := reader.fs.OpenRead(reader.chunkFilename(i))
-		if err != nil {
-			return nil, WrapErrorf(err, "failed to open chunk file %d", i)
-		}
-		defer f.Close() //nolint:errcheck
-		first, err := temp.unmarshal(f)
+		entries, err := reader.ReadChunk(i)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read chunk file %d", i)
 		}
-		firstEntries[i] = cacheKey(first)
+		if len(entries) == 0 {
+			return nil, Errorf("empty chunk file %d", i)
+		}
+		firstEntries[i] = cacheKey(entries[0])
 	}
 	return &TempCache[T]{
 		Source:           temp,
@@ -330,9 +330,10 @@ func NewTempCache[T any](temp *Temp[T], cacheKey func(*T) string, maxChunksInCac
 	}, nil
 }
 
-func (tc *TempCache[T]) Get(key string) (*T, bool, error) {
+func (tc *TempCache[T]) Get(key string) (T, bool, error) {
+	var zero T
 	if tc == nil {
-		return nil, false, nil
+		return zero, false, nil
 	}
 	// Find the chunk that contains the entry.
 	chunkIndex := tc.Source.Chunks() - 1
@@ -340,14 +341,14 @@ func (tc *TempCache[T]) Get(key string) (*T, bool, error) {
 		c := strings.Compare(key, firstEntry)
 		if c < 0 {
 			if i == 0 {
-				return nil, false, nil
+				return zero, false, nil
 			}
 			chunkIndex = i - 1
 			break
 		}
 	}
 	if chunkIndex < 0 {
-		return nil, false, nil
+		return zero, false, nil
 	}
 	cache := tc.cache[chunkIndex]
 	if cache == nil {
@@ -366,12 +367,12 @@ func (tc *TempCache[T]) Get(key string) (*T, bool, error) {
 		} else {
 			tc.chunksInCache++
 		}
-		cache = make(map[string]*T)
+		cache = make(map[string]T)
 		tc.cache[chunkIndex] = cache
 		tc.CacheMisses++
 		entries, err := tc.reader.ReadChunk(chunkIndex)
 		if err != nil {
-			return nil, false, WrapErrorf(err, "failed to read chunk %d", chunkIndex)
+			return zero, false, WrapErrorf(err, "failed to read chunk %d", chunkIndex)
 		}
 		for _, entry := range entries {
 			cache[tc.cacheKey(entry)] = entry

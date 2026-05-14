@@ -41,7 +41,7 @@ func TestCheckHealth(t *testing.T) {
 		assert.NoError(err)
 		assert.Calls([]MockCall{
 			NewMockCall("OnRevisionStart", rev1Id),
-			NewMockCall("OnBlockOk", assert.Any, false, 371),
+			NewMockCall("OnBlockOk", assert.Any, false, 366),
 			NewMockCall("OnRevisionEntry", e1),
 			NewMockCall("OnRevisionEntry", e2),
 			NewMockCall("OnRevisionEntry", e3),
@@ -53,7 +53,7 @@ func TestCheckHealth(t *testing.T) {
 		assert.NoError(err)
 		assert.Calls([]MockCall{
 			NewMockCall("OnRevisionStart", rev1Id),
-			NewMockCall("OnBlockOk", assert.Any, false, 371),
+			NewMockCall("OnBlockOk", assert.Any, false, 366),
 			NewMockCall("OnRevisionEntry", e1),
 			NewMockCall("OnBlockOk", blockId1, false, 3),
 			NewMockCall("OnRevisionEntry", e2),

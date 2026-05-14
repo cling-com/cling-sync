@@ -1,8 +1,6 @@
 package workspace
 
 import (
-	"encoding/binary"
-	"io"
 	"io/fs"
 	"strings"
 
@@ -43,50 +41,6 @@ func (e *StagingEntry) HasChanged(other *StagingEntry) bool {
 	return e.Ctime != other.Ctime || e.Inode != other.Inode || e.Size != other.Size
 }
 
-// StagingEntryDiskSize returns the exact number of bytes that
-// MarshalStagingEntry would emit (the 4-byte length prefix plus the
-// protobuf payload).
-func StagingEntryDiskSize(e *StagingEntry) int {
-	return 4 + e.MarshallSize()
-}
-
-// MarshalStagingEntry writes a length-prefixed, protobuf-encoded
-// StagingEntry to w. This io.Writer wrapper bridges TempWriter; it will
-// be removed when TempWriter is migrated to ProtobufWriter/Reader.
-func MarshalStagingEntry(e *StagingEntry, w io.Writer) error {
-	// +64 covers WriteMessage's 10-bytes-per-nesting-level scratch space.
-	// Goes away with the hand-written wrapper.
-	buf := make([]byte, e.MarshallSize()+64)
-	pw := lib.NewProtobufWriter(buf)
-	if err := e.Marshall(pw); err != nil {
-		return lib.WrapErrorf(err, "failed to marshal staging entry %s", e.RepoPath)
-	}
-	payload := pw.Bytes()
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(payload))); err != nil { //nolint:gosec
-		return lib.WrapErrorf(err, "failed to write staging entry length")
-	}
-	if _, err := w.Write(payload); err != nil {
-		return lib.WrapErrorf(err, "failed to write staging entry payload")
-	}
-	return nil
-}
-
-func UnmarshalStagingEntry(r io.Reader) (*StagingEntry, error) {
-	var l uint32
-	if err := binary.Read(r, binary.LittleEndian, &l); err != nil {
-		return nil, lib.WrapErrorf(err, "failed to read staging entry length")
-	}
-	buf := make([]byte, l)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, lib.WrapErrorf(err, "failed to read staging entry payload")
-	}
-	e, err := UnmarshallStagingEntry(lib.NewProtobufReader(buf))
-	if err != nil {
-		return nil, err
-	}
-	return &e, nil
-}
-
 func StagingEntryPathFilter(pathFilter lib.PathFilter) func(e *StagingEntry) bool {
 	if pathFilter == nil {
 		return nil
@@ -107,19 +61,17 @@ func StagingCacheKey(stagingEntry *StagingEntry) string {
 	return lib.PathCompareString(stagingEntry.RepoPath, stagingEntry.Metadata.FileMode.IsDir())
 }
 
-func NewStagingCacheWriter(fs lib.FS, maxChunkSize int) *lib.TempWriter[StagingEntry] {
-	return lib.NewTempWriter(
+func NewStagingCacheWriter(fs lib.FS, maxChunkSize int) *lib.TempWriter[*StagingEntry] {
+	return lib.NewTempWriter[*StagingEntry](
 		StagingEntryPathCompare,
-		MarshalStagingEntry,
-		StagingEntryDiskSize,
-		UnmarshalStagingEntry,
+		stagingEntryChunkMarshaller{},
 		fs,
 		maxChunkSize,
 	)
 }
 
-func OpenStagingCache(fs lib.FS, maxChunksInCache int) (*lib.TempCache[StagingEntry], error) {
-	temp, err := lib.OpenTemp(fs, UnmarshalStagingEntry)
+func OpenStagingCache(fs lib.FS, maxChunksInCache int) (*lib.TempCache[*StagingEntry], error) {
+	temp, err := lib.OpenTemp[*StagingEntry](fs, stagingEntryChunkMarshaller{})
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open temp")
 	}
@@ -128,4 +80,28 @@ func OpenStagingCache(fs lib.FS, maxChunksInCache int) (*lib.TempCache[StagingEn
 		return nil, lib.WrapErrorf(err, "failed to create new TempCache")
 	}
 	return cache, nil
+}
+
+// stagingEntryChunkMarshaller serializes batches of `*StagingEntry` via the
+// `StagingEntryChunk` wire format.
+type stagingEntryChunkMarshaller struct{}
+
+func (stagingEntryChunkMarshaller) MarshallAll(entries []*StagingEntry, w lib.ProtobufWriter) error {
+	chunk := StagingEntryChunk{Entries: make([]StagingEntry, len(entries))}
+	for i, e := range entries {
+		chunk.Entries[i] = *e
+	}
+	return chunk.Marshall(w)
+}
+
+func (stagingEntryChunkMarshaller) UnmarshallAll(r *lib.ProtobufReader) ([]*StagingEntry, error) {
+	chunk, err := UnmarshallStagingEntryChunk(r)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*StagingEntry, len(chunk.Entries))
+	for i := range chunk.Entries {
+		out[i] = &chunk.Entries[i]
+	}
+	return out, nil
 }

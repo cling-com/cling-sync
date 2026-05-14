@@ -500,7 +500,7 @@ func (r *TestRepository) RevisionInfos(revisionId RevisionId) []TestRevisionEntr
 	return r.RevisionEntryReaderInfos(NewRevisionReader(r.Repository, &revision))
 }
 
-func (r *TestRepository) RevisionTempInfos(temp *Temp[RevisionEntry]) []TestRevisionEntryInfo {
+func (r *TestRepository) RevisionTempInfos(temp *Temp[*RevisionEntry]) []TestRevisionEntryInfo {
 	r.t.Helper()
 	return r.RevisionEntryReaderInfos(temp.Reader(nil))
 }

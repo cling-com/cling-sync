@@ -48,64 +48,123 @@ func (o *StagingEntry) MarshallSize() int {
 	return sw.Size()
 }
 
-func UnmarshallStagingEntry(r *lib.ProtobufReader) (StagingEntry, error) {
-	o := StagingEntry{}
+func UnmarshallStagingEntry(r *lib.ProtobufReader) (*StagingEntry, error) {
+	o := &StagingEntry{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
-			return StagingEntry{}, err
+			return nil, err
 		}
 		switch tag {
 		case 1:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return StagingEntry{}, err
+				return nil, err
 			}
 			pv, err := lib.NewPath(string(b))
 			if err != nil {
-				return StagingEntry{}, err
+				return nil, err
 			}
 			o.RepoPath = pv
 		case 2:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return StagingEntry{}, err
+				return nil, err
 			}
 			v, err := lib.UnmarshallPathMetadata(lib.NewProtobufReader(b))
 			if err != nil {
-				return StagingEntry{}, err
+				return nil, err
 			}
-			o.Metadata = v
+			o.Metadata = *v
 		case 3:
 			b, err := r.ReadBytes()
 			if err != nil {
-				return StagingEntry{}, err
+				return nil, err
 			}
 			v, err := lib.UnmarshallTimestamp(lib.NewProtobufReader(b))
 			if err != nil {
-				return StagingEntry{}, err
+				return nil, err
 			}
-			o.Ctime = v
+			o.Ctime = *v
 		case 4:
 			i, err := r.ReadVarint()
 			if err != nil {
-				return StagingEntry{}, err
+				return nil, err
 			}
 			o.Size = i
 		case 5:
 			u, err := r.ReadUint64()
 			if err != nil {
-				return StagingEntry{}, err
+				return nil, err
 			}
 			o.Inode = u
 		default:
 			if err := r.Skip(wireType); err != nil {
-				return StagingEntry{}, err
+				return nil, err
 			}
 		}
 	}
 	if err := o.Validate(); err != nil {
-		return StagingEntry{}, err
+		return nil, err
+	}
+	return o, nil
+}
+
+type StagingEntryChunk struct {
+	Entries []StagingEntry
+}
+
+func (o *StagingEntryChunk) Validate() error {
+	if len(o.Entries) > 16777215 {
+		return lib.Errorf("StagingEntryChunk.Entries must not be longer than 16777215")
+	}
+	return nil
+}
+
+func (o *StagingEntryChunk) Marshall(w lib.ProtobufWriter) error {
+	if err := o.Validate(); err != nil {
+		return err
+	}
+	for _, v := range o.Entries {
+		if err := w.WriteMessage(1, v.Marshall); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *StagingEntryChunk) MarshallSize() int {
+	sw := lib.NewProtobufSizeWriter()
+	_ = o.Marshall(sw)
+	return sw.Size()
+}
+
+func UnmarshallStagingEntryChunk(r *lib.ProtobufReader) (*StagingEntryChunk, error) {
+	o := &StagingEntryChunk{}
+	for !r.AtEnd() {
+		tag, wireType, err := r.ReadTag()
+		if err != nil {
+			return nil, err
+		}
+		switch tag {
+		case 1:
+			b, err := r.ReadBytes()
+			if err != nil {
+				return nil, err
+			}
+			v, err := UnmarshallStagingEntry(lib.NewProtobufReader(b))
+			if err != nil {
+				return nil, err
+			}
+			o.Entries = append(o.Entries, *v)
+		default:
+			if err := r.Skip(wireType); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := o.Validate(); err != nil {
+		return nil, err
 	}
 	return o, nil
 }

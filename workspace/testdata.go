@@ -109,7 +109,7 @@ func (wstd WorkspaceTestData) ResetOptions(revisionId lib.RevisionId, force bool
 	}
 }
 
-func (wstd WorkspaceTestData) StagingEntryInfos(temp *lib.Temp[StagingEntry]) []TestStagingEntryInfo {
+func (wstd WorkspaceTestData) StagingEntryInfos(temp *lib.Temp[*StagingEntry]) []TestStagingEntryInfo {
 	infos := []TestStagingEntryInfo{}
 	r := temp.Reader(nil)
 	buf := lib.BlockBuf{}

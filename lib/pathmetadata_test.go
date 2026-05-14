@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"bytes"
 	"reflect"
 	"slices"
 	"testing"
@@ -10,18 +9,6 @@ import (
 
 func TestPathMetadata(t *testing.T) {
 	t.Parallel()
-	t.Run("Marshal and Unmarshal", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		var buf bytes.Buffer
-		sut := TestData{}.PathMetadata(0)
-		err := MarshalPathMetadata(sut, &buf)
-		assert.NoError(err)
-		read, err := UnmarshalPathMetadata(&buf)
-		assert.NoError(err)
-		assert.Equal(*sut, *read)
-	})
-
 	t.Run("IsEqualRestorableAttributes", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
