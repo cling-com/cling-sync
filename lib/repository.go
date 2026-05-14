@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"bytes"
 	"context"
 	"crypto/cipher"
 	"encoding/hex"
@@ -14,12 +13,12 @@ import (
 )
 
 const (
-	// Unencrypted header size.
-	RawBlockHeaderSize = 46
-	// Encrypted and padded header size.
-	BlockHeaderSize            = 86
-	MaxEncryptedBlockDataSize  = MaxBlockSize - BlockHeaderSize
-	MaxBlockDataSize           = MaxEncryptedBlockDataSize - TotalCipherOverhead
+	// MaxBlockDataSize is the largest plaintext payload a block can carry.
+	// It is chosen so that Padmé padding is a no-op at the maximum (i.e.
+	// `Padme(MaxBlockDataSize) == MaxBlockDataSize`) and leaves enough room
+	// for the encrypted header and the protobuf envelope to fit within
+	// `MaxBlockSize`.
+	MaxBlockDataSize           = MaxBlockSize - 128*1024
 	UpdateHeadRevisionLockName = "head"
 )
 
@@ -37,18 +36,6 @@ So please back this file up.
 Copy it to a secure place (a password manager might be a good choice) or 
 even print it out and keep it somewhere safe.
 `, "\n ")
-
-const (
-	BlockFlagDeflate uint64 = 1
-)
-
-type BlockHeader struct {
-	Flags             uint64 // See `BlockFlag` constants.
-	DEK               RawKey
-	EncryptedDataSize uint32
-}
-
-type RawBlockHeader [RawBlockHeaderSize]byte
 
 const (
 	EncryptionVersion uint16 = 1
@@ -268,7 +255,7 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 	}
 
 	// Compress data if possible.
-	var header BlockHeader
+	compression := CompressionNone
 	if IsCompressible(data) {
 		compressed, err := Compress(data)
 		if err != nil {
@@ -276,14 +263,14 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 		}
 		compressionRatio := float64(len(compressed)) / float64(len(data))
 		if compressionRatio < 0.95 {
-			header.Flags |= BlockFlagDeflate
+			compression = CompressionDeflate
 			data = compressed
 		}
 	}
 
 	// Add padding.
 	encryptedDataSize := len(data)
-	paddedSize := min(MaxBlockDataSize, Padme(uint64(encryptedDataSize)))
+	paddedSize := min(uint64(MaxBlockDataSize), Padme(uint64(encryptedDataSize)))
 	data = append(data, make([]byte, paddedSize-uint64(encryptedDataSize))...)
 
 	// Encrypt data.
@@ -299,26 +286,38 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 			blockId,
 		)
 	}
-	blockData := make([]byte, len(data)+TotalCipherOverhead+BlockHeaderSize)
-	_, err = Encrypt(data, dekCypher, blockId[:], blockData[BlockHeaderSize:])
-	if err != nil {
+	encryptedData := make([]byte, len(data)+TotalCipherOverhead)
+	if _, err := Encrypt(data, dekCypher, blockId[:], encryptedData); err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to encrypt data with DEK for block %s", blockId)
 	}
 
-	// Encrypt header.
-	header.DEK = dek
-	header.EncryptedDataSize = uint32(encryptedDataSize) //nolint:gosec
-	headerData := RawBlockHeader{}
-	if err := MarshalBlockHeader(&header, &headerData); err != nil {
+	// Marshal and encrypt the header.
+	header := BlockHeader{
+		Version:           uint32(StorageVersion),
+		Compression:       compression,
+		Dek:               dek,
+		EncryptedDataSize: uint32(encryptedDataSize), //nolint:gosec
+	}
+	headerBuf := make([]byte, header.MarshallSize())
+	headerWriter := NewProtobufWriter(headerBuf)
+	if err := header.Marshall(headerWriter); err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to marshal block header %s", blockId)
 	}
-	_, err = Encrypt(headerData[:], r.kekCipher, blockId[:], blockData[:BlockHeaderSize])
-	if err != nil {
+	encryptedHeader := make([]byte, len(headerWriter.Bytes())+TotalCipherOverhead)
+	if _, err := Encrypt(headerWriter.Bytes(), r.kekCipher, blockId[:], encryptedHeader); err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to encrypt block header with KEK for block %s", blockId)
 	}
 
+	// Marshal the Block envelope.
+	block := Block{EncryptedHeader: encryptedHeader, EncryptedData: encryptedData}
+	blockBuf := make([]byte, block.MarshallSize())
+	blockWriter := NewProtobufWriter(blockBuf)
+	if err := block.Marshall(blockWriter); err != nil {
+		return blockId, nil, WrapErrorf(err, "failed to marshal block envelope for %s", blockId)
+	}
+
 	// Write block.
-	exists, err := r.storage.WriteBlock(blockId, blockData)
+	exists, err := r.storage.WriteBlock(blockId, blockWriter.Bytes())
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to write block %s", blockId)
 	}
@@ -329,20 +328,26 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 }
 
 func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
-	encryptedBlock, err := r.storage.ReadBlock(blockId, buf)
+	rawBlock, err := r.storage.ReadBlock(blockId, buf)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read block %s", blockId)
 	}
-	rawHeader := encryptedBlock[:BlockHeaderSize]
-	rawHeader, err = DecryptInPlace(rawHeader, r.kekCipher, blockId[:])
+	block, err := UnmarshallBlock(NewProtobufReader(rawBlock))
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to unmarshal block envelope for %s", blockId)
+	}
+	rawHeader, err := DecryptInPlace(block.EncryptedHeader, r.kekCipher, blockId[:])
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt block header with KEK for block %s", blockId)
 	}
-	header, err := UnmarshalBlockHeader(RawBlockHeader(rawHeader))
+	header, err := UnmarshallBlockHeader(NewProtobufReader(rawHeader))
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to unmarshal block header for block %s", blockId)
 	}
-	dekCypher, err := NewCipher(header.DEK)
+	if header.Version != uint32(StorageVersion) {
+		return nil, Errorf("unsupported block version %d for block %s", header.Version, blockId)
+	}
+	dekCypher, err := NewCipher(header.Dek)
 	if err != nil {
 		return nil, WrapErrorf(
 			err,
@@ -350,12 +355,12 @@ func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
 			blockId,
 		)
 	}
-	data, err := DecryptInPlace(encryptedBlock[BlockHeaderSize:], dekCypher, blockId[:])
+	data, err := DecryptInPlace(block.EncryptedData, dekCypher, blockId[:])
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt data with DEK for block %s", blockId)
 	}
 	data = data[:header.EncryptedDataSize]
-	if header.Flags&BlockFlagDeflate != 0 {
+	if header.Compression == CompressionDeflate {
 		data, err = Decompress(data)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to decompress data")
@@ -372,6 +377,12 @@ func (r *Repository) Head() (RevisionId, error) {
 	return ref, nil
 }
 
+// RevisionMagic is the constant string stored as the first field of every
+// marshalled `Revision`. It lets a disaster-recovery tool tell revision
+// blocks apart from data blocks by decrypting each block and reading the
+// first field as a string.
+const RevisionMagic = "cling-revision"
+
 // Return `ErrRootRevision` if revisionId is the root revisionId.
 func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision, error) {
 	if revisionId.IsRoot() {
@@ -384,6 +395,14 @@ func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision
 	rev, err := UnmarshallRevision(NewProtobufReader(data))
 	if err != nil {
 		return Revision{}, WrapErrorf(err, "failed to unmarshal revision %s", revisionId)
+	}
+	if rev.Magic != RevisionMagic {
+		return Revision{}, Errorf(
+			"block %s is not a revision (magic %q, want %q)",
+			revisionId,
+			rev.Magic,
+			RevisionMagic,
+		)
 	}
 	return *rev, nil
 }
@@ -421,6 +440,7 @@ func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
 			head,
 		)
 	}
+	revision.Magic = RevisionMagic
 	revBuf := make([]byte, revision.MarshallSize())
 	pw := NewProtobufWriter(revBuf)
 	if err := revision.Marshall(pw); err != nil {
@@ -461,29 +481,6 @@ func ReadRef(storage Storage, name string) (RevisionId, error) {
 		return RevisionId{}, Errorf("invalid reference size for %s: want %d, got %d", name, 32, len(data))
 	}
 	return RevisionId(data), nil
-}
-
-func MarshalBlockHeader(header *BlockHeader, target *RawBlockHeader) error {
-	bw := NewBinaryWriter(NewFixedBufWriter(target[:]))
-	bw.Write(StorageVersion)
-	bw.Write(header.Flags)
-	bw.Write(header.DEK)
-	bw.Write(header.EncryptedDataSize)
-	return bw.Err
-}
-
-func UnmarshalBlockHeader(data RawBlockHeader) (BlockHeader, error) {
-	br := NewBinaryReader(bytes.NewBuffer(data[:]))
-	var version uint16
-	br.Read(&version)
-	if br.Err == nil && version != StorageVersion {
-		return BlockHeader{}, Errorf("unsupported block version: %d", version)
-	}
-	var header BlockHeader
-	br.Read(&header.Flags)
-	br.Read(&header.DEK)
-	br.Read(&header.EncryptedDataSize)
-	return header, br.Err
 }
 
 func parseRepositoryConfig(toml Toml) (*MasterKeyInfo, error) {

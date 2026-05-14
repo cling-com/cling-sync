@@ -10,36 +10,23 @@ const (
 	CompressionDeflate Compression = 1
 )
 
-type BlockKind uint32
-
-const (
-	BlockKindDefault  BlockKind = 0
-	BlockKindRevision BlockKind = 1
-)
-
-type BlockHeader1 struct {
+type BlockHeader struct {
 	Version           uint32
-	BlockKind         BlockKind
 	Compression       Compression
 	Dek               RawKey
 	EncryptedDataSize uint32
 }
 
-func (o *BlockHeader1) Validate() error {
-	switch o.BlockKind {
-	case BlockKindDefault, BlockKindRevision:
-	default:
-		return Errorf("BlockHeader1.BlockKind has invalid value %d", o.BlockKind)
-	}
+func (o *BlockHeader) Validate() error {
 	switch o.Compression {
 	case CompressionNone, CompressionDeflate:
 	default:
-		return Errorf("BlockHeader1.Compression has invalid value %d", o.Compression)
+		return Errorf("BlockHeader.Compression has invalid value %d", o.Compression)
 	}
 	return nil
 }
 
-func (o *BlockHeader1) Marshall(w ProtobufWriter) error {
+func (o *BlockHeader) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -52,19 +39,13 @@ func (o *BlockHeader1) Marshall(w ProtobufWriter) error {
 	if err := w.WriteTag(2, 0); err != nil {
 		return err
 	}
-	if err := w.WriteVarint(int64(o.BlockKind)); err != nil {
-		return err
-	}
-	if err := w.WriteTag(3, 0); err != nil {
-		return err
-	}
 	if err := w.WriteVarint(int64(o.Compression)); err != nil {
 		return err
 	}
-	if err := w.WriteBytes(4, o.Dek[:]); err != nil {
+	if err := w.WriteBytes(3, o.Dek[:]); err != nil {
 		return err
 	}
-	if err := w.WriteTag(5, 0); err != nil {
+	if err := w.WriteTag(4, 0); err != nil {
 		return err
 	}
 	if err := w.WriteVarint(int64(o.EncryptedDataSize)); err != nil {
@@ -73,14 +54,14 @@ func (o *BlockHeader1) Marshall(w ProtobufWriter) error {
 	return nil
 }
 
-func (o *BlockHeader1) MarshallSize() int {
+func (o *BlockHeader) MarshallSize() int {
 	sw := NewProtobufSizeWriter()
 	_ = o.Marshall(sw)
 	return sw.Size()
 }
 
-func UnmarshallBlockHeader1(r *ProtobufReader) (*BlockHeader1, error) {
-	o := &BlockHeader1{}
+func UnmarshallBlockHeader(r *ProtobufReader) (*BlockHeader, error) {
+	o := &BlockHeader{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
@@ -98,23 +79,17 @@ func UnmarshallBlockHeader1(r *ProtobufReader) (*BlockHeader1, error) {
 			if err != nil {
 				return nil, err
 			}
-			o.BlockKind = BlockKind(u)
-		case 3:
-			u, err := r.ReadUint32()
-			if err != nil {
-				return nil, err
-			}
 			o.Compression = Compression(u)
-		case 4:
+		case 3:
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
 			}
 			if len(b) != 32 {
-				return nil, Errorf("BlockHeader1.Dek must have length 32")
+				return nil, Errorf("BlockHeader.Dek must have length 32")
 			}
 			o.Dek = RawKey(b)
-		case 5:
+		case 4:
 			u, err := r.ReadUint32()
 			if err != nil {
 				return nil, err
@@ -132,22 +107,22 @@ func UnmarshallBlockHeader1(r *ProtobufReader) (*BlockHeader1, error) {
 	return o, nil
 }
 
-type Block1 struct {
+type Block struct {
 	EncryptedHeader []byte
 	EncryptedData   []byte
 }
 
-func (o *Block1) Validate() error {
+func (o *Block) Validate() error {
 	if len(o.EncryptedHeader) > 512 {
-		return Errorf("Block1.EncryptedHeader must not be longer than 512")
+		return Errorf("Block.EncryptedHeader must not be longer than 512")
 	}
-	if len(o.EncryptedData) > 8388080 {
-		return Errorf("Block1.EncryptedData must not be longer than 8388080")
+	if len(o.EncryptedData) > 8257576 {
+		return Errorf("Block.EncryptedData must not be longer than 8257576")
 	}
 	return nil
 }
 
-func (o *Block1) Marshall(w ProtobufWriter) error {
+func (o *Block) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
@@ -160,14 +135,14 @@ func (o *Block1) Marshall(w ProtobufWriter) error {
 	return nil
 }
 
-func (o *Block1) MarshallSize() int {
+func (o *Block) MarshallSize() int {
 	sw := NewProtobufSizeWriter()
 	_ = o.Marshall(sw)
 	return sw.Size()
 }
 
-func UnmarshallBlock1(r *ProtobufReader) (*Block1, error) {
-	o := &Block1{}
+func UnmarshallBlock(r *ProtobufReader) (*Block, error) {
+	o := &Block{}
 	for !r.AtEnd() {
 		tag, wireType, err := r.ReadTag()
 		if err != nil {
@@ -613,6 +588,7 @@ func UnmarshallRevisionEntryChunk(r *ProtobufReader) (*RevisionEntryChunk, error
 }
 
 type Revision struct {
+	Magic            string
 	Timestamp        Timestamp
 	ParentRevisionId RevisionId
 	Message          *string
@@ -631,24 +607,27 @@ func (o *Revision) Marshall(w ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
-	if err := w.WriteMessage(1, o.Timestamp.Marshall); err != nil {
+	if err := w.WriteBytes(1, []byte(o.Magic)); err != nil {
 		return err
 	}
-	if err := w.WriteBytes(2, o.ParentRevisionId[:]); err != nil {
+	if err := w.WriteMessage(2, o.Timestamp.Marshall); err != nil {
+		return err
+	}
+	if err := w.WriteBytes(3, o.ParentRevisionId[:]); err != nil {
 		return err
 	}
 	if o.Message != nil {
-		if err := w.WriteBytes(3, []byte((*o.Message))); err != nil {
+		if err := w.WriteBytes(4, []byte((*o.Message))); err != nil {
 			return err
 		}
 	}
 	if o.Author != nil {
-		if err := w.WriteBytes(4, []byte((*o.Author))); err != nil {
+		if err := w.WriteBytes(5, []byte((*o.Author))); err != nil {
 			return err
 		}
 	}
 	for _, v := range o.BlockIds {
-		if err := w.WriteBytes(5, v[:]); err != nil {
+		if err := w.WriteBytes(6, v[:]); err != nil {
 			return err
 		}
 	}
@@ -674,12 +653,18 @@ func UnmarshallRevision(r *ProtobufReader) (*Revision, error) {
 			if err != nil {
 				return nil, err
 			}
+			o.Magic = string(b)
+		case 2:
+			b, err := r.ReadBytes()
+			if err != nil {
+				return nil, err
+			}
 			v, err := UnmarshallTimestamp(NewProtobufReader(b))
 			if err != nil {
 				return nil, err
 			}
 			o.Timestamp = *v
-		case 2:
+		case 3:
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
@@ -688,21 +673,21 @@ func UnmarshallRevision(r *ProtobufReader) (*Revision, error) {
 				return nil, Errorf("Revision.ParentRevisionId must have length 32")
 			}
 			o.ParentRevisionId = RevisionId(b)
-		case 3:
-			b, err := r.ReadBytes()
-			if err != nil {
-				return nil, err
-			}
-			v := string(b)
-			o.Message = &v
 		case 4:
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err
 			}
 			v := string(b)
-			o.Author = &v
+			o.Message = &v
 		case 5:
+			b, err := r.ReadBytes()
+			if err != nil {
+				return nil, err
+			}
+			v := string(b)
+			o.Author = &v
+		case 6:
 			b, err := r.ReadBytes()
 			if err != nil {
 				return nil, err

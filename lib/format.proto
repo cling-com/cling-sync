@@ -17,26 +17,20 @@ enum Compression {
     Compression_deflate = 1;
 }
 
-enum BlockKind {
-    BlockKind_default = 0;
-    BlockKind_revision = 1;
-}
-
-message BlockHeader1 {
+message BlockHeader {
     uint32 version = 1;
-    BlockKind block_kind = 2;
-    Compression compression = 3;
-    bytes dek = 4 [(cling) = {type: "RawKey", length: 32}]; 
-    uint32 encrypted_data_size = 5;
+    Compression compression = 2;
+    bytes dek = 3 [(cling) = {type: "RawKey", length: 32}];
+    uint32 encrypted_data_size = 4;
 }
 
-message Block1  {
+message Block  {
     // The header encrypted with the repository KEK.
     bytes encrypted_header = 1 [(cling) = {max_length: 0x200}];
-    // The payload padding using the [Padmé](https://lbarman.ch/blog/padme/) algorithm 
-    // and encrypted with `BlockHeader.dek`.
-    // The length must be at least `BlockHeader.encrypted_data_size`.
-    bytes encrypted_data = 2 [(cling) = {max_length: 0x7FFDF0}];
+    // The padded (using [Padmé](https://lbarman.ch/blog/padme/)) and
+    // DEK-encrypted payload.
+    // Max length = MaxBlockDataSize (8 MiB - 128 KiB) + TotalCipherOverhead (40).
+    bytes encrypted_data = 2 [(cling) = {max_length: 0x7E0028}];
 }
 
 message Timestamp {
@@ -94,11 +88,16 @@ message RevisionEntryChunk {
 }
 
 message Revision {
-    Timestamp timestamp = 1;
-    bytes parent_revision_id = 2 [(cling) = {type: "RevisionId", length: 32}];
-    string message = 3 [(cling) = {required: "false"}];
-    string author = 4 [(cling) = {required: "false"}];
-    repeated bytes block_ids = 5 [(cling) = {inner_type: "BlockId", inner_length: 32, max_length: 0xFFFF}];
+    // Magic prefix identifying a marshalled `Revision`. Always
+    // `"cling-revision"`. Lets a disaster-recovery tool iterate every block,
+    // decrypt it, read field 1 as a string, and recognize revisions without
+    // any external index.
+    string magic = 1;
+    Timestamp timestamp = 2;
+    bytes parent_revision_id = 3 [(cling) = {type: "RevisionId", length: 32}];
+    string message = 4 [(cling) = {required: "false"}];
+    string author = 5 [(cling) = {required: "false"}];
+    repeated bytes block_ids = 6 [(cling) = {inner_type: "BlockId", inner_length: 32, max_length: 0xFFFF}];
 }
 
 // The following is only needed when used with `protoc` (which we don't use).

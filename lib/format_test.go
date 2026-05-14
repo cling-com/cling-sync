@@ -43,10 +43,10 @@ func TestFormatMarshall(t *testing.T) {
 		nsec: 500000000
 	`)
 
-	check("Block1", &Block1{
+	check("Block", &Block{
 		EncryptedHeader: []byte("header data"),
 		EncryptedData:   []byte("payload"),
-	}, UnmarshallBlock1, `
+	}, UnmarshallBlock, `
 		encrypted_header: "header data"
 		encrypted_data: "payload"
 	`)
@@ -62,15 +62,13 @@ func TestFormatMarshall(t *testing.T) {
 		parent_revision_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	`)
 
-	check("BlockHeader1", &BlockHeader1{
+	check("BlockHeader", &BlockHeader{
 		Version:           1,
-		BlockKind:         BlockKindRevision,
 		Compression:       CompressionDeflate,
 		Dek:               rawKey("k"),
 		EncryptedDataSize: 1024,
-	}, UnmarshallBlockHeader1, `
+	}, UnmarshallBlockHeader, `
 		version: 1
-		block_kind: BlockKind_revision
 		compression: Compression_deflate
 		dek: "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
 		encrypted_data_size: 1024
@@ -196,12 +194,12 @@ func TestFormatMarshall(t *testing.T) {
 }
 
 func TestFormatUnmarshallLength(t *testing.T) {
-	t.Run("BlockHeader1 dek wrong length", func(t *testing.T) {
+	t.Run("BlockHeader dek wrong length", func(t *testing.T) {
 		assert := NewAssert(t)
 		w := NewProtobufWriter(make([]byte, 4096))
-		assert.NoError(w.WriteBytes(4, make([]byte, 31)))
-		_, err := UnmarshallBlockHeader1(NewProtobufReader(w.Bytes()))
-		assert.Error(err, "BlockHeader1.Dek must have length 32")
+		assert.NoError(w.WriteBytes(3, make([]byte, 31)))
+		_, err := UnmarshallBlockHeader(NewProtobufReader(w.Bytes()))
+		assert.Error(err, "BlockHeader.Dek must have length 32")
 	})
 	t.Run("PathMetadata block_ids entry wrong length", func(t *testing.T) {
 		assert := NewAssert(t)
@@ -215,7 +213,7 @@ func TestFormatUnmarshallLength(t *testing.T) {
 		w := NewProtobufWriter(make([]byte, 16))
 		assert.NoError(w.WriteTag(1, 0))
 		assert.NoError(w.WriteVarint(int64(uint64(0x1_0000_0000)))) // > max uint32
-		_, err := UnmarshallBlockHeader1(NewProtobufReader(w.Bytes()))
+		_, err := UnmarshallBlockHeader(NewProtobufReader(w.Bytes()))
 		assert.Error(err, "uint32 varint out of range")
 	})
 	t.Run("nested error propagates from PathMetadata via RevisionEntry", func(t *testing.T) {
@@ -262,28 +260,27 @@ func TestFormatValidate(t *testing.T) {
 		})
 	}
 
-	check("BlockHeader1 zero value", &BlockHeader1{}, "")
-	check("BlockHeader1 invalid block_kind", &BlockHeader1{BlockKind: 99},
-		"BlockHeader1.BlockKind has invalid value 99")
-	check("BlockHeader1 invalid compression", &BlockHeader1{Compression: 99},
-		"BlockHeader1.Compression has invalid value 99")
+	check("BlockHeader zero value", &BlockHeader{}, "")
+	check("BlockHeader invalid compression", &BlockHeader{Compression: 99},
+		"BlockHeader.Compression has invalid value 99")
 	check("RevisionEntry invalid kind", &RevisionEntry{Kind: 99},
 		"RevisionEntry.Kind has invalid value 99")
 
-	// Block1: encrypted_header <= 512, encrypted_data <= 8388080.
-	check("Block1 zero value", &Block1{}, "")
-	check("Block1 encrypted_header at boundary", &Block1{
+	// Block: encrypted_header <= 512, encrypted_data <= MaxBlockDataSize + TotalCipherOverhead.
+	maxData := MaxBlockDataSize + TotalCipherOverhead
+	check("Block zero value", &Block{}, "")
+	check("Block encrypted_header at boundary", &Block{
 		EncryptedHeader: make([]byte, 512),
 	}, "")
-	check("Block1 encrypted_header oversize", &Block1{
+	check("Block encrypted_header oversize", &Block{
 		EncryptedHeader: make([]byte, 513),
 	}, "EncryptedHeader must not be longer than 512")
-	check("Block1 encrypted_data at boundary", &Block1{
-		EncryptedData: make([]byte, 8388080),
+	check("Block encrypted_data at boundary", &Block{
+		EncryptedData: make([]byte, maxData),
 	}, "")
-	check("Block1 encrypted_data oversize", &Block1{
-		EncryptedData: make([]byte, 8388081),
-	}, "EncryptedData must not be longer than 8388080")
+	check("Block encrypted_data oversize", &Block{
+		EncryptedData: make([]byte, maxData+1),
+	}, "EncryptedData must not be longer than 8257576")
 
 	// Timestamp: no validation rules.
 	check("Timestamp zero value", &Timestamp{}, "")

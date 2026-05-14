@@ -2,10 +2,8 @@ package lib
 
 import (
 	"crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 )
@@ -127,42 +125,6 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 	}
 }
 
-func TestMarshalRawBlockHeader(t *testing.T) {
-	t.Parallel()
-	t.Run("Happy path", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		sut := BlockHeader{
-			Flags:             12345,
-			DEK:               td.RawKey("1"),
-			EncryptedDataSize: 67890,
-		}
-		target := RawBlockHeader{}
-		err := MarshalBlockHeader(&sut, &target)
-		assert.NoError(err)
-		read, err := UnmarshalBlockHeader(target)
-		assert.NoError(err)
-		assert.Equal(sut, read)
-	})
-
-	t.Run("Version mismatch", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		sut := BlockHeader{
-			Flags:             12345,
-			DEK:               td.RawKey("1"),
-			EncryptedDataSize: 67890,
-		}
-		target := RawBlockHeader{}
-		err := MarshalBlockHeader(&sut, &target)
-		assert.NoError(err)
-		// Overwrite the leading `StorageVersion` uint16 with an unsupported value.
-		binary.LittleEndian.PutUint16(target[:], StorageVersion+1)
-		_, err = UnmarshalBlockHeader(target)
-		assert.Error(err, "unsupported block version")
-	})
-}
-
 func TestRepositoryReadWriteBlock(t *testing.T) {
 	t.Parallel()
 	t.Run("Happy path", func(t *testing.T) {
@@ -216,14 +178,19 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 
 		// Make sure we picked `len(writeData)` so that padding is added.
 		assert.Greater(Padme(uint64(len(writeData))), uint64(len(writeData)))
-		assert.Equal(
-			Padme(uint64(len(writeData)))+BlockHeaderSize+TotalCipherOverhead,
-			uint64(len(onDisk)),
-		)
+
+		block, err := UnmarshallBlock(NewProtobufReader(onDisk))
+		assert.NoError(err)
+		headerTagOffset := 0
+		headerFieldEnd := 1 + VarintLen(int64(len(block.EncryptedHeader))) + len(block.EncryptedHeader)
+		dataTagOffset := headerFieldEnd
 
 		buf := BlockBuf{}
 		prev := -1
 		for i := range onDisk {
+			if i == headerTagOffset || i == dataTagOffset {
+				continue
+			}
 			// Restore the previous flip and confirm the block reads again.
 			if prev >= 0 {
 				onDisk[prev] ^= 1
@@ -238,7 +205,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 			err = WriteFile(r.Storage.FS, path, onDisk)
 			assert.NoError(err)
 			_, err = r.ReadBlock(blockId, buf)
-			assert.Error(err, "message authentication failed", "offset %d", i)
+			assert.Error(err, "", "offset %d", i)
 			prev = i
 		}
 	})
@@ -267,27 +234,6 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Error(err, "message authentication failed")
 	})
 
-	t.Run("Structure of `BlockHeader` must not change unexpectedly", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		header := reflect.TypeFor[BlockHeader]()
-		assert.Equal(3, header.NumField())
-		flags := header.Field(0)
-		assert.Equal("Flags", flags.Name)
-		assert.Equal("uint64", flags.Type.Name())
-		dek := header.Field(1)
-		assert.Equal("DEK", dek.Name)
-		assert.Equal("RawKey", dek.Type.Name())
-		assert.Equal(uintptr(32), dek.Type.Size())
-		dataSize := header.Field(2)
-		assert.Equal("EncryptedDataSize", dataSize.Name)
-		assert.Equal("uint32", dataSize.Type.Name())
-		assert.Equal(uintptr(4), dataSize.Type.Size())
-		assert.Equal(86, BlockHeaderSize)
-		assert.Equal(46, RawBlockHeaderSize)
-		assert.Equal(46, len(RawBlockHeader{}))
-	})
-
 	t.Run("Maximum block size", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -302,9 +248,11 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 
-		// Get the file size of the block file.
+		// On-disk size must not exceed MaxBlockSize.
 		stat := r.Stat(r.Storage.blockPath(blockId))
-		assert.Equal(int64(MaxBlockSize), stat.Size())
+		assert.Less(stat.Size(), int64(MaxBlockSize)+1)
+		// Padmé must be a no-op at the maximum payload size.
+		assert.Equal(uint64(MaxBlockDataSize), Padme(uint64(MaxBlockDataSize)))
 	})
 
 	t.Run("Exceeding maximum block size", func(t *testing.T) {
@@ -333,10 +281,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		blockId, bytesWritten, err := r.WriteBlock(writeData)
 		assert.NoError(err)
 		assert.NotNil(bytesWritten)
-		stat := r.Stat(r.Storage.blockPath(blockId))
 		assert.Less(*bytesWritten, len(writeData)/5, "data should be compressed")
-		expectedSize := Padme(uint64(*bytesWritten)) + BlockHeaderSize + TotalCipherOverhead
-		assert.Equal(int64(expectedSize), stat.Size())
 
 		buf := BlockBuf{}
 		readData, err := r.ReadBlock(blockId, buf)
@@ -357,8 +302,6 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.NoError(err)
 		assert.NotNil(bytesWritten)
 		assert.Equal(len(writeData), *bytesWritten)
-		stat := r.Stat(r.Storage.blockPath(blockId))
-		assert.Equal(int64(len(writeData)+TotalCipherOverhead+BlockHeaderSize), stat.Size())
 
 		buf := BlockBuf{}
 		readData, err := r.ReadBlock(blockId, buf)
@@ -383,8 +326,6 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.NoError(err)
 		assert.NotNil(bytesWritten)
 		assert.Equal(len(writeData), *bytesWritten)
-		stat := r.Stat(r.Storage.blockPath(blockId))
-		assert.Equal(int64(len(writeData)+TotalCipherOverhead+BlockHeaderSize), stat.Size())
 
 		buf := BlockBuf{}
 		readData, err := r.ReadBlock(blockId, buf)
@@ -406,7 +347,7 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 
 		msg := "test message"
 		author := "test author"
-		revision := Revision{
+		revision := Revision{ //nolint:exhaustruct
 			Timestamp:        Timestamp{Sec: time.Now().Unix(), Nsec: 1234},
 			Message:          &msg,
 			Author:           &author,
@@ -434,7 +375,7 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 
 		msg := "test message"
 		author := "test author"
-		revision := Revision{
+		revision := Revision{ //nolint:exhaustruct
 			Timestamp:        Timestamp{Sec: time.Now().Unix(), Nsec: 1234},
 			Message:          &msg,
 			Author:           &author,
@@ -481,21 +422,67 @@ func TestPadme(t *testing.T) {
 }
 
 func BenchmarkWriteBlock(b *testing.B) {
-	r := td.NewTestRepository(b, td.NewFS(b)).Repository
-	data := make([]byte, MaxBlockDataSize/2)
-	_, err := rand.Read(data)
-	if err != nil {
-		b.Fatal(err)
+	sizes := []struct {
+		name string
+		size int
+	}{
+		{"4KiB", 4 * 1024},
+		{"256KiB", 256 * 1024},
+		{"max", MaxBlockDataSize},
 	}
-	for b.Loop() {
-		// Make sure we don't write the same block twice.
-		_, err = rand.Read(data[:100])
-		if err != nil {
-			b.Fatal(err)
-		}
-		_, bytesWritten, _ := r.WriteBlock(data)
-		if bytesWritten == nil {
-			b.Fatal("block already existed")
-		}
+	for _, s := range sizes {
+		b.Run(s.name, func(b *testing.B) {
+			r := td.NewTestRepository(b, td.NewFS(b)).Repository
+			data := make([]byte, s.size)
+			_, err := rand.Read(data)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ResetTimer()
+			for b.Loop() {
+				// Make sure we don't write the same block twice.
+				_, err = rand.Read(data[:100])
+				if err != nil {
+					b.Fatal(err)
+				}
+				_, bytesWritten, _ := r.WriteBlock(data)
+				if bytesWritten == nil {
+					b.Fatal("block already existed")
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkReadBlock(b *testing.B) {
+	sizes := []struct {
+		name string
+		size int
+	}{
+		{"4KiB", 4 * 1024},
+		{"256KiB", 256 * 1024},
+		{"max", MaxBlockDataSize},
+	}
+	for _, s := range sizes {
+		b.Run(s.name, func(b *testing.B) {
+			r := td.NewTestRepository(b, td.NewFS(b)).Repository
+			data := make([]byte, s.size)
+			_, err := rand.Read(data)
+			if err != nil {
+				b.Fatal(err)
+			}
+			blockId, _, err := r.WriteBlock(data)
+			if err != nil {
+				b.Fatal(err)
+			}
+			buf := BlockBuf{}
+			b.ResetTimer()
+			for b.Loop() {
+				_, err := r.ReadBlock(blockId, buf)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

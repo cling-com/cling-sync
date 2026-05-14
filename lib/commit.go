@@ -122,7 +122,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 		}
 		blockIds = append(blockIds, blockId)
 	}
-	revision := &Revision{
+	revision := &Revision{ //nolint:exhaustruct
 		Timestamp:        NewTimestampNow(),
 		Message:          &info.Message,
 		Author:           &info.Author,

@@ -75,6 +75,7 @@ func TestCommit(t *testing.T) {
 		msg := "test message"
 		author := "test author"
 		_, err = r.WriteRevision(&Revision{
+			Magic:            RevisionMagic,
 			Timestamp:        Timestamp{Sec: 123456789, Nsec: 1234},
 			Message:          &msg,
 			Author:           &author,

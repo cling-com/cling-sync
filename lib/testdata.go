@@ -107,7 +107,7 @@ func (td TestData) RevisionEntryExt(
 func (td TestData) Revision(parent RevisionId) *Revision {
 	msg := "test message"
 	author := "test author"
-	return &Revision{
+	return &Revision{ //nolint:exhaustruct
 		Timestamp:        Timestamp{Sec: 123456789, Nsec: 12345},
 		Message:          &msg,
 		Author:           &author,
