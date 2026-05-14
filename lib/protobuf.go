@@ -170,6 +170,15 @@ func (w *ProtobufSizeWriter) WriteMessage(field int, marshall func(ProtobufWrite
 	return nil
 }
 
+// ProtobufReader decodes a protobuf wire-format byte stream WITHOUT copying.
+// `ReadBytes` returns a sub-slice that aliases the underlying buffer, and
+// any `bytes` field assigned directly from `ReadBytes` (i.e. a generated
+// field whose Go type is `[]byte`, not a length-checked array conversion
+// like `RawKey` / `BlockId` / `Sha256`) is also a sub-slice.
+//
+// Callers must not mutate or reuse the input buffer while any reference
+// returned by the reader, or any object unmarshalled from it, is still
+// live.
 type ProtobufReader struct {
 	in     []byte
 	offset int
@@ -251,6 +260,8 @@ func (r *ProtobufReader) ReadUint64() (uint64, error) {
 	return uint64(v), nil //nolint:gosec
 }
 
+// ReadBytes returns a sub-slice of the reader's input buffer (no copy).
+// See the doc on `ProtobufReader` for the aliasing contract.
 func (r *ProtobufReader) ReadBytes() ([]byte, error) {
 	l, err := r.ReadUint32()
 	if err != nil {
@@ -259,8 +270,7 @@ func (r *ProtobufReader) ReadBytes() ([]byte, error) {
 	if int(l) > len(r.in)-r.offset {
 		return nil, Errorf("truncated bytes field: want %d, have %d", l, len(r.in)-r.offset)
 	}
-	res := make([]byte, l)
-	copy(res, r.in[r.offset:r.offset+int(l)])
+	res := r.in[r.offset : r.offset+int(l)]
 	r.offset += int(l)
 	return res, nil
 }
