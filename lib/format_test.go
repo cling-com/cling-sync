@@ -90,7 +90,7 @@ func TestFormatMarshall(t *testing.T) {
 	`)
 
 	uid, gid := uint32(1000), uint32(100)
-	link := "/etc/passwd"
+	link := Path{"target/file"}
 	birthtime := Timestamp{Sec: 999, Nsec: 1}
 	check("PathMetadata fully set", &PathMetadata{
 		FileMode:      FileModeSymlink | 0o777,
@@ -112,7 +112,7 @@ func TestFormatMarshall(t *testing.T) {
 		file_hash: "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
 		block_ids: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		block_ids: "cccccccccccccccccccccccccccccccc"
-		sym_link_target: "/etc/passwd"
+		sym_link_target: "target/file"
 		uid: 1000
 		gid: 100
 		birthtime {
@@ -285,9 +285,11 @@ func TestFormatValidate(t *testing.T) {
 	// Timestamp: no validation rules.
 	check("Timestamp zero value", &Timestamp{}, "")
 
-	// PathMetadata: file_hash length (unreachable), block_ids cap (impractical 2^32-1),
-	//               sym_link_target required if FileMode has Symlink bit.
-	link := "/etc/passwd"
+	// PathMetadata: file_hash length (unreachable), block_ids cap of 10 MiB
+	//               entries (a "forever store" sized for ~10-20 TB single files),
+	//               sym_link_target is a `Path` (capped by `NewPath`) and is
+	//               required if FileMode has the Symlink bit.
+	link := Path{"some/target"}
 	check("PathMetadata zero value", &PathMetadata{}, "")
 	check("PathMetadata non-symlink, no target", &PathMetadata{
 		FileMode: 0o644,
@@ -300,14 +302,15 @@ func TestFormatValidate(t *testing.T) {
 		FileMode: FileModeSymlink,
 	}, "SymLinkTarget must be set")
 
-	// RevisionEntry: no validation rules.
+	// RevisionEntry: path length is capped by `NewPath` (`MaxPathLen`), not by
+	// a Validate rule.
 	check("RevisionEntry zero value", &RevisionEntry{}, "")
 
-	// RevisionEntryChunk: entries cap is 2^24-1 — too large to materialize.
+	// RevisionEntryChunk: entries cap is 2^18 (262144) — too large to materialize.
 	check("RevisionEntryChunk zero value", &RevisionEntryChunk{}, "")
 
 	// Revision: parent_revision_id length (unreachable for [32]byte),
-	//           block_ids cap of 65535.
+	//           block_ids cap of 65535, message cap of 65536, author cap of 512.
 	check("Revision zero value", &Revision{}, "")
 	check("Revision block_ids at boundary", &Revision{
 		BlockIds: make([]BlockId, 65535),
@@ -315,6 +318,16 @@ func TestFormatValidate(t *testing.T) {
 	check("Revision block_ids oversize", &Revision{
 		BlockIds: make([]BlockId, 65536),
 	}, "BlockIds must not be longer than 65535")
+	maxMsg := strings.Repeat("a", 65536)
+	longMsg := strings.Repeat("a", 65537)
+	check("Revision message at boundary", &Revision{Message: &maxMsg}, "")
+	check("Revision message oversize", &Revision{Message: &longMsg},
+		"Message must not be longer than 65536")
+	maxAuthor := strings.Repeat("a", 512)
+	longAuthor := strings.Repeat("a", 513)
+	check("Revision author at boundary", &Revision{Author: &maxAuthor}, "")
+	check("Revision author oversize", &Revision{Author: &longAuthor},
+		"Author must not be longer than 512")
 }
 
 // revisionId fills a RevisionId with the given byte (repeated) for readable

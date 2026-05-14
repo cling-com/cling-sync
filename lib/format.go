@@ -289,15 +289,15 @@ type PathMetadata struct {
 	Size          int64
 	FileHash      Sha256
 	BlockIds      []BlockId
-	SymLinkTarget *string
+	SymLinkTarget *Path
 	Uid           *uint32
 	Gid           *uint32
 	Birthtime     *Timestamp
 }
 
 func (o *PathMetadata) Validate() error {
-	if len(o.BlockIds) > 4294967295 {
-		return Errorf("PathMetadata.BlockIds must not be longer than 4294967295")
+	if len(o.BlockIds) > 10485760 {
+		return Errorf("PathMetadata.BlockIds must not be longer than 10485760")
 	}
 	if o.SymLinkTarget == nil && o.FileMode&FileModeSymlink != 0 {
 		return Errorf("PathMetadata.SymLinkTarget must be set")
@@ -333,7 +333,7 @@ func (o *PathMetadata) Marshall(w ProtobufWriter) error {
 		}
 	}
 	if o.SymLinkTarget != nil {
-		if err := w.WriteBytes(6, []byte((*o.SymLinkTarget))); err != nil {
+		if err := w.WriteBytes(6, []byte((*o.SymLinkTarget).String())); err != nil {
 			return err
 		}
 	}
@@ -438,7 +438,11 @@ func UnmarshallPathMetadata(r *ProtobufReader) (*PathMetadata, error) {
 			if err != nil {
 				return nil, err
 			}
-			v := string(b)
+			pv, err := NewPath(string(b))
+			if err != nil {
+				return nil, err
+			}
+			v := pv
 			o.SymLinkTarget = &v
 		case 7:
 			if wireType != 0 {
@@ -593,8 +597,8 @@ type RevisionEntryChunk struct {
 }
 
 func (o *RevisionEntryChunk) Validate() error {
-	if len(o.Entries) > 16777215 {
-		return Errorf("RevisionEntryChunk.Entries must not be longer than 16777215")
+	if len(o.Entries) > 262144 {
+		return Errorf("RevisionEntryChunk.Entries must not be longer than 262144")
 	}
 	return nil
 }
@@ -660,6 +664,12 @@ type Revision struct {
 }
 
 func (o *Revision) Validate() error {
+	if o.Message != nil && len(*o.Message) > 65536 {
+		return Errorf("Revision.Message must not be longer than 65536")
+	}
+	if o.Author != nil && len(*o.Author) > 512 {
+		return Errorf("Revision.Author must not be longer than 512")
+	}
 	if len(o.BlockIds) > 65535 {
 		return Errorf("Revision.BlockIds must not be longer than 65535")
 	}

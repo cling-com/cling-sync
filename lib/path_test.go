@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,15 @@ func TestPath(t *testing.T) {
 		assert := NewAssert(t)
 		_, err := NewPath("a/b/")
 		assert.Error(err, "must not end with `/`")
+	})
+
+	t.Run("Path must not exceed MaxPathLen bytes", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		_, err := NewPath(strings.Repeat("a", MaxPathLen))
+		assert.NoError(err)
+		_, err = NewPath(strings.Repeat("a", MaxPathLen+1))
+		assert.Error(err, "must not exceed")
 	})
 
 	t.Run("IsRelativeTo", func(t *testing.T) {

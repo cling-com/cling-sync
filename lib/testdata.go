@@ -76,7 +76,10 @@ func (td TestData) PathMetadata(mode FileMode) *PathMetadata {
 		Birthtime: &birth,
 	}
 	if mode.IsSymlink() {
-		link := "some/target"
+		link, err := NewPath("some/target")
+		if err != nil {
+			panic(err)
+		}
 		md.SymLinkTarget = &link
 	}
 	return md

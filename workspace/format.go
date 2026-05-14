@@ -130,8 +130,8 @@ type StagingEntryChunk struct {
 }
 
 func (o *StagingEntryChunk) Validate() error {
-	if len(o.Entries) > 16777215 {
-		return lib.Errorf("StagingEntryChunk.Entries must not be longer than 16777215")
+	if len(o.Entries) > 262144 {
+		return lib.Errorf("StagingEntryChunk.Entries must not be longer than 262144")
 	}
 	return nil
 }

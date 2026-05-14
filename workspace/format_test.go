@@ -93,6 +93,8 @@ func TestFormatValidate(t *testing.T) {
 		})
 	}
 
+	// StagingEntry.RepoPath length is capped by `lib.NewPath` (`lib.MaxPathLen`),
+	// not by a Validate rule.
 	check("StagingEntry zero value", &StagingEntry{}, "")
 }
 

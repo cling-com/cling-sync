@@ -250,12 +250,21 @@ func (g *generator) genFieldValidate(structName string, f field) {
 		)
 	}
 	if f.constraints.max_length != 0 {
+		// Optional (required-conditional or required:false) string fields are
+		// emitted as `*string` and must be nil-guarded before `len(*p)`.
+		lenExpr := fmt.Sprintf("len(o.%s)", f.name)
+		var guard string
+		if f.constraints.required != "" && !f.repeated && f.protoTyp == "string" {
+			lenExpr = fmt.Sprintf("len(*o.%s)", f.name)
+			guard = fmt.Sprintf("o.%s != nil && ", f.name)
+		}
 		g.write(
-			"if len(o.%[1]s) > %[2]d { return %[4]s(\"%[3]s.%[1]s must not be longer than %[2]d\")}",
-			f.name,
+			"if %[5]s%[1]s > %[2]d { return %[4]s(\"%[3]s must not be longer than %[2]d\")}",
+			lenExpr,
 			f.constraints.max_length,
-			structName,
+			structName+"."+f.name,
 			errorf,
+			guard,
 		)
 	}
 	if f.constraints.required != "" && f.constraints.required != "false" {

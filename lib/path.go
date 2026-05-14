@@ -7,11 +7,19 @@ import (
 
 const PathDelim = "/"
 
+// MaxPathLen is the maximum allowed length (in bytes) for a `Path`.
+// 4096 matches Linux PATH_MAX (including its terminating NUL) and is well
+// above macOS (1024) and the Windows non-extended limit (260).
+const MaxPathLen = 4096
+
 type Path struct {
 	p string
 }
 
 func NewPath(path string) (Path, error) {
+	if len(path) > MaxPathLen {
+		return Path{""}, Errorf("invalid path, must not exceed %d bytes (got %d)", MaxPathLen, len(path))
+	}
 	path = filepath.ToSlash(path)
 	if strings.HasPrefix(path, "./") || path == "." || strings.HasPrefix(path, "..") {
 		return Path{""}, Errorf("invalid path %q, must not be relative", path)

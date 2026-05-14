@@ -77,7 +77,8 @@ func TestPathMetadata(t *testing.T) {
 		// SymLinkTarget comparisons require a base with a symlink.
 		symBase := td.PathMetadata(FileModeSymlink)
 		actual = *symBase
-		modifiedLink := *symBase.SymLinkTarget + "_modified"
+		modifiedLink, err := NewPath(symBase.SymLinkTarget.String() + "_modified")
+		assert.NoError(err)
 		actual.SymLinkTarget = &modifiedLink
 		assert.Equal(false, symBase.IsEqualRestorableAttributes(actual, RestorableMetadataAll))
 

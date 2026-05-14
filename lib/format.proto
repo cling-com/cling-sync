@@ -63,8 +63,11 @@ message PathMetadata {
     Timestamp mtime = 2;
     int64 size = 3;
     bytes file_hash = 4 [(cling) = {type: "Sha256", length: 32}];
-    repeated bytes block_ids = 5 [(cling) = {inner_type: "BlockId", inner_length: 32, max_length: 0xFFFFFFFF}];
-    string sym_link_target = 6 [(cling) = {required: "this.FileMode&FileModeSymlink != 0"}];
+    // 10M BlockIds × ~1-2 MiB avg gear-CDC chunk = 10-20 TB single file.
+    repeated bytes block_ids = 5 [(cling) = {inner_type: "BlockId", inner_length: 32, max_length: 0xA00000}];
+    // Symlink targets in cling are repo-namespace paths, with the same
+    // invariants as `RevisionEntry.path`. Length is capped by `NewPath`.
+    string sym_link_target = 6 [(cling) = {required: "this.FileMode&FileModeSymlink != 0", type: "Path"}];
     uint32 uid = 7 [(cling) = {required: "false"}];
     uint32 gid = 8 [(cling) = {required: "false"}];
     Timestamp birthtime = 9 [(cling) = {required: "false"}];
@@ -78,13 +81,14 @@ enum RevisionEntryKind {
 
 message RevisionEntry {
     RevisionEntryKind kind = 1;
-    // A deterministic utf8 representation of a file-system path.
+    // A deterministic utf8 representation of a file-system path. Length is
+    // capped by `NewPath` (`MaxPathLen`), which the Unmarshall path also runs.
     string path = 2 [(cling) = {type: "Path"}];
     PathMetadata metadata = 3;
 }
 
 message RevisionEntryChunk {
-    repeated RevisionEntry entries = 1 [(cling) = {max_length: 0xFFFFFF}];
+    repeated RevisionEntry entries = 1 [(cling) = {max_length: 0x40000}];
 }
 
 message Revision {
@@ -95,8 +99,8 @@ message Revision {
     string magic = 1;
     Timestamp timestamp = 2;
     bytes parent_revision_id = 3 [(cling) = {type: "RevisionId", length: 32}];
-    string message = 4 [(cling) = {required: "false"}];
-    string author = 5 [(cling) = {required: "false"}];
+    string message = 4 [(cling) = {required: "false", max_length: 0x10000}];
+    string author = 5 [(cling) = {required: "false", max_length: 0x200}];
     repeated bytes block_ids = 6 [(cling) = {inner_type: "BlockId", inner_length: 32, max_length: 0xFFFF}];
 }
 
