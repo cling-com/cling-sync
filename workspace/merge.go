@@ -94,7 +94,7 @@ func Merge(ws *Workspace, repository *lib.Repository, opts *MergeOptions) (lib.R
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
-	merger := Merger{ws, wsHead, head, tempFS, repository, make(map[string]fs.FileInfo), opts, lib.BlockBuf{}}
+	merger := Merger{ws, wsHead, head, tempFS, repository, make(map[string]fs.FileInfo), opts, lib.NewBlockBuf()}
 	conflicts, err := merger.findConflicts(localChanges.Source, remoteRevision, wsRevision)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to find conflicts")
@@ -164,7 +164,7 @@ func ForceCommit(ws *Workspace, repository *lib.Repository, opts *ForceCommitOpt
 		repository,
 		make(map[string]fs.FileInfo),
 		&opts.MergeOptions,
-		lib.BlockBuf{},
+		lib.NewBlockBuf(),
 	}
 	newHead, err := merger.commitLocalChanges(
 		localChanges.Source,

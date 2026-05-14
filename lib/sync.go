@@ -49,7 +49,7 @@ func SyncRepository( //nolint:funlen
 	// of revisions of the source repository and find the base.
 	revisionsToSync := map[RevisionId]*Revision{}
 	baseRefId := srcRevisionId
-	buf := BlockBuf{}
+	buf := NewBlockBuf()
 	for {
 		revision, err := src.ReadRevision(baseRefId, buf)
 		if err != nil {
@@ -65,7 +65,7 @@ func SyncRepository( //nolint:funlen
 		}
 	}
 	blocksSeen := make(map[BlockId]bool)
-	blockBuf := BlockBuf{}
+	blockBuf := NewBlockBuf()
 	copyBlock := func(blockId BlockId) error {
 		if _, ok := blocksSeen[blockId]; ok {
 			return nil

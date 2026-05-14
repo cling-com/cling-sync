@@ -98,7 +98,7 @@ func Ls(repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, er
 	defer snapshot.Remove() //nolint:errcheck
 	reader := snapshot.Reader(lib.RevisionEntryPathFilter(opts.PathFilter))
 	files := []LsFile{}
-	buf := lib.BlockBuf{}
+	buf := lib.NewBlockBuf()
 	for {
 		re, err := reader.Read(buf)
 		if err != nil {

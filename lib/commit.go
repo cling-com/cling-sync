@@ -111,12 +111,13 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	}
 	blockIds := []BlockId{}
 	sortedReader := sorted.Reader(nil)
+	buf := NewBlockBuf()
 	for chunk := range sorted.Chunks() {
-		buf, err := sortedReader.ReadChunkRaw(chunk)
+		data, err := sortedReader.ReadChunkRaw(chunk, buf)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to read sorted chunk file")
 		}
-		blockId, _, err := c.repository.WriteBlock(buf)
+		blockId, _, err := c.repository.WriteBlock(data)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to write block")
 		}
@@ -161,7 +162,7 @@ func (c *Commit) appendEnsureDirs(sorted *Temp[*RevisionEntry]) (*Temp[*Revision
 		}
 	}
 	r := sorted.Reader(nil)
-	buf := BlockBuf{}
+	buf := NewBlockBuf()
 	for {
 		entry, err := r.Read(buf)
 		if errors.Is(err, io.EOF) {

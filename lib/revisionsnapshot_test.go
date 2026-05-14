@@ -210,7 +210,7 @@ func readRevisionSnapshot(
 	reader := snapshot.Reader(RevisionEntryPathFilter(pathFilter))
 	assert.NoError(err)
 	entries := []*RevisionEntry{}
-	buf := BlockBuf{}
+	buf := NewBlockBuf()
 	for {
 		entry, err := reader.Read(buf)
 		if errors.Is(err, io.EOF) {

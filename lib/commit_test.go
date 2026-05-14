@@ -205,7 +205,7 @@ func TestCommitEnsureDirExists(t *testing.T) {
 }
 
 func readRevision(repo *Repository, revisionId RevisionId) (*Revision, []*RevisionEntry, error) {
-	buf := BlockBuf{}
+	buf := NewBlockBuf()
 	revision, err := repo.ReadRevision(revisionId, buf)
 	if err != nil {
 		return nil, nil, err

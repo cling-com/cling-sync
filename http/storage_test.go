@@ -69,7 +69,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
 		blockId := td.BlockId("1")
 
-		buf := lib.BlockBuf{}
+		buf := lib.NewBlockBuf()
 		_, err := client.ReadBlock(blockId, buf)
 		assert.ErrorIs(err, lib.ErrBlockNotFound)
 
@@ -92,7 +92,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
-		buf := lib.BlockBuf{}
+		buf := lib.NewBlockBuf()
 		readData, err := storage.ReadBlock(blockId, buf)
 		assert.NoError(err)
 		assert.Equal(data, readData)
@@ -124,7 +124,7 @@ func TestHTTPStorageClient(t *testing.T) {
 		data := make([]byte, lib.MaxBlockSize)
 		_, _ = rand.Read(data)
 		testWriteBlock(t, storage, blockId, data)
-		readData, err := client.ReadBlock(blockId, lib.BlockBuf{})
+		readData, err := client.ReadBlock(blockId, lib.NewBlockBuf())
 		assert.NoError(err)
 		assert.Equal(data, readData)
 	})
@@ -315,7 +315,7 @@ func TestHTTPStorageServer(t *testing.T) {
 		resp, err := http.DefaultClient.Do(req)
 		assert.NoError(err)
 		assert.Equal(201, resp.StatusCode)
-		blockBuf := lib.BlockBuf{}
+		blockBuf := lib.NewBlockBuf()
 		readData, err := storage.ReadBlock(blockId, blockBuf)
 		assert.NoError(err)
 		assert.Equal(data, readData)

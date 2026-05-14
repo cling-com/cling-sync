@@ -88,7 +88,7 @@ func (tr *TempReader[T]) Read(buf BlockBuf) (T, error) {
 			if tr.chunkIndex == tr.chunks {
 				return zero, io.EOF
 			}
-			entries, err := tr.ReadChunk(tr.chunkIndex)
+			entries, err := tr.ReadChunk(tr.chunkIndex, buf)
 			if err != nil {
 				return zero, err
 			}
@@ -108,11 +108,11 @@ func (tr *TempReader[T]) Read(buf BlockBuf) (T, error) {
 	}
 }
 
-func (tr *TempReader[T]) ReadChunk(i int) ([]T, error) {
+func (tr *TempReader[T]) ReadChunk(i int, buf BlockBuf) ([]T, error) {
 	if i < 0 || i >= tr.chunks {
 		return nil, Errorf("chunk index out of range")
 	}
-	data, err := tr.ReadChunkRaw(i)
+	data, err := tr.ReadChunkRaw(i, buf)
 	if err != nil {
 		return nil, err
 	}
@@ -133,12 +133,18 @@ func (tr *TempReader[T]) ReadChunk(i int) ([]T, error) {
 }
 
 // ReadChunkRaw returns the chunk's raw on-disk bytes (a marshalled chunk
-// message — same wire format as a repository revision block).
-func (tr *TempReader[T]) ReadChunkRaw(i int) ([]byte, error) {
+// message with same wire format as a repository revision block). The returned
+// slice aliases `buf`; the caller must consume it before reusing `buf`.
+func (tr *TempReader[T]) ReadChunkRaw(i int, buf BlockBuf) ([]byte, error) {
 	if i < 0 || i >= tr.chunks {
 		return nil, Errorf("chunk index out of range")
 	}
-	data, err := ReadFile(tr.fs, tr.chunkFilename(i))
+	file, err := tr.fs.OpenRead(tr.chunkFilename(i))
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to open chunk file %d", i)
+	}
+	defer file.Close() //nolint:errcheck
+	data, err := buf.Read(file)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read chunk file %d", i)
 	}
@@ -290,6 +296,7 @@ type TempCache[T Marshallable] struct {
 	Source           *Temp[T]
 	maxChunksInCache int
 	reader           *TempReader[T]
+	buf              BlockBuf
 	cache            []map[string]T
 	firstEntries     []string
 	lastAccessed     []int64
@@ -307,8 +314,9 @@ func NewTempCache[T Marshallable](
 	cache := make([]map[string]T, temp.Chunks())
 	chunksInCache := 0
 	reader := temp.Reader(nil)
+	buf := NewBlockBuf()
 	for i := range temp.Chunks() {
-		entries, err := reader.ReadChunk(i)
+		entries, err := reader.ReadChunk(i, buf)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read chunk file %d", i)
 		}
@@ -321,6 +329,7 @@ func NewTempCache[T Marshallable](
 		Source:           temp,
 		maxChunksInCache: maxChunksInCache,
 		reader:           reader,
+		buf:              buf,
 		cache:            cache,
 		firstEntries:     firstEntries,
 		lastAccessed:     make([]int64, temp.Chunks()),
@@ -370,7 +379,7 @@ func (tc *TempCache[T]) Get(key string) (T, bool, error) {
 		cache = make(map[string]T)
 		tc.cache[chunkIndex] = cache
 		tc.CacheMisses++
-		entries, err := tc.reader.ReadChunk(chunkIndex)
+		entries, err := tc.reader.ReadChunk(chunkIndex, tc.buf)
 		if err != nil {
 			return zero, false, WrapErrorf(err, "failed to read chunk %d", chunkIndex)
 		}

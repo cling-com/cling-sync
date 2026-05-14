@@ -172,7 +172,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	}
 	var stg *StagingEntry
 	var rev *lib.RevisionEntry
-	buf := lib.BlockBuf{}
+	buf := lib.NewBlockBuf()
 	for {
 		if stg == nil {
 			// Read the next staging entry.

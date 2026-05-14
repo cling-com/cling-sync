@@ -31,8 +31,14 @@ const (
 
 type (
 	BlockId  Sha256Hmac
-	BlockBuf [MaxBlockSize]byte
+	BlockBuf struct {
+		buf *[MaxBlockSize]byte
+	}
 )
+
+func NewBlockBuf() BlockBuf {
+	return BlockBuf{buf: new([MaxBlockSize]byte)}
+}
 
 func (id BlockId) String() string {
 	return hex.EncodeToString(id[:])
@@ -267,9 +273,10 @@ func (s *FileStorage) Lock(ctx context.Context, name string) (func() error, erro
 	return unlock, nil
 }
 
-// Read at most `MaxBlockSize` bytes.
+// Read at most `MaxBlockSize` bytes from `src` into the buffer and return
+// the populated sub-slice.
 func (b BlockBuf) Read(src io.Reader) ([]byte, error) {
-	data := b[:]
+	data := b.buf[:]
 	n, err := io.ReadFull(src, data)
 	if err != nil {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {

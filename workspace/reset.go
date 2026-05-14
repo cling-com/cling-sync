@@ -65,7 +65,7 @@ func Reset(ws *Workspace, repository *lib.Repository, opts *ResetOptions) error 
 		repository,
 		make(map[string]fs.FileInfo),
 		&mergeOptions,
-		lib.BlockBuf{},
+		lib.NewBlockBuf(),
 	}
 	defer merger.restoreDirFileModes() //nolint:errcheck
 	if err := merger.copyRepositoryFiles(remoteRevision.Source, staging, localChanges); err != nil {

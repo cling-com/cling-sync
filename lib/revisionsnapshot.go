@@ -14,7 +14,7 @@ func NewRevisionSnapshot(repository *Repository, revisionId RevisionId, tmpFS FS
 	// Build a list of all revisions.
 	revisions := make([]*Revision, 0)
 	r := revisionId
-	buf := BlockBuf{}
+	buf := NewBlockBuf()
 	for !r.IsRoot() {
 		revision, err := repository.ReadRevision(r, buf)
 		if err != nil {

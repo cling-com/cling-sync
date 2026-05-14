@@ -94,7 +94,7 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 	}
 	revisionTempReader := revisionTemp.Reader(nil)
 	result := []StatusFile{}
-	buf := lib.BlockBuf{}
+	buf := lib.NewBlockBuf()
 	for {
 		entry, err := revisionTempReader.Read(buf)
 		if errors.Is(err, io.EOF) {

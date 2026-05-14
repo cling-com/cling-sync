@@ -335,7 +335,7 @@ func (s *HTTPStorageServer) ReadBlock(w http.ResponseWriter, r *http.Request) {
 		s.error(lib.WrapErrorf(err, "invalid block ID"), w, http.StatusBadRequest)
 		return
 	}
-	buf := lib.BlockBuf{}
+	buf := lib.NewBlockBuf()
 	data, err := s.Storage.ReadBlock(lib.BlockId(id), buf)
 	if err != nil {
 		if errors.Is(err, lib.ErrBlockNotFound) {

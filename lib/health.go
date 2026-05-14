@@ -26,7 +26,7 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 	if err != nil {
 		return WrapErrorf(err, "failed to get head revision")
 	}
-	blockBuf := BlockBuf{}
+	blockBuf := NewBlockBuf()
 	for !revisionId.IsRoot() {
 		opts.Monitor.OnRevisionStart(revisionId)
 		revision, err := repository.ReadRevision(revisionId, blockBuf)

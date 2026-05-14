@@ -876,7 +876,7 @@ func assertSameRepositoryHistory(t *testing.T, src, dst *lib.Repository) {
 	dstRevisionId, err := dst.Head()
 	assert.NoError(err)
 	assert.Equal(srcRevisionId, dstRevisionId)
-	buf := lib.BlockBuf{}
+	buf := lib.NewBlockBuf()
 	for !srcRevisionId.IsRoot() {
 		srcRevision, err := src.ReadRevision(srcRevisionId, buf)
 		assert.NoError(err)

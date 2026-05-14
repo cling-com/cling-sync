@@ -187,7 +187,7 @@ func TestFileStorageMultiPurpose(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
-		buf := BlockBuf{}
+		buf := NewBlockBuf()
 		data, err := repo.ReadBlock(blockId, buf)
 		assert.NoError(err)
 		assert.Equal(repoBlock, data)
@@ -239,7 +239,7 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.Equal(true, ok)
 
 		// Read back the whole block with `ReadBlock`.
-		buf := BlockBuf{}
+		buf := NewBlockBuf()
 		readData, err := sut.ReadBlock(blockId, buf)
 		assert.NoError(err)
 		assert.Equal(data, readData)
@@ -258,7 +258,7 @@ func TestFileStorageBlocks(t *testing.T) {
 		err = sut.Init(nil, "")
 		assert.NoError(err)
 
-		buf := BlockBuf{}
+		buf := NewBlockBuf()
 		_, err = sut.ReadBlock(td.BlockId("1"), buf)
 		assert.ErrorIs(err, ErrBlockNotFound)
 	})
@@ -286,7 +286,7 @@ func TestBlockBuf(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 
-		buf := BlockBuf{}
+		buf := NewBlockBuf()
 		src := bytes.NewReader([]byte("hello"))
 
 		data, err := buf.Read(src)

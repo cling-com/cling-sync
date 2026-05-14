@@ -195,7 +195,7 @@ func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:f
 			reject(js.ValueOf(err.Error()))
 			return
 		}
-		buf := lib.BlockBuf{}
+		buf := lib.NewBlockBuf()
 		filter := lib.NewPathInclusionFilter([]string{path})
 		r := snapshot.Reader(lib.RevisionEntryPathFilter(filter))
 		file, err := r.Read(buf)

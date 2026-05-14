@@ -58,7 +58,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 		return nil
 	}
 	defer restoreDirFileModes() //nolint:errcheck
-	buf := lib.BlockBuf{}
+	buf := lib.NewBlockBuf()
 	for {
 		entry, err := reader.Read(buf)
 		if errors.Is(err, io.EOF) {

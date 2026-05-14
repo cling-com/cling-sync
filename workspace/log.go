@@ -64,7 +64,7 @@ func Log(repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
 	}
 	logs := []RevisionLog{}
 	revisionId := head
-	buf := lib.BlockBuf{}
+	buf := lib.NewBlockBuf()
 	for !revisionId.IsRoot() {
 		revision, err := repository.ReadRevision(revisionId, buf)
 		if err != nil {
