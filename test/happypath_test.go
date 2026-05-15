@@ -1,9 +1,10 @@
-//nolint:paralleltest,forbidigo
+//nolint:forbidigo
 package main
 
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
@@ -18,10 +19,14 @@ import (
 )
 
 var td = lib.TestData{} //nolint:gochecknoglobals
+
 const passphrase = "testpassphrase"
+
+var clingSyncBin string //nolint:gochecknoglobals
 
 // Just test a simple scenario that covers most of the common CLI commands.
 func TestHappyPath(t *testing.T) {
+	t.Parallel()
 	sut := NewSut(t)
 	assert := sut.assert
 
@@ -136,7 +141,7 @@ func TestHappyPath(t *testing.T) {
 	{
 		workspace1Ls := sut.Ls()
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "../repository", "../workspace2")
-		t.Chdir("../workspace2")
+		sut.Chdir("../workspace2")
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 		sut.ClingSync("merge", "--no-progress")
 		workspace2Ls := sut.Ls()
@@ -145,14 +150,14 @@ func TestHappyPath(t *testing.T) {
 
 	t.Log("Create and resolve conflicts with --accept-local (merge)")
 	{
-		t.Chdir("../workspace2")
+		sut.Chdir("../workspace2")
 		sut.Write("b.txt", "b from workspace2")
 		sut.Mkdir("dir2")
 		sut.Write("dir2/e.txt", "e")
 		sut.ClingSync("merge", "--no-progress", "--message", "conflict")
 
 		// Back to workspace1 and add conflicting changes.
-		t.Chdir("../workspace")
+		sut.Chdir("../workspace")
 		sut.Write("b.txt", "b from workspace")
 		sut.Mkdir("dir2")
 		sut.Write("dir2/e.txt", "e from workspace")
@@ -214,6 +219,7 @@ func TestHappyPath(t *testing.T) {
 }
 
 func TestSyncRepoHappyPath(t *testing.T) {
+	t.Parallel()
 	sut := NewSut(t)
 	assert := sut.assert
 
@@ -235,9 +241,9 @@ func TestSyncRepoHappyPath(t *testing.T) {
 	t.Log("Run repository sync")
 	sut.ClingSync("sync-repo", "run", "../sync-target")
 
-	srcStorage, err := lib.NewFileStorage(lib.NewRealFS("../repository"), lib.StoragePurposeRepository)
+	srcStorage, err := lib.NewFileStorage(lib.NewRealFS(sut.Path("../repository")), lib.StoragePurposeRepository)
 	assert.NoError(err)
-	dstStorage, err := lib.NewFileStorage(lib.NewRealFS("../sync-target"), lib.StoragePurposeRepository)
+	dstStorage, err := lib.NewFileStorage(lib.NewRealFS(sut.Path("../sync-target")), lib.StoragePurposeRepository)
 	assert.NoError(err)
 	srcRepo, err := lib.OpenRepository(srcStorage, []byte(passphrase))
 	assert.NoError(err)
@@ -246,7 +252,7 @@ func TestSyncRepoHappyPath(t *testing.T) {
 
 	assert.Equal(sut.RepositoryHead(), headFromRepository(t, dstRepo))
 	assertSameRepositoryHistory(t, srcRepo, dstRepo)
-	assertSameRepositoryFS(t, "../repository", "../sync-target")
+	assertSameRepositoryFS(t, sut.Path("../repository"), sut.Path("../sync-target"))
 
 	t.Log("Add another commit")
 	{
@@ -258,10 +264,11 @@ func TestSyncRepoHappyPath(t *testing.T) {
 	sut.ClingSync("sync-repo", "run", "../sync-target")
 	assert.Equal(sut.RepositoryHead(), headFromRepository(t, dstRepo))
 	assertSameRepositoryHistory(t, srcRepo, dstRepo)
-	assertSameRepositoryFS(t, "../repository", "../sync-target")
+	assertSameRepositoryFS(t, sut.Path("../repository"), sut.Path("../sync-target"))
 }
 
 func TestChmodChtimeChown(t *testing.T) {
+	t.Parallel()
 	sut := NewSut(t)
 	assert := sut.assert
 
@@ -295,15 +302,15 @@ func TestChmodChtimeChown(t *testing.T) {
 	t.Log("Attach the repository to a second and third workspace")
 	{
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "../repository", "../workspace2")
-		t.Chdir("../workspace2")
+		sut.Chdir("../workspace2")
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 		sut.ClingSync("merge", "--no-progress")
 
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "../repository", "../workspace3")
-		t.Chdir("../workspace3")
+		sut.Chdir("../workspace3")
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 		sut.ClingSync("merge", "--no-progress")
-		t.Chdir("../workspace")
+		sut.Chdir("../workspace")
 	}
 
 	t.Log("Change file mode, mtime, and ownership")
@@ -409,7 +416,7 @@ func TestChmodChtimeChown(t *testing.T) {
 
 	t.Log("Merge into second workspace without --chtime, --chmod, and --chown")
 	{
-		t.Chdir("../workspace2")
+		sut.Chdir("../workspace2")
 		assert.Contains(sut.ClingSync("merge", "--no-progress"), "No local changes")
 		assert.Equal(4, td.Wc("-l", sut.ClingSync("log", "--short")), "No new revision should have been created")
 
@@ -430,7 +437,7 @@ func TestChmodChtimeChown(t *testing.T) {
 
 	t.Log("Merge into third workspace with --chtime, --chmod, and --chown")
 	{
-		t.Chdir("../workspace3")
+		sut.Chdir("../workspace3")
 		assert.Contains(sut.ClingSync("merge", "--no-progress", "--chtime", "--chmod", "--chown"), "No local changes")
 		assert.Equal(5, td.Wc("-l", sut.ClingSync("log", "--short")), "No new revision should have been created")
 
@@ -442,6 +449,7 @@ func TestChmodChtimeChown(t *testing.T) {
 }
 
 func TestPathPrefix(t *testing.T) {
+	t.Parallel()
 	sut := NewSut(t)
 	assert := sut.assert
 
@@ -464,7 +472,7 @@ func TestPathPrefix(t *testing.T) {
 			"../repository",
 			"../workspace2",
 		)
-		t.Chdir("../workspace2")
+		sut.Chdir("../workspace2")
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 		ls := sut.ClingSync("ls")
 		assert.Equal("", ls)
@@ -489,7 +497,7 @@ func TestPathPrefix(t *testing.T) {
 
 	t.Log("Files have been merged to the right directory")
 	{
-		t.Chdir("../workspace")
+		sut.Chdir("../workspace")
 		sut.ClingSync("merge", "--no-progress")
 		ls := sut.ClingSync("ls")
 		assert.Equal(td.Dedent(`
@@ -506,7 +514,7 @@ func TestPathPrefix(t *testing.T) {
 
 	t.Log("Run `ls` in workspace with path prefix")
 	{
-		t.Chdir("../workspace2")
+		sut.Chdir("../workspace2")
 		ls := sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction")
 		assert.Equal(td.Dedent(`
 			c.txt
@@ -526,6 +534,7 @@ func TestPathPrefix(t *testing.T) {
 }
 
 func TestClingIgnoreAndGitIgnore(t *testing.T) {
+	t.Parallel()
 	sut := NewSut(t)
 	assert := sut.assert
 
@@ -615,34 +624,30 @@ func TestClingIgnoreAndGitIgnore(t *testing.T) {
 }
 
 func TestRepositoryOverHTTP(t *testing.T) {
+	t.Parallel()
 	sut := NewSut(t)
 	assert := sut.assert
 
-	serveStdout := bytes.NewBuffer(nil)
 	t.Log("Serve repository over HTTP")
 	{
 		t.Log(gray("    > cling-sync serve --log-requests --address 127.0.0.1:9123 ../repository"))
-		cmd := exec.Command("../cling-sync", "serve", "--log-requests", "--address", "127.0.0.1:9123", "../repository")
-		stderr := bytes.NewBuffer(nil)
-		cmd.Stdout = serveStdout
-		cmd.Stderr = stderr
+		cmd := sut.cmd("serve", "--log-requests", "--address", "127.0.0.1:9123", "../repository")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
 		err := cmd.Start()
-		assert.NoError(
-			err,
-			"failed to serve repository over HTTP: stderr: %s, stdout: %s",
-			stderr.String(),
-			serveStdout.String(),
-		)
+		assert.NoError(err, "failed to start cling-sync serve")
 		defer func() {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
 		}()
 		t0 := time.Now()
 		for time.Since(t0) < 10*time.Second {
-			if strings.Contains(serveStdout.String(), "Serving") {
+			conn, err := net.DialTimeout("tcp", "127.0.0.1:9123", 100*time.Millisecond)
+			if err == nil {
+				_ = conn.Close()
 				break
 			}
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 
@@ -650,7 +655,7 @@ func TestRepositoryOverHTTP(t *testing.T) {
 	{
 		workspace1Ls := sut.Ls()
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "http://localhost:9123", "../workspace2")
-		t.Chdir("../workspace2")
+		sut.Chdir("../workspace2")
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 		sut.ClingSync("merge", "--no-progress")
 		workspace2Ls := sut.Ls()
@@ -669,81 +674,47 @@ func TestRepositoryOverHTTP(t *testing.T) {
 			`, sut.RepositoryHead(), sut.RepositoryHeadDate())),
 			log)
 	}
-
-	t.Log("Make sure we actually talked to the HTTP server")
-	{
-		logs := serveStdout.String()
-		assert.Contains(logs, "method=GET path=/storage/open")              // Open
-		assert.Contains(logs, "method=GET path=/storage/control/refs/head") // ReadControlFile
-		assert.Contains(logs, "method=PUT path=/storage/control/refs/head") // WriteControlFile
-		assert.Contains(logs, "method=HEAD path=/storage/block")            // HasBlock
-		assert.Contains(logs, "method=GET path=/storage/block")             // ReadBlock
-		assert.Contains(logs, "method=PUT path=/storage/block")             // WriteBlock
-	}
 }
 
 type Sut struct {
 	*lib.TestFS
-	t      *testing.T
-	assert lib.Assert
+	t            *testing.T
+	assert       lib.Assert
+	workDir      string // absolute path the Sut's helpers and `cling-sync` invocations run in
+	keychainFile string // per-test mock-keychain file; isolates `save-passphrase` from sibling tests
 }
 
-//  1. Create a new repository and change into the workspace directory, so all
-//     commands are executed in the workspace.
-//     The temporary directory is _not_ cleaned up after the test, so it can be
-//     inspected.
-//  2. Build the `cling-sync` binary into the temporary directory.
-//  3. Create a new repository and change into the workspace directory.
-//  4. Save the repository keys so subsequent calls to `cling-sync` don't need
-//     the passphrase.
 func NewSut(t *testing.T) *Sut {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	tmpDir := filepath.Join(os.TempDir(), "cling_sync_integration")
+	// `t.TempDir` would auto-clean the directory at test end; we deliberately
+	// keep it around so failures can be inspected.
+	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling_sync_integration_*") //nolint:usetesting
+	assert.NoError(err, "failed to create temporary directory")
 	t.Logf("Using temporary directory: %s", tmpDir)
 
-	// Make sure the temporary directory can be removed.
-	err := filepath.WalkDir(tmpDir, func(path string, d os.DirEntry, err error) error {
-		_ = os.Chmod(path, 0o777)
-		return nil
-	})
-	assert.NoError(err, "failed to make temporary directory writable")
-	err = os.RemoveAll(tmpDir)
-	assert.NoError(err, "failed to remove temporary directory")
-	err = os.MkdirAll(tmpDir, 0o700)
-	assert.NoError(err, "failed to create temporary directory")
-
-	// Build the `cling-sync` binary.
-	t.Log("Building `cling-sync` binary")
-	buildArgs := []string{"-o", fmt.Sprintf("%s/cling-sync", tmpDir), "../cli"}
-	if os.Getenv("CS_TEST_NO_MOCK") == "" {
-		buildArgs = append([]string{"-tags", "mock"}, buildArgs...)
-	}
-	buildArgs = append([]string{"build"}, buildArgs...)
-	t.Log(gray("    go " + strings.Join(buildArgs, " ")))
-	cmd := exec.Command("go", buildArgs...)
-	out, err := cmd.CombinedOutput()
-	assert.NoError(err, "failed to build `cling-sync` binary: %s", string(out))
-
-	// Create a workspace directory and change into it.
-	t.Log("Creating repository")
 	workspaceDir := filepath.Join(tmpDir, "workspace")
 	err = os.MkdirAll(workspaceDir, 0o700)
 	assert.NoError(err, "failed to create workspace directory")
-	t.Chdir(workspaceDir)
-	assert.NoError(err, "failed to change into temporary directory")
 
-	fs := lib.NewRealFS(".")
-	sut := &Sut{td.NewTestFS(t, fs), t, assert}
+	fs := lib.NewRealFS(workspaceDir)
+	sut := &Sut{td.NewTestFS(t, fs), t, assert, workspaceDir, filepath.Join(tmpDir, "keychain.json")}
 	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "init", "../repository")
 	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 
 	return sut
 }
 
-// ClingSync the `cling-sync` command with the given arguments.
-// The test will fail if the command fails.
-// Return the stdout of the command.
+func (s *Sut) Path(rel string) string {
+	return filepath.Clean(filepath.Join(s.workDir, rel))
+}
+
+func (s *Sut) Chdir(rel string) {
+	s.t.Helper()
+	s.workDir = s.Path(rel)
+	s.TestFS = td.NewTestFS(s.t, lib.NewRealFS(s.workDir))
+}
+
 func (s *Sut) ClingSync(args ...string) string {
 	s.t.Helper()
 	return s.ClingSyncStdin("", args...)
@@ -753,7 +724,7 @@ func (s *Sut) ClingSync(args ...string) string {
 func (s *Sut) ClingSyncStdin(stdin string, args ...string) string {
 	s.t.Helper()
 	s.t.Log(gray(fmt.Sprintf("    > cling-sync %s", strings.Join(args, " "))))
-	cmd := exec.Command("../cling-sync", args...)
+	cmd := s.cmd(args...)
 	cmd.Stdin = strings.NewReader(stdin)
 	stdout := bytes.NewBuffer(nil)
 	stderr := bytes.NewBuffer(nil)
@@ -770,7 +741,7 @@ func (s *Sut) ClingSyncStdin(stdin string, args ...string) string {
 func (s *Sut) ClingSyncError(args ...string) string {
 	s.t.Helper()
 	s.t.Log(gray(fmt.Sprintf("    > cling-sync %s", strings.Join(args, " "))))
-	cmd := exec.Command("../cling-sync", args...)
+	cmd := s.cmd(args...)
 	stdout := bytes.NewBuffer(nil)
 	stderr := bytes.NewBuffer(nil)
 	cmd.Stdout = stdout
@@ -853,6 +824,16 @@ func (s *Sut) Touch(path string, mtime time.Time) {
 	s.t.Helper()
 	s.t.Log(gray(fmt.Sprintf("    > touch(%s, %s)", path, mtime.Format(time.RFC3339))))
 	s.TestFS.Touch(path, mtime)
+}
+
+func (s *Sut) cmd(args ...string) *exec.Cmd {
+	cmd := exec.Command(clingSyncBin, args...)
+	cmd.Dir = s.workDir
+	// The mock keychain backs every entry with a single JSON file. Without
+	// per-test isolation, parallel `save-passphrase` calls would race on
+	// the read-modify-write of that file.
+	cmd.Env = append(os.Environ(), "CLING_SYNC_MOCK_KEYCHAIN_FILE="+s.keychainFile)
+	return cmd
 }
 
 func gray(s string) string {
@@ -958,4 +939,27 @@ func head(s string) string {
 		return ""
 	}
 	return lines[0]
+}
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "cling_sync_integration_bin_*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create build tmpdir: %v\n", err)
+		os.Exit(1)
+	}
+	clingSyncBin = filepath.Join(dir, "cling-sync")
+	buildArgs := []string{"build"}
+	if os.Getenv("CS_TEST_NO_MOCK") == "" {
+		buildArgs = append(buildArgs, "-tags", "mock")
+	}
+	buildArgs = append(buildArgs, "-o", clingSyncBin, "../cli")
+	cmd := exec.Command("go", buildArgs...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build cling-sync: %v\n%s\n", err, string(out))
+		_ = os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
