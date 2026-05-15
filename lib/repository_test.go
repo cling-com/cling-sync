@@ -44,7 +44,12 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		userKeyCipher, err := NewCipher(userKey)
 		assert.NoError(err)
 		rawKEK := make([]byte, RawKeySize)
-		rawKEK, err = Decrypt(masterKeyInfo.EncryptedKEK[:], userKeyCipher, masterKeyInfo.Argon2id.Salt[:], rawKEK)
+		rawKEK, err = Decrypt(
+			masterKeyInfo.EncryptedKEK[:],
+			userKeyCipher,
+			masterKeyAAD(masterKeyInfo.Argon2id.Salt, aadKEK),
+			rawKEK,
+		)
 		assert.NoError(err)
 
 		// Create the KEK cipher "by hand".
@@ -63,6 +68,34 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert.Equal(decrypted, data)
 	})
 
+	t.Run("Swapping two encrypted keys in the config is detected", func(t *testing.T) {
+		// Test that each secret (KEK, BlockIDHmac, ...) uses custom AAD.
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		configFilePath := filepath.Join(".cling", "repository.txt")
+		r.Chmod(configFilePath, 0o600)
+		toml, err := r.Storage.Open()
+		assert.NoError(err)
+		masterKeyInfo, err := parseRepositoryConfig(toml)
+		assert.NoError(err)
+		masterKeyInfo.EncryptedKEK, masterKeyInfo.EncryptedBlockIdHmacKey = masterKeyInfo.EncryptedBlockIdHmacKey, masterKeyInfo.EncryptedKEK
+		toml["encryption"]["encrypted-key-encryption-key"] = FormatRecoveryCode(masterKeyInfo.EncryptedKEK[:])
+		toml["encryption"]["encrypted-block-id-hmac"] = FormatRecoveryCode(
+			masterKeyInfo.EncryptedBlockIdHmacKey[:],
+		)
+		f, err := r.OpenWrite(configFilePath)
+		assert.NoError(err)
+		defer f.Close() //nolint:errcheck
+		err = WriteToml(f, "", toml)
+		assert.NoError(err)
+
+		repo2, err := OpenRepository(r.Storage, []byte(r.Passphrase))
+		assert.Error(err, "message authentication failed")
+		assert.Nil(repo2)
+	})
+
 	for _, tamper := range []string{"UserKeySalt", "EncryptedKEK", "EncryptedBlockIdHmacKey", "EncryptedGearCDCSeed"} {
 		t.Run(fmt.Sprintf("Tampering with %s is detected", tamper), func(t *testing.T) {
 			t.Parallel()
@@ -78,10 +111,10 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 			switch tamper {
 			case "UserKeySalt":
 				masterKeyInfo.Argon2id.Salt[0] ^= 1
-				toml["encryption"]["user-key-salt"] = FormatRecoveryCode(masterKeyInfo.Argon2id.Salt[:])
+				toml["encryption"]["passphrase-derivation"] = masterKeyInfo.Argon2id.Marshal()
 			case "EncryptedKEK":
 				masterKeyInfo.EncryptedKEK[0] ^= 1
-				toml["encryption"]["encrypted-kek"] = FormatRecoveryCode(masterKeyInfo.EncryptedKEK[:])
+				toml["encryption"]["encrypted-key-encryption-key"] = FormatRecoveryCode(masterKeyInfo.EncryptedKEK[:])
 			case "EncryptedBlockIdHmacKey":
 				masterKeyInfo.EncryptedBlockIdHmacKey[0] ^= 1
 				toml["encryption"]["encrypted-block-id-hmac"] = FormatRecoveryCode(
@@ -101,7 +134,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 			err = WriteToml(f, "", toml)
 			assert.NoError(err)
 
-			repo2, err := OpenRepository(r.Storage, userPassphrase)
+			repo2, err := OpenRepository(r.Storage, []byte(r.Passphrase))
 			assert.Error(err, "message authentication failed")
 			assert.Nil(repo2)
 		})

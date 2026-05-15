@@ -463,12 +463,16 @@ cling-sync's design protects against the following.
   different key. The encrypted KEK then refuses to decrypt and the
   repository fails to open. No data is exposed.
 - **Speed up an offline passphrase crack by editing the on-disk
-  parameters.** The salt is bound to the encrypted KEK as AEAD
-  associated data, so it cannot be changed undetected. The time,
+  parameters.** The salt is bound to each encrypted master key as
+  AEAD associated data, so it cannot be changed undetected. The time,
   memory, and lanes parameters are not in the AAD, but changing them
-  produces a different derived key, so the AEAD on the KEK fails
-  anyway. Either way, a brute-forcer has to run Argon2id at the
+  produces a different derived key, so the AEAD on the master keys
+  fails anyway. Either way, a brute-forcer has to run Argon2id at the
   original cost per guess.
+- **Swap the three encrypted master keys in `repository.txt`.** Each
+  blob's AAD is the salt plus a per-key label, so an attempt to
+  reassign the KEK ciphertext to the BlockId HMAC slot (or any other
+  permutation) fails authentication.
 
 ### What a storage-only adversary can still do
 

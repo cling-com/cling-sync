@@ -59,6 +59,20 @@ type repositoryKeys struct {
 	GearCDCSeed    RawKey
 }
 
+//nolint:gochecknoglobals
+var (
+	aadKEK            = []byte("cling-sync/kek")
+	aadBlockIdHmacKey = []byte("cling-sync/blockid-hmac-key")
+	aadGearCDCSeed    = []byte("cling-sync/gearcdc-seed")
+)
+
+func masterKeyAAD(salt Salt, label []byte) []byte {
+	aad := make([]byte, 0, len(salt)+len(label))
+	aad = append(aad, salt[:]...)
+	aad = append(aad, label...)
+	return aad
+}
+
 type Repository struct {
 	storage        Storage
 	kekCipher      cipher.AEAD
@@ -85,7 +99,7 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 		return nil, WrapErrorf(err, "failed to generate random KEK")
 	}
 	encryptedKEK := make([]byte, EncryptedKeySize)
-	encryptedKEK, err = Encrypt(kek[:], cipher, userKeySalt[:], encryptedKEK)
+	encryptedKEK, err = Encrypt(kek[:], cipher, masterKeyAAD(userKeySalt, aadKEK), encryptedKEK)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to encrypt KEK with user-key")
 	}
@@ -97,7 +111,12 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 		return nil, WrapErrorf(err, "failed to generate random block id HMAC key")
 	}
 	encryptedBlockIdHmacKey := make([]byte, EncryptedKeySize)
-	encryptedBlockIdHmacKey, err = Encrypt(blockIdHmacKey[:], cipher, userKeySalt[:], encryptedBlockIdHmacKey)
+	encryptedBlockIdHmacKey, err = Encrypt(
+		blockIdHmacKey[:],
+		cipher,
+		masterKeyAAD(userKeySalt, aadBlockIdHmacKey),
+		encryptedBlockIdHmacKey,
+	)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to encrypt block id HMAC key with user-key")
 	}
@@ -113,7 +132,12 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 		return nil, WrapErrorf(err, "failed to generate random GearCDC seed")
 	}
 	encryptedGearCDCSeed := make([]byte, EncryptedKeySize)
-	encryptedGearCDCSeed, err = Encrypt(gearCDCSeed[:], cipher, userKeySalt[:], encryptedGearCDCSeed)
+	encryptedGearCDCSeed, err = Encrypt(
+		gearCDCSeed[:],
+		cipher,
+		masterKeyAAD(userKeySalt, aadGearCDCSeed),
+		encryptedGearCDCSeed,
+	)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to encrypt GearCDC seed with user-key")
 	}
@@ -187,7 +211,7 @@ func decryptrepositoryKeys(storage Storage, passphrase []byte) (*repositoryKeys,
 		return nil, WrapErrorf(err, "failed to create a XChaCha20Poly1305 cipher from user-key")
 	}
 	kek := make([]byte, RawKeySize)
-	kek, err = Decrypt(mki.EncryptedKEK[:], cipher, mki.Argon2id.Salt[:], kek)
+	kek, err = Decrypt(mki.EncryptedKEK[:], cipher, masterKeyAAD(mki.Argon2id.Salt, aadKEK), kek)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt KEK with user-key")
 	}
@@ -195,7 +219,7 @@ func decryptrepositoryKeys(storage Storage, passphrase []byte) (*repositoryKeys,
 	blockIdHmacKey, err = Decrypt(
 		mki.EncryptedBlockIdHmacKey[:],
 		cipher,
-		mki.Argon2id.Salt[:],
+		masterKeyAAD(mki.Argon2id.Salt, aadBlockIdHmacKey),
 		blockIdHmacKey,
 	)
 	if err != nil {
@@ -205,7 +229,7 @@ func decryptrepositoryKeys(storage Storage, passphrase []byte) (*repositoryKeys,
 	gearCDCSeed, err = Decrypt(
 		mki.EncryptedGearCDCSeed[:],
 		cipher,
-		mki.Argon2id.Salt[:],
+		masterKeyAAD(mki.Argon2id.Salt, aadGearCDCSeed),
 		gearCDCSeed,
 	)
 	if err != nil {
