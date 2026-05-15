@@ -26,7 +26,8 @@ const (
 )
 
 const (
-	MaxBlockSize = 8 * 1024 * 1024
+	MaxBlockSize       = 8 * 1024 * 1024
+	MaxControlFileSize = 1 * 1024 * 1024
 )
 
 type (
@@ -35,6 +36,8 @@ type (
 		buf *[MaxBlockSize]byte
 	}
 )
+
+const BlockIdSize = 32
 
 func NewBlockBuf() BlockBuf {
 	return BlockBuf{buf: new([MaxBlockSize]byte)}
@@ -202,6 +205,9 @@ func (s *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
 }
 
 func (s *FileStorage) WriteControlFile(section ControlFileSection, name string, data []byte) error {
+	if len(data) > MaxControlFileSize {
+		return Errorf("control file %s/%s is too large: %d", section, name, len(data))
+	}
 	path, err := s.controlFilePath(section, name)
 	if err != nil {
 		return err

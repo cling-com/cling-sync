@@ -277,6 +277,24 @@ func TestFileStorageBlocks(t *testing.T) {
 		_, err = sut.FS.Stat(sut.blockPath(blockId))
 		assert.ErrorIs(err, fs.ErrNotExist)
 	})
+
+	t.Run("WriteControlFile enforces the MaxControlFileSize boundary", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
+		assert.NoError(err)
+		err = sut.Init(nil, "")
+		assert.NoError(err)
+		// Exactly MaxControlFileSize must be accepted.
+		err = sut.WriteControlFile(ControlFileSectionRefs, "head", make([]byte, MaxControlFileSize))
+		assert.NoError(err)
+		// One byte over must be rejected, and must not leave a half-written file.
+		err = sut.WriteControlFile(ControlFileSectionRefs, "head2", make([]byte, MaxControlFileSize+1))
+		assert.Error(err, "is too large")
+		has, err := sut.HasControlFile(ControlFileSectionRefs, "head2")
+		assert.NoError(err)
+		assert.Equal(false, has)
+	})
 }
 
 func TestBlockBuf(t *testing.T) {
