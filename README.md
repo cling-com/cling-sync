@@ -1,365 +1,580 @@
-# cling-sync: The Secure Forever Store
+# cling-sync
+
+cling-sync is a client-side encrypted, revisional, content-addressed
+archival store. You put data in. You can retrieve any version of it
+later. The server, if any, never sees plaintext and never sees file
+names. Every block on disk is indistinguishable from random.
 
 > [!WARNING]
 > This project is still in development.
 
-## Synopsis
+## Contents
 
-cling-sync is a _client-side encrypted_, _revisional_ archival storage system.
+1. [Concepts](#concepts)
+2. [Quick start](#quick-start)
+3. [Command reference](#command-reference)
+4. [Hosting a repository over HTTP](#hosting-a-repository-over-http)
+5. [Ignore files](#ignore-files)
+6. [How it works](#how-it-works)
+7. [Threat model](#threat-model)
+8. [Development](#development)
 
-The main goal is to provide a place where you can put all your data without worrying about
-losing it. Everything you put in once stays there forever.
+## Concepts
 
-### Ways of "Losing Data"
+- **Repository.** The encrypted store. A directory containing a config
+  file, a set of immutable encrypted blocks, and a small set of named
+  references.
+- **Block.** An AEAD-encrypted byte object of up to 8 MiB. Identified
+  by an HMAC over its plaintext under a per-repository secret key.
+  Blocks are written once and never modified.
+- **Revision.** An immutable snapshot of the repository contents at a
+  point in time. A revision is itself stored in one or more blocks. Each
+  revision points at its parent. The chain ends at the first revision.
+- **Head.** A named reference that records the current revision id.
+- **Workspace.** A local working copy attached to a repository. It holds
+  files in their normal form, a small config file, and optional cached
+  state.
+- **Merge.** The two-way reconciliation between a workspace and its
+  repository. Pulls new revisions, then commits local changes as a new
+  revision.
 
-There are several ways to lose data.
+## Quick start
 
-#### Physical
-
-A drive with important data gets corrupted or plainly lost. Syncing your data to multiple
-locations with the 2 + 1 rule helps: Two local copies at home, one remote.
-
-#### Accidental Deletion
-
-It happens all the time. Having backups helps but only if backups are strictly incremental.
-Otherwise the backup will also lose the data eventually. A revisional archival storage is designed
-to let you __easily__ recover lost or old data.
-
-#### Forgotten File Formats
-
-It might sound silly in today's day and age but file formats get forgotten all the time. Be it
-specific image formats or word processor files. A sister project (TBD) is aiming to conserve as
-many file formats as possible in a future proof manner.
-
-### Hidden In A Sea of Files
-
-Millions of files and unable to find the one you know is there or was there at some point.
-
-### Terminology
-
-- **Repository**: The place where the encrypted data is stored.
-
-- **Workspace**: The local working copy of the repository files.
-
-- **Merge**: The process of applying all changes from the repository to the workspace and
-  vice versa.
-
-- **Revision**: A snapshot of the repository at a specific point in time, usually created by
-  a `merge` operation.
-
-
-### Modification Tracking
-
-By default, only changes to the file contents are tracked. The file's metadata (ownership, mtime,
-and mode) are stored in the repository, but modifications to these attributes are not detected in
-consecutive merges unless the `--chown`, `--chmod`, or `--chtime` flags are used.
-
-When merging new files from the repository, mtime and mode are restored from the repository but not
-ownership. This is because ownership is highly dependent on the user's environment whereas mtime
-and mode are not.
-
-This way of tracking modifications is best suited for the main use case of cling-sync: making sure
-user data is never lost without.
-
-If you depend on accurate tracking of all metadata, make sure to always use `--chown`, `--chmod`, 
-and `--chtime` or look for a different solution.
-
-## OS Support
-
-Currently, the main focus is on supporting MacOS and Linux. It should work partly on Windows, but 
-is not tested at the moment.
-
-There are clients for Android, iOS, and MacOS at: https://github.com/cling-com/cling-sync-clients 
-
-The fact that everything in this project is written in plain Go (no CGO) and uses only the 
-standard library with a few select `golang.org/x` dependencies should make it highly portable.
-
-## Usage
-
-**Build the Command Line Interface (CLI) tool:**
-
-Install [Go](https://go.dev/doc/install) version 1.26.1 or later and run:
+Build the CLI:
 
     ./build.sh build cli
 
-**Run the CLI tool:**
+Create a workspace and its backing repository in one step. `init`
+creates the repository at the given path and attaches the current
+directory as a workspace pointing at it.
 
-    ./cling-sync <command>
+    mkdir myproject && cd myproject
+    cling-sync init /path/to/repo
 
-See `./cling-sync --help` for more information.
+Back up `/path/to/repo/.cling/repository.txt` somewhere safe. The file
+holds the encrypted key material and the Argon2id parameters for your
+passphrase. Without it the repository cannot be opened even with the
+correct passphrase. Print it, store it offline, or keep a copy on a
+second machine. The file is not secret on its own. The passphrase is
+still required to derive the user key.
 
-### Example Workflow
+To attach to an existing repository, use `attach`. The repository can
+be a local path or a remote URL served by
+[`cling-sync serve`](#hosting-a-repository-over-http):
 
-This section describes the main features with use-cases.
+    cling-sync attach /path/to/repo /path/to/local/directory
+    cling-sync attach http://repo.example:4242 /path/to/local/directory
 
-#### Initialize a new repository attached to the current directory
-
-    cling-sync init /path/to/repository
-
-This will create a new repository at `/path/to/repository` where all encrypted data is stored.
-Additionally, a `.cling` directory is created in the current directory that ties the repository
-to this directory.
-
-Examine `/path/to/repository/.cling/repository.txt` to learn how to backup the encryption keys.
-
-#### Attach to an existing repository
-
-    cling-sync attach /path/to/repository /path/to/local/directory
-
-This will create a new workspace at `/path/to/local/directory` that is connected to the repository
-at `/path/to/repository`.
-
-#### Attach to a path inside an existing repository
-
-    cling-sync attach --path-prefix my/path/prefix/ /path/to/repository /path/to/local/directory
-
-This will create a new workspace at `/path/to/local/directory` that is connected to the repository
-at `/path/to/repository` and will only show files that are inside the path prefix `my/path/prefix/`.
-
-All operations with the exception of `cp` will be limited to the path prefix.
-
-#### Save the encryption keys to the repository
-
-    cling-sync security save-keys
-
-Store the encryption keys of the repository in `.cling/workspace/security/keys.enc`.
-
-The file is encrypted with a random key that is securely stored in the system's keyring.
-
-**Notes an MacOS:**
-
-You might need to unlock the keychain with 
-`security unlock-keychain ~/Library/Keychains/login.keychain-db`
-
-**Notes on Linux:**
-
-This feature uses `secret-tool` to store the random key in the system's keyring.
-You can unlock it (Gnome) with:
-`echo '\n' | gnome-keyring-daemon --unlock`
-
-#### Merge the local workspace with the repository
+Edit files. Commit them as a new revision and pull anything new from the
+repository:
 
     cling-sync merge
 
-This will copy all new or modified files from the repository and delete all files that are not in
-the repository's latest revision. After this, changes from the local workspace are committed to the
-repository. If there are conflicts, the user is asked to resolve them.
+List revisions:
 
-#### Reset the workspace to a specific revision
+    cling-sync log
 
-    cling-sync reset head
+Restore an earlier revision into the workspace. Use `cling-sync log` to
+find the revision id, then:
 
-This will reset the workspace to the latest repository revision discarding any local changes.
+    cling-sync reset 9f3a...c104
+    cling-sync reset HEAD
 
-#### Show the status of the workspace
+## Command reference
 
-    cling-sync status
+All commands operate on the current directory's workspace unless noted.
+Run `cling-sync <command> --help` for the full flag list.
 
-#### Show the log of revisions
+### `init <repository-path>`
 
-    cling-sync log 'path/to/somewhere/**/*.txt' --status
+Create a new repository at the given path and attach the current
+directory as a workspace pointing at it. Prompts for a passphrase.
+Stores the public-but-not-secret repository config at
+`<repository-path>/.cling/repository.txt` and writes the workspace
+config to `./.cling/workspace.txt`.
 
-Show all revisions that contain a path that matches the pattern and show all paths that were added,
-updated, or deleted.
+If you only want to create the repository without binding the current
+directory, run `init` from an unrelated directory.
 
-#### Check the health of the repository
+### `attach <repository> <directory>`
 
-    cling-sync check
+Attach to an existing repository. Binds the workspace at `<directory>`
+to the given repository. The `<repository>` argument is either a local
+filesystem path or a remote URL served by
+[`cling-sync serve`](#hosting-a-repository-over-http). Writes the
+workspace config to `<directory>/.cling/workspace.txt`.
 
-Scan all revisions and verify the repository's integrity. `cling-sync check --data` will also check
-every block for data corruption. This will take a while. :-)
+The `--path-prefix <p>` flag attaches to a subtree of the repository.
+All operations except `cp` are then limited to that subtree.
 
-#### Serve the repository over HTTP
+### `merge`
 
-    cling-sync serve --address 127.0.0.1:4242 /path/to/repository
+The main operation. Pulls all new revisions from the repository into the
+workspace, then commits local changes as a new revision. Conflicts must
+be resolved manually.
 
-This will start a HTTP server on port `4242` that serves the repository at `/path/to/repository`.
+Ownership, mode, and mtime are recorded on every entry, but they are
+not treated as changes and they are not reapplied on restore. Handling
+these across systems is error-prone (uid and gid differ between
+machines, umask interacts with mode, mtime precision varies on some
+filesystems), so the default is to leave them alone. The `--chown`,
+`--chmod`, and `--chtime` flags opt each field back in for the current
+invocation. The same flags govern both directions: detection of local
+changes during commit, and restoration of metadata onto files written
+back from the repository.
+
+### `status`
+
+Show which workspace paths differ from the head revision.
+
+### `log [<pattern>] [--status]`
+
+Show the revision chain. With a pattern, restrict to revisions that
+touched a matching path. With `--status`, show added/updated/deleted
+paths per revision.
+
+### `ls [<pattern>]`
+
+List paths in the current revision. Accepts a glob pattern.
+
+### `cp <pattern> <target>`
+
+Copy paths from the repository into a local directory, without going
+through a workspace. Useful for partial extraction. `--revision <id>`
+selects a non-head revision.
+
+### `reset <revision>`
+
+Reset the workspace to the given revision, discarding local changes.
+A revision is addressed by its hex id, or by the literal `HEAD` for
+the current head revision.
+
+### `check [--data]`
+
+Verify repository integrity. Walks the revision chain and confirms every
+referenced block decrypts. With `--data`, additionally reads and
+decrypts the file data inside each revision.
+
+### `security save-passphrase`
+
+Store the passphrase in the workspace at
+`.cling/workspace/security/passphrase.enc`. The file is AEAD-encrypted
+with a random local key held in the OS keychain. Convenience only. See
+[Threat model](#threat-model) for what this scheme does and does not
+protect against.
+
+On macOS, you may need:
+
+    security unlock-keychain ~/Library/Keychains/login.keychain-db
+
+On Linux, the key is stored via `secret-tool`. Unlock the Gnome keyring
+with:
+
+    printf '\n' | gnome-keyring-daemon --unlock
+
+### `security delete-passphrase`
+
+Remove the saved passphrase and the matching keychain entry.
+
+### `sync-repo init <dir>` / `sync-repo run <repo>`
+
+Initialise a second repository as a sync target, then copy new blocks
+and revisions from this workspace's repository to the target. Used to
+keep mirror copies.
+
+### `serve --address <addr> <repository-path>`
+
+Serve a repository over HTTP. See
+[Hosting a repository over HTTP](#hosting-a-repository-over-http).
+
+## Hosting a repository over HTTP
+
+    cling-sync serve --address 127.0.0.1:4242 /path/to/repo
+
+Then attach from elsewhere:
 
     cling-sync attach http://127.0.0.1:4242 /path/to/workspace
 
-This will attach the repository at `127.0.0.1:4242` to the workspace at `/path/to/workspace`.
+The HTTP layer is intentionally minimal. There is no authentication, no
+TLS, and no authorisation. Put a reverse proxy with TLS and access
+control in front. [Caddy](https://caddyserver.com/) is one option.
 
-Note that this is HTTP only without any authorization. You should put a proxy like
-[Caddy](https://caddyserver.com/) in front of it.
+The server only ever sees AEAD-encrypted blocks. It cannot read their
+contents, cannot tamper with them undetected, and cannot forge new
+ones. It can refuse to serve, delete, or roll back. See
+[Threat model](#threat-model) for the full list of what a malicious
+server can and cannot do.
 
-### Ignore files
+## Ignore files
 
-cling-sync respects `.gitignore` and `.clingignore` files. The syntax is the same as for
-[git](https://git-scm.com/docs/gitignore).
+cling-sync respects `.gitignore` and `.clingignore`. The syntax is the
+[Git syntax](https://git-scm.com/docs/gitignore).
 
 > [!NOTE]
-> There is one difference between how Git and cling-sync handle ignore files. If you add
-> a pattern or path to a `.clingignore` or `.gitignore` file and merge it into the repository,
-> all matching files will be removed from the current revision.
-> **No files will be removed from the workspace.**
-> And as always, older revisions will still contain the files.
+> One difference from Git. Adding a pattern that matches existing
+> tracked files and then running `merge` marks those paths as deleted
+> in the next revision. Nothing is actually removed: the files in the
+> workspace are untouched, and earlier revisions still contain them.
 
-## Wasm Support
+## How it works
 
-Wasm support is a major focus of this project.
+### Cryptography
 
-Play around with the Wasm example included in this repository. First, serve a repository:
+All secrets are derived from one user passphrase.
 
-    cling-sync serve --cors-allow-all --address 127.0.0.1:4242 /path/to/repository
+Algorithms used:
 
-Then, build the Wasm example:
+- [**Argon2id**](https://www.rfc-editor.org/rfc/rfc9106) for key
+  derivation. Defaults: time = 4, memory = 128 MiB, lanes = 2.
+- [**XChaCha20-Poly1305**](https://en.wikipedia.org/wiki/ChaCha20-Poly1305)
+  (AEAD) for every encryption. 24 byte random nonce, 16 byte tag.
+- [**HMAC-SHA256**](https://www.rfc-editor.org/rfc/rfc6234) for block
+  ids.
 
-    ./build.sh wasm dev
+An **AEAD** (authenticated encryption with associated data) takes a
+key, a nonce, a plaintext, and an optional extra input called the
+**additional authenticated data (AAD)**. It produces a ciphertext
+plus an authentication tag. Decryption requires the exact same key,
+nonce, ciphertext, and AAD. If any of them differs, decryption fails
+and no plaintext is returned. The AAD itself is not encrypted and not
+stored in the ciphertext, but it is bound to the ciphertext by the
+tag, so it cannot be altered without detection. cling-sync uses this
+binding to glue values that must travel as a unit, for example by
+passing a block id as AAD when encrypting that block (see
+[Blocks](#blocks)).
 
-Finally, open the example in your browser:
+On-disk key material lives in `.cling/repository.txt`, each entry
+AEAD-encrypted under a key derived from the passphrase via Argon2id:
 
-    open http://127.0.0.1:8000/example.html
+- <a id="kek"></a>**Repository master key (KEK).** A 32 byte secret
+  used to encrypt the header of every block.
+- <a id="blockid-hmac-key"></a>**BlockId HMAC key.** A 32 byte secret
+  used as the HMAC-SHA256 key that turns block plaintext into a block
+  id.
+- <a id="gearcdc-seed"></a>**[GearCDC](https://joshleeb.com/posts/gear-hashing.html) seed.**
+  A 32 byte value used to randomise the chunk boundaries when
+  splitting large files.
 
-### Output Size
+One more piece of key material lives encrypted inside every block:
 
-Using the standard Go compiler (default), the Wasm binary is quite huge (about 5MB).
+- <a id="dek"></a>**Data encryption key (DEK).** A fresh 32 byte random
+  secret per block, used to encrypt that block's data. Stored inside
+  the block header, which is itself encrypted under the KEK.
 
-To compile using [TinyGo](https://tinygo.org/), use the `--optimize` flag:
+Public material in `.cling/repository.txt`:
 
-    ./build.sh wasm dev --optimize
+- **Argon2id parameters.** The 32 byte salt plus the time, memory, and
+  parallelism cost factors that drive the KDF.
 
-This reduces the binary size to about 600KB, which is okay for now.
+To open a repository:
 
-## Cryptography
+1. Read `.cling/repository.txt`.
+2. Derive `userKey = Argon2id(passphrase, salt, time, memory, lanes)`.
+3. Decrypt the KEK, the BlockId HMAC key, and the GearCDC seed under
+   the user key. If any AEAD fails, the passphrase is wrong or the
+   file was tampered with.
 
-The repository's cryptography relies on these values you can find in `.cling/repository.txt`:
+A block is then decrypted in two steps: the KEK decrypts the block
+header, and the DEK recovered from the header decrypts the block
+data.
 
-- An encrypted 32-byte **Key Encryption Key (KEK)** that is used to encrypt each block's
-  header (which holds the per-block random _Data Encryption Key (DEK)_).
+### Storage layout
 
-- A 32 byte **Block ID HMAC Key** that is used to sign the block id based on the content.
+The repository directory looks like this.
 
-- A 32 byte **GearCDC Seed** that is used to initialize the
-  [GearCDC](#data-deduplication-content-defined-chunking) algorithm.
+    <repo>/.cling/repository.txt          public config (Argon2id params, encrypted keys)
+    <repo>/.cling/repository/refs/head    current revision id (hex)
+    <repo>/.cling/repository/objects/<aa>/<bb>/<hex-rest>   blocks
 
-- A 32 byte **User Key Salt** that is used in the Key Derivation Function (KDF) to derive
-  an encryption key to encrypt/decrypt the KEK.
+Each block lives at a path derived from its id. The `objects/aa/bb/`
+two-level fan-out keeps directory sizes manageable.
 
-All of these values are not strictly secret - without the passphrase, data cannot be decrypted.
+The workspace directory looks like this.
 
-### Algorithms Used
+    <ws>/.cling/workspace.txt             workspace config (remote URI, path prefix)
+    <ws>/.cling/workspace/refs/head       last revision merged into this workspace
+    <ws>/.cling/workspace/security/passphrase.enc   optional, see save-passphrase
 
-| Purpose               | Algorithm                 | Notes                                      |
-| --------------------- | ------------------------- | ------------------------------------------ |
-| Key derivation        | Argon2id                  | default: 4 iterations, 128MB, 2 threads    |
-| Encryption (all data) | XChaCha20-Poly1305 (AEAD) | nonce-misuse resistant; 24B nonce, 16B tag |
-| Block ID generation   | HMAC-SHA256               | per-repository secret HMAC key             |
-
-### User Authentication / KEK Encryption
-
-The flow to arrive at the KEK:
-
-- The user provides their passphrase
-
-- The **Argon2id KDF** is used to derive a key from the _passphrase_ and the _User Key Salt_.
-
-- That key is then used to decrypt the encrypted _KEK_, _Block ID HMAC Key_, and _GearCDC Seed_.
+Files outside `.cling` are the user's files in their normal, unencrypted
+form.
 
 ### Blocks
 
-#### Block IDs
+A block is a bounded byte object that cling-sync writes once and never
+mutates. The on-disk size of a block is at most 8 MiB.
 
-A block ID is calculated as `HMAC-SHA256(BlockIDHMACKey, blockContent)` where `BlockIDHMACKey`
-is the _Block ID HMAC Key_ stored in `.cling/repository.txt`.
+A block id is the HMAC-SHA256 of the block's plaintext under the
+[BlockId HMAC key](#blockid-hmac-key). Two consequences:
 
-This makes blocks content addressable, but you cannot make any assumptions about the content of a
-block based on its block id.
+- Identical plaintext always produces the same id, so duplicate content
+  is stored once.
+- The id reveals nothing about the content to anyone without that key.
 
-#### Data Encryption
+A block on disk holds two AEAD ciphertexts. The block header is
+encrypted with the [repository master key (KEK)](#kek). The block data
+is encrypted with a single-use [data encryption key (DEK)](#dek) that
+lives inside the encrypted header. Both ciphertexts use the block id as
+AEAD associated data, so a block stored under the wrong id fails to
+decrypt.
 
-File contents and all metadata are stored in blocks of up to _8MB_ in size. Each block is encrypted
-with a unique, random 32 byte _Data Encryption Key (DEK)_. The _DEK_ itself lives inside the block
-header, which is encrypted as a whole with the _KEK_ using the block ID as the AEAD associated
-data (see the block layout below).
+The header carries a format version, a compression flag, the DEK, and
+the unpadded data length.
 
-#### Data Deduplication (Content-Defined Chunking)
+To read a block:
 
-If only a part of a file is modified, only that part (more or less) is stored in the repository.
-Block boundaries are not fixed, but are calculated using the 
-[GearCDC](https://joshleeb.com/posts/gear-hashing.html) algorithm.
-Basically, the algorithm keeps a rolling hash of the content to detect a "good boundary" so that a
-block is at best around 2-4MB in size. Because this is based on the actual content, even changes in
-the middle of a file are detected and at some point, the algorithm will detect the boundaries of
-blocks that were not changed.
-This also means that for files smaller than the average block size, deduplication is not effective.
+1. Decrypt the header with the KEK and the block id as AAD.
+2. Check the header's format version.
+3. Decrypt the data with the DEK from the header and the same block id
+   as AAD.
+4. Trim trailing padding using the unpadded data length from the header.
+5. If the compression flag is set, decompress.
 
-To make the boundaries unpredictable and thus increase protection against fingerprinting attacks,
-the GearCDC algorithm is seeded with a random number unique to each repository.
+Three pieces of processing happen on the writer side before encryption:
+content-defined chunking, compression, and padding.
+
+#### Content-defined chunking
+
+Large files are split into chunks by the
+[GearCDC](https://joshleeb.com/posts/gear-hashing.html) algorithm,
+seeded with the [GearCDC seed](#gearcdc-seed). GearCDC rolls a hash
+over the file and tries to pick a "good" boundary at content-defined
+positions, so the same positions are chosen across versions of a file
+that share those bytes. The benefit is that an edit in the middle of
+a file re-chunks only the region around the edit plus a small amount
+of collateral on either side. The surrounding chunks keep their
+boundaries and their block ids, so only the changed chunks are
+written as new blocks. Chunks average around 2 to 4 MiB.
 
 #### Compression
 
-A block may be compressed if it is at least 1KB in size and the first 1KB "looks" compressible,
-i.e. the entropy of the data is low enough. If compressing the whole block saves less than 5%,
-the block is stored uncompressed.
-
-The compression algorithm is [Deflate](https://en.wikipedia.org/wiki/DEFLATE) with level 6. 
+If the block is at least 1 KiB and a 1 KiB sample looks compressible by
+an entropy estimate, the block is compressed with
+[Deflate](https://www.rfc-editor.org/rfc/rfc1951) level 6. If
+compression saves less than 5 percent, the original bytes are kept.
 
 #### Padding
 
-After compression, block data is padded up to the next
-[Padmé](https://lbarman.ch/blog/padme/) boundary, capped at the maximum block data size. The
-padding is added before encryption, so it is covered by the block's AEAD, and the unpadded
-length is stored in the encrypted header and used to strip padding on read. Together with the
-random GearCDC seed this makes it harder for an attacker with filesystem-level access to the
-repository to fingerprint known file contents by exact on-disk block sizes or deterministic
-block boundaries. It does not hide the total repository size, the number of blocks, or access
-patterns, and it is not a defense once the KEK is compromised.
+The block data is padded up to the next
+[Padmé](https://arxiv.org/abs/1806.03160) boundary. Padding is added
+before encryption, so it is covered by the AEAD. The unpadded length
+sits inside the encrypted header, so the on-disk block size is one of a
+small quantised set rather than the exact plaintext length. This makes
+it harder for an attacker with repository access to fingerprint known
+files by their on-disk size (see [Fingerprinting](#fingerprinting)).
 
-## File Formats
+### Revisions
 
-All integer types are written as little-endian, and all strings are UTF-8 encoded.
+A revision is an atomic snapshot of repository contents at a point in
+time. The revision record itself is a single block. Its
+**revision id** is just the [block id](#blocks) of that block.
 
-### Metadata
+A revision record contains:
 
-`FileMetadata` is serialized to:
+- a magic prefix, so a recovery tool can identify a revision block
+  without an external index,
+- a timestamp,
+- the parent revision id (zero for the first revision),
+- an optional commit message and author,
+- the ordered list of block ids that hold the revision's entries.
 
-| Size (bytes) | Type       | Field             | Description                                    |
-| ------------ | ---------- | ----------------- | ---------------------------------------------- |
-| 2            | uint16     | _format version_  | Serialization format version (`0x01`)          |
-| 4            | uint32     | FileMode          | File mode and permission flags (see below)     |
-| _(12)_       | _timespec_ | **MTime**         | File modification time                         |
-| 8            | int64      | - MTimeSec        | File modification time (seconds since epoch)   |
-| 4            | int32      | - MTimeNsec       | File modification time (nanoseconds)           |
-| 8            | int64      | Size              | File size                                      |
-| 32           | SHA256     | FileHash          | Hash of the file contents                      |
-|              | _array_    | **BlockIds**      | Block IDs of the file contents                 |
-| 2            | uint16     | - Length          | Number of block IDs (N)                        |
-| 32 \* N      | BlockId    | - BlockIds        | Block IDs (N)                                  |
-|              | _string_   | **SymlinkTarget** | The symlink target path or empty               |
-| 2            | uint16     | - Length          | Length of target file name (M)                 |
-| M            | uint8      | - Bytes           | utf-8 encoded string                           |
-| 4            | uint32     | UID               | Optional: Owner of the file (2^31 if missing)  |
-| 4            | uint32     | GID               | Optional: Group of the file (2^31 if missing)  |
-| _(12)_       | _timespec_ | **Birthtime**     | Optional: File creation time                   |
-| 8            | int64      | - BirthtimeSec    | File creation time (seconds since epoch) or -1 |
-| 4            | int32      | - BirthtimeNsec   | File creation time (nanoseconds) or -1         |
+Each entry block holds a batch of `RevisionEntry` records. Every entry
+records, for a single path, whether it was added, updated, or deleted
+in this revision, together with the path's full metadata: file mode,
+modification time, size, content hash, the ordered list of block ids
+that hold the file data, an optional symlink target, optional uid, gid,
+and birthtime. Paths that did not change in a revision do not appear
+in it; they are inherited from the parent.
 
-### Block
+The current revision is named in `.cling/repository/refs/head`. To
+follow the history, a client reads `head`, fetches the named revision
+block, decrypts it, then walks parent links.
 
-A block is separated into a header and data section. Each section is encrypted using XChaCha20-Poly1305
-with a random nonce and the block id as associated data.
+Paths in revisions are repository-relative. The following are rejected:
 
-| Size (bytes) | Type    | Field               | Description                                    |
-| ------------ | ------- | ------------------- | ---------------------------------------------- |
-| _(86)_       |         | **Header**          | KEK-AEAD-encrypted block header                |
-| 24           |         | - AEAD nonce        | Random XChaCha20-Poly1305 nonce                |
-| 2            | uint16  | - _Format version_  | Serialization format version (`0x01`)          |
-| 8            | uint64  | - Flags             | Flags for the block (see below)                |
-| 32           | RawKey  | - DEK               | Per-block random data encryption key           |
-| 4            | uint32  | - EncryptedDataSize | Unpadded data size (`N`)                       |
-| 16           |         | - AEAD tag          | AEAD authentication tag                        |
-| _(N+P+40)_   |         | **Data**            | DEK-AEAD-encrypted block data                  |
-| 24           |         | - AEAD nonce        | Random XChaCha20-Poly1305 nonce                |
-| N            | uint8   | - data              | The unpadded block data                        |
-| P            | uint8   | - padding           | Padding (see [Padding](#padding))              |
-| 16           |         | - AEAD tag          | AEAD authentication tag                        |
+- absolute paths (leading `/`)
+- `.` or `..` segments
+- a trailing `/`
+- Windows volume prefixes
+- length greater than 4096 bytes
 
-Block flags:
+Symlinks are not supported yet.
 
-| Bit | Name             | Description                                          |
-| --- | ---------------- | ---------------------------------------------------- |
-| 0   | BlockFlagDeflate | Data is Deflate-compressed before encryption         |
+### On-disk wire format
+
+All on-disk and in-block structures are defined in
+[`lib/format.proto`](lib/format.proto), using a strict subset of
+[proto3](https://protobuf.dev/programming-guides/proto3/). The wire
+encoding follows the standard
+[protobuf encoding](https://protobuf.dev/programming-guides/encoding/).
+Only two wire types appear.
+
+| Wire type | Name             | Used by                          |
+| --------- | ---------------- | -------------------------------- |
+| 0         | varint           | integers and enums               |
+| 2         | length-delimited | bytes, strings, nested messages  |
+
+A varint is a base-128 integer. Each byte carries seven payload bits.
+A set high bit means more bytes follow. Varints are capped at ten
+bytes.
+
+Each field starts with a tag varint. The tag encodes
+`(field_number << 3) | wire_type`.
+
+A length-delimited field is a tag, then a varint length, then that many
+bytes.
+
+Repeated fields appear as one tagged entry per element. Packed encoding
+is not used. Optional fields are omitted when not set. Required fields
+are always written. Unknown tags are skipped on read, which makes
+backwards-compatible additions possible.
+
+## Threat model
+
+cling-sync is designed against a **storage-only adversary**: someone
+who can read, write, swap, or delete any byte of the repository on
+disk or in flight, but does not have the passphrase, the KEK, or the
+BlockId HMAC key. Think of a malicious remote host, a compromised
+HTTP server, or a hostile file share.
+
+A **local adversary** runs code on the user's machine with at least
+the user's privileges. They can read process memory, attach a
+debugger, capture coredumps, read the OS keychain, and log keystrokes
+including the passphrase as it is typed. cling-sync's cryptographic
+guarantees do not extend to this adversary. See
+[Saved passphrase](#saved-passphrase) and
+[Process memory](#process-memory) for the specifics.
+
+### What a storage-only adversary cannot do
+
+cling-sync's design protects against the following. 
+
+- **Decrypt block contents.** Every block is AEAD-encrypted under a
+  unique per-block DEK.
+- **Tamper with a block.** Any byte flip inside a block fails AEAD
+  authentication on read.
+- **Substitute one block for another.** The block id is HMAC-SHA256 over
+  the plaintext under a secret key, and the id is bound as AEAD
+  associated data on both the header and the data. A block stored under
+  the wrong id will not decrypt.
+- **Forge a block.** Without the BlockId HMAC key, the adversary cannot
+  compute a valid id for chosen content.
+- **Weaken the legitimate user's KDF.** Rewriting the Argon2id
+  parameters in `repository.txt` makes the legitimate user derive a
+  different key. The encrypted KEK then refuses to decrypt and the
+  repository fails to open. No data is exposed.
+- **Speed up an offline passphrase crack by editing the on-disk
+  parameters.** The salt is bound to the encrypted KEK as AEAD
+  associated data, so it cannot be changed undetected. The time,
+  memory, and lanes parameters are not in the AAD, but changing them
+  produces a different derived key, so the AEAD on the KEK fails
+  anyway. Either way, a brute-forcer has to run Argon2id at the
+  original cost per guess.
+
+### What a storage-only adversary can still do
+
+- **Delete data.** Removing blocks, the head reference, or the config
+  file is always available. cling-sync cannot restore what is not
+  there.
+- **Roll back the head reference.** Replacing the head with an older
+  revision id silently moves the repository back to that revision.
+  Every older revision is internally valid, so the rollback is
+  indistinguishable from a legitimate state. 
+- **Force denial of service via Argon2id parameters.** The parameters
+  are not bounded from above. Setting memory or time to absurd values
+  makes the next legitimate open allocate to exhaustion or hang before
+  the passphrase is processed. This is a known gap.
+- **Observe size and access patterns.** See
+  [Fingerprinting](#fingerprinting).
+
+### Fingerprinting
+
+Two defenses make it harder to fingerprint known file contents from
+the outside.
+
+- **Chunk boundaries are unpredictable.** GearCDC is seeded with a
+  random 32 byte value per repository, stored encrypted under the user
+  key.
+- **Block sizes are quantised.** Padmé padding lifts each block to one
+  of a small set of sizes. The unpadded length is inside the
+  AEAD-protected header, not on disk in the clear.
+
+What remains visible or exploitable:
+
+- Total repository size, number of blocks, and access patterns are not
+  hidden.
+- If the GearCDC seed leaks (memory dump, coredump, attached
+  debugger), chunk boundaries become predictable. An attacker with
+  prior knowledge of a candidate file's contents can then test whether
+  it is present. The contents stay protected by AEAD. This is an
+  accepted limitation of any content-defined chunking system.
+- None of these defenses help once the KEK is compromised.
+
+### Saved passphrase
+
+`cling-sync security save-passphrase` writes the passphrase into the
+workspace, encrypted with a random local key held in the OS keychain.
+This is for convenience on a trusted workstation.
+
+It does not protect against:
+
+- code running as the same user (anything that can read the keychain
+  entry can decrypt the saved passphrase),
+- memory forensics, coredumps, hibernation images (the passphrase is
+  in process memory while cling-sync runs),
+- a compromised OS keychain backend.
+
+If your threat model includes a hostile local machine, do not use
+`save-passphrase`.
+
+### Process memory
+
+While cling-sync is running, the following plaintext key material
+lives in process memory:
+
+- the passphrase, until the user key has been derived,
+- the user key derived from it,
+- the KEK, the BlockId HMAC key, and the GearCDC seed,
+- the DEK of each block currently being encrypted or decrypted.
+
+cling-sync does not actively wipe this memory. Anything that exposes
+the process address space exposes these secrets: coredumps, swap,
+hibernation images, an attached debugger, another process running as
+the same user with the right privileges. If any of those are in your
+threat model, terminate cling-sync as soon as you finish using it,
+and prefer machines without swap or hibernation.
 
 ## Development
 
-This repository is self-contained and does not depend on any external tools or libraries.
+cling-sync targets MacOS and Linux. Windows is best-effort and not
+tested.
+
+The code is plain Go (no CGO). The only external dependencies are a
+small selection of `golang.org/x` modules: `crypto` (Argon2id,
+XChaCha20-Poly1305), `term` (passphrase prompt), `sys`. The Wasm build
+optionally uses [TinyGo](https://tinygo.org/) for size reduction.
+
+`./build.sh --help` lists the available subcommands. The common ones:
+
+    ./build.sh build cli       # produce ./cling-sync
+    ./build.sh gen             # regenerate protobuf-derived Go code
+    ./build.sh fmt             # format
+    ./build.sh lint            # lint
+    ./build.sh test            # run all Go tests
+    ./build.sh precommit       # gen, fmt, lint, test, integration
+
+Mobile and desktop clients live at
+https://github.com/cling-com/cling-sync-clients.
+
+### Wasm
+
+cling-sync compiles to WebAssembly. A sample page lives in `wasm/`.
+
+Serve a repository, build the Wasm example, then open it:
+
+    cling-sync serve --cors-allow-all --address 127.0.0.1:4242 /path/to/repo
+    ./build.sh wasm dev
+    open http://127.0.0.1:8000/example.html
+
+The default Go compiler produces a Wasm binary of about 5 MiB. Building
+with `--optimize` uses [TinyGo](https://tinygo.org/) and reduces it to
+about 600 KiB.
