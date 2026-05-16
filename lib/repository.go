@@ -370,6 +370,14 @@ func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt data with DEK for block %s", blockId)
 	}
+	if uint64(header.EncryptedDataSize) > uint64(len(data)) {
+		return nil, Errorf(
+			"block %s declares encrypted data size %d but only %d bytes are present",
+			blockId,
+			header.EncryptedDataSize,
+			len(data),
+		)
+	}
 	data = data[:header.EncryptedDataSize]
 	if header.Compression == CompressionDeflate {
 		data, err = Decompress(data)

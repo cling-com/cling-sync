@@ -1,10 +1,5 @@
 // # Serialization
 //
-// ## Required Fields
-//
-// All fields are required unless they have a `{required: "condition"}` extension.
-// Fields that are either not required or conditionally required are emitted as pointers in Go.
-//
 // ## Versioning
 //
 // `version` is not strictly a version but is used to signal a non-backwards compatible change.

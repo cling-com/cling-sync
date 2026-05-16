@@ -278,6 +278,30 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.ErrorIs(err, fs.ErrNotExist)
 	})
 
+	t.Run("ReadControlFile enforces the MaxControlFileSize boundary", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
+		assert.NoError(err)
+		err = sut.Init(nil, "")
+		assert.NoError(err)
+		// Write a file at the limit through the regular API and confirm it reads back.
+		err = sut.WriteControlFile(ControlFileSectionRefs, "head", make([]byte, MaxControlFileSize))
+		assert.NoError(err)
+		data, err := sut.ReadControlFile(ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal(MaxControlFileSize, len(data))
+		// Simulate a hostile backend by writing one byte over the limit directly.
+		path, err := sut.controlFilePath(ControlFileSectionRefs, "head2")
+		assert.NoError(err)
+		err = sut.FS.MkdirAll(filepath.Dir(path))
+		assert.NoError(err)
+		err = WriteFile(sut.FS, path, make([]byte, MaxControlFileSize+1))
+		assert.NoError(err)
+		_, err = sut.ReadControlFile(ControlFileSectionRefs, "head2")
+		assert.Error(err, "exceeds maximum control file size")
+	})
+
 	t.Run("WriteControlFile enforces the MaxControlFileSize boundary", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -311,5 +335,18 @@ func TestBlockBuf(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal([]byte("hello"), data)
 		assert.Equal(0, src.Len())
+	})
+
+	t.Run("enforces the MaxBlockSize boundary", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		buf := NewBlockBuf()
+		// Exactly MaxBlockSize must be accepted.
+		data, err := buf.Read(bytes.NewReader(make([]byte, MaxBlockSize)))
+		assert.NoError(err)
+		assert.Equal(MaxBlockSize, len(data))
+		// One byte over must be rejected.
+		_, err = buf.Read(bytes.NewReader(make([]byte, MaxBlockSize+1)))
+		assert.Error(err, "exceeds maximum block size")
 	})
 }

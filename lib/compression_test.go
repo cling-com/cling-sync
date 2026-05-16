@@ -48,3 +48,22 @@ func TestIsCompressible(t *testing.T) {
 		assert.Equal(false, IsCompressible(png))
 	})
 }
+
+func TestDecompress(t *testing.T) {
+	t.Parallel()
+	t.Run("Rejects output larger than MaxBlockDataSize", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		// Zeros compress to a tiny payload, so this is cheap to set up.
+		atLimit, err := Compress(make([]byte, MaxBlockDataSize))
+		assert.NoError(err)
+		decompressed, err := Decompress(atLimit)
+		assert.NoError(err)
+		assert.Equal(MaxBlockDataSize, len(decompressed))
+
+		overLimit, err := Compress(make([]byte, MaxBlockDataSize+1))
+		assert.NoError(err)
+		_, err = Decompress(overLimit)
+		assert.Error(err, "decompressed size")
+	})
+}

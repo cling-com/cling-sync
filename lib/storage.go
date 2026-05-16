@@ -240,9 +240,12 @@ func (s *FileStorage) ReadControlFile(section ControlFileSection, name string) (
 		return nil, WrapErrorf(err, "failed to read control file %s", path)
 	}
 	defer f.Close() //nolint:errcheck
-	data, err := io.ReadAll(f)
+	data, err := io.ReadAll(io.LimitReader(f, MaxControlFileSize+1))
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read control file %s", path)
+	}
+	if len(data) > MaxControlFileSize {
+		return nil, Errorf("control file %s exceeds maximum control file size %d", path, MaxControlFileSize)
 	}
 	return data, nil
 }
@@ -285,8 +288,9 @@ func (s *FileStorage) Lock(ctx context.Context, name string) (func() error, erro
 	return unlock, nil
 }
 
-// Read at most `MaxBlockSize` bytes from `src` into the buffer and return
-// the populated sub-slice.
+// Read up to `MaxBlockSize` bytes from `src` into the buffer and return
+// the populated sub-slice. If `src` has more than `MaxBlockSize` bytes
+// available, return an error rather than silently truncating.
 func (b BlockBuf) Read(src io.Reader) ([]byte, error) {
 	data := b.buf[:]
 	n, err := io.ReadFull(src, data)
@@ -294,6 +298,14 @@ func (b BlockBuf) Read(src io.Reader) ([]byte, error) {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return data[0:n], nil
 		}
+		return nil, WrapErrorf(err, "failed to read block data")
+	}
+	// The buffer filled exactly. Check whether `src` has more bytes — if so,
+	// the input exceeds `MaxBlockSize` and must be rejected.
+	var probe [1]byte
+	if _, err := io.ReadFull(src, probe[:]); err == nil {
+		return nil, Errorf("input exceeds maximum block size %d", MaxBlockSize)
+	} else if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, WrapErrorf(err, "failed to read block data")
 	}
 	return data[0:n], nil

@@ -242,6 +242,59 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Error(err, "message authentication failed")
 	})
 
+	t.Run("Authenticated block with oversized EncryptedDataSize is rejected", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		// Forge a block with valid repo keys whose `EncryptedDataSize` exceeds
+		// the actual payload. We never call WriteBlock — we just author the
+		// protobuf message directly.
+		blockId := BlockId(td.SHA256("forged"))
+		dek, err := NewRawKey()
+		assert.NoError(err)
+		dekCypher, err := NewCipher(dek)
+		assert.NoError(err)
+		plaintext := []byte("payload")
+		encryptedData := make([]byte, len(plaintext)+TotalCipherOverhead)
+		_, err = Encrypt(plaintext, dekCypher, blockId[:], encryptedData)
+		assert.NoError(err)
+		writeBlock := func(encryptedDataSize uint32) {
+			header := BlockHeader{
+				Version:           uint32(StorageVersion),
+				Compression:       CompressionNone,
+				Dek:               dek,
+				EncryptedDataSize: encryptedDataSize,
+			}
+			headerBuf := make([]byte, header.MarshallSize())
+			err = header.Marshall(NewProtobufWriter(headerBuf))
+			assert.NoError(err)
+			encryptedHeader := make([]byte, len(headerBuf)+TotalCipherOverhead)
+			_, err = Encrypt(headerBuf, r.kekCipher, blockId[:], encryptedHeader)
+			assert.NoError(err)
+			block := Block{EncryptedHeader: encryptedHeader, EncryptedData: encryptedData}
+			blockBuf := make([]byte, block.MarshallSize())
+			err = block.Marshall(NewProtobufWriter(blockBuf))
+			assert.NoError(err)
+			path := r.Storage.blockPath(blockId)
+			err = r.Storage.FS.MkdirAll(filepath.Dir(path))
+			assert.NoError(err)
+			err = WriteFile(r.Storage.FS, path, blockBuf)
+			assert.NoError(err)
+		}
+
+		buf := NewBlockBuf()
+		// One past the payload: without the bounds check this silently returns
+		// a byte of the AEAD tag as plaintext.
+		writeBlock(uint32(len(plaintext)) + 1)
+		_, err = r.ReadBlock(blockId, buf)
+		assert.Error(err, "encrypted data size")
+		// Far past the payload: without the bounds check this panics.
+		writeBlock(1 << 30)
+		_, err = r.ReadBlock(blockId, buf)
+		assert.Error(err, "encrypted data size")
+	})
+
 	t.Run("Maximum block size", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

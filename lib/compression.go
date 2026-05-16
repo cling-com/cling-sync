@@ -61,9 +61,12 @@ func Decompress(data []byte) ([]byte, error) {
 		return nil, WrapErrorf(err, "failed to create zlib reader")
 	}
 	defer z.Close() //nolint:errcheck
-	res, err := io.ReadAll(z)
+	res, err := io.ReadAll(io.LimitReader(z, MaxBlockDataSize+1))
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read from zlib reader")
+	}
+	if len(res) > MaxBlockDataSize {
+		return nil, Errorf("decompressed size exceeds maximum block size %d", MaxBlockDataSize)
 	}
 	return res, nil
 }
