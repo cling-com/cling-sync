@@ -18,7 +18,7 @@ import (
 	"github.com/flunderpero/cling-sync/lib"
 )
 
-var LockLeaseMin = 5 * time.Second //nolint:gochecknoglobals
+const DefaultLockLeaseMin = 5 * time.Second
 
 // We use a simplified interface to improve support for Wasm, i.e. we don't
 // bring in the full HTTP client which adds a lot of dependencies.
@@ -54,8 +54,15 @@ func (c *DefaultHTTPClient) Request(
 		return nil, lib.WrapErrorf(err, "failed to execute request")
 	}
 	defer resp.Body.Close() //nolint:errcheck
-	// SEC: Make sure we never read more than the maximum block size.
+	// SEC: Cap at MaxBlockSize. The server might misbehave or be malicious.
 	limit := io.LimitReader(resp.Body, lib.MaxBlockSize)
+	if resp.ContentLength > 0 && resp.ContentLength <= lib.MaxBlockSize {
+		buf := bytes.NewBuffer(make([]byte, 0, resp.ContentLength))
+		if _, err := buf.ReadFrom(limit); err != nil {
+			return nil, lib.WrapErrorf(err, "failed to read response body")
+		}
+		return &HTTPResponse{resp.StatusCode, buf.Bytes()}, nil
+	}
 	data, err := io.ReadAll(limit)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read response body")
@@ -64,8 +71,11 @@ func (c *DefaultHTTPClient) Request(
 }
 
 type HTTPStorageClient struct {
-	Address        string
-	Client         HTTPClient
+	Address string
+	Client  HTTPClient
+	// LockLeaseMin is the period the lock-extend goroutine targets when
+	// renewing a held lock.
+	LockLeaseMin   time.Duration
 	lockLeaseError atomic.Value
 }
 
@@ -74,7 +84,12 @@ func IsHTTPStorageUIR(uri string) bool {
 }
 
 func NewHTTPStorageClient(address string, client HTTPClient) *HTTPStorageClient {
-	return &HTTPStorageClient{address, client, atomic.Value{}}
+	return &HTTPStorageClient{
+		Address:        address,
+		Client:         client,
+		LockLeaseMin:   DefaultLockLeaseMin,
+		lockLeaseError: atomic.Value{},
+	}
 }
 
 func (c *HTTPStorageClient) Init(config lib.Toml, headerComment string) error {
@@ -189,34 +204,7 @@ func (c *HTTPStorageClient) Lock(ctx context.Context, name string) (func() error
 	}
 	token := string(resp.Body)
 	refreshCtx, refreshCancel := context.WithCancel(ctx) //nolint:gosec
-	// Continuously extend the lock lease.
-	go func() {
-		ticker := time.NewTicker(min(LockLeaseMin/2, time.Second))
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-			case <-refreshCtx.Done():
-				return
-			}
-			ctx, cancel := context.WithTimeout(refreshCtx, LockLeaseMin/2)
-			resp, err := c.request(ctx, http.MethodPost, "/storage/lock/"+token, nil)
-			cancel()
-			if refreshCtx.Err() != nil {
-				return
-			}
-			if err != nil {
-				err := lib.WrapErrorf(err, "failed to extend lock %s", token)
-				c.lockLeaseError.Store(err)
-				panic(err)
-			}
-			if resp.StatusCode != http.StatusOK {
-				err := lib.Errorf("failed to extend lock %s: got %d (%s)", token, resp.StatusCode, string(resp.Body))
-				c.lockLeaseError.Store(err)
-				panic(err)
-			}
-		}
-	}()
+	go c.keepLockAlive(refreshCtx, token)
 	var once sync.Once
 	var unlockErr error
 	return func() error {
@@ -241,6 +229,40 @@ func (c *HTTPStorageClient) Lock(ctx context.Context, name string) (func() error
 		})
 		return unlockErr
 	}, nil
+}
+
+// keepLockAlive runs in its own goroutine for the lifetime of a held lock and
+// keeps extending the server-side lease until `refreshCtx` is cancelled. On
+// any failure it records the error in `c.lockLeaseError` and exits.
+func (c *HTTPStorageClient) keepLockAlive(refreshCtx context.Context, token string) {
+	ticker := time.NewTicker(min(c.LockLeaseMin/2, time.Second))
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+		case <-refreshCtx.Done():
+			return
+		}
+		ctx, cancel := context.WithTimeout(refreshCtx, c.LockLeaseMin/2)
+		resp, err := c.request(ctx, http.MethodPost, "/storage/lock/"+token, nil)
+		cancel()
+		if refreshCtx.Err() != nil {
+			return
+		}
+		if err != nil {
+			c.lockLeaseError.Store(lib.WrapErrorf(err, "failed to extend lock %s", token))
+			return
+		}
+		if resp.StatusCode != http.StatusOK {
+			c.lockLeaseError.Store(lib.Errorf(
+				"failed to extend lock %s: got %d (%s)",
+				token,
+				resp.StatusCode,
+				string(resp.Body),
+			))
+			return
+		}
+	}
 }
 
 func (c *HTTPStorageClient) request(
@@ -272,13 +294,50 @@ type lockHandle struct {
 }
 
 type HTTPStorageServer struct {
-	Storage *lib.FileStorage
-	Address string
-	locks   sync.Map // token -> *lockHandle
+	Storage      *lib.FileStorage
+	Address      string
+	LockLeaseMin time.Duration
+	locks        sync.Map // token -> *lockHandle
 }
 
 func NewHTTPStorageServer(storage *lib.FileStorage, address string) *HTTPStorageServer {
-	return &HTTPStorageServer{Storage: storage, Address: address, locks: sync.Map{}}
+	return &HTTPStorageServer{
+		Storage:      storage,
+		Address:      address,
+		LockLeaseMin: DefaultLockLeaseMin,
+		locks:        sync.Map{},
+	}
+}
+
+func parseBlockId(hexId string) (lib.BlockId, error) {
+	if len(hexId) != 2*lib.BlockIdSize {
+		return lib.BlockId{}, lib.Errorf(
+			"invalid block ID length %d hex chars, want %d",
+			len(hexId),
+			2*lib.BlockIdSize,
+		)
+	}
+	raw, err := hex.DecodeString(hexId)
+	if err != nil {
+		return lib.BlockId{}, lib.WrapErrorf(err, "invalid block ID")
+	}
+	return lib.BlockId(raw), nil
+}
+
+// readBoundedBody reads at most `max` bytes from `r.Body` and returns them as
+// a slice.
+// If the body exceeds `max`, `http.MaxBytesReader` causes the underlying read
+// to fail with `*http.MaxBytesError`, which the caller turns into a 413.
+func readBoundedBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	if r.ContentLength > 0 && r.ContentLength <= limit {
+		buf := bytes.NewBuffer(make([]byte, 0, r.ContentLength))
+		if _, err := buf.ReadFrom(r.Body); err != nil {
+			return nil, err //nolint:wrapcheck
+		}
+		return buf.Bytes(), nil
+	}
+	return io.ReadAll(r.Body) //nolint:wrapcheck
 }
 
 func (s *HTTPStorageServer) RegisterRoutes(mux *http.ServeMux) {
@@ -299,25 +358,24 @@ func (s *HTTPStorageServer) RegisterRoutes(mux *http.ServeMux) {
 func (s *HTTPStorageServer) Open(w http.ResponseWriter, r *http.Request) {
 	toml, err := s.Storage.Open()
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "failed to open storage"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to open storage"), w, http.StatusInternalServerError)
 		return
 	}
 	if err := lib.WriteToml(w, "", toml); err != nil {
-		s.error(lib.WrapErrorf(err, "failed to write storage TOML"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to write storage TOML"), w, http.StatusInternalServerError)
 		return
 	}
 }
 
 func (s *HTTPStorageServer) HasBlock(w http.ResponseWriter, r *http.Request) {
-	hexId := r.PathValue("id")
-	id, err := hex.DecodeString(hexId)
+	blockId, err := parseBlockId(r.PathValue("id"))
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "invalid block ID"), w, http.StatusBadRequest)
+		s.emitError(err, w, http.StatusBadRequest)
 		return
 	}
-	exists, err := s.Storage.HasBlock(lib.BlockId(id))
+	exists, err := s.Storage.HasBlock(blockId)
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "failed to check if block exists"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to check if block exists"), w, http.StatusInternalServerError)
 		return
 	}
 	if exists {
@@ -329,26 +387,25 @@ func (s *HTTPStorageServer) HasBlock(w http.ResponseWriter, r *http.Request) {
 
 // Return the block with the given ID. The response body is the opaque block bytes as stored.
 func (s *HTTPStorageServer) ReadBlock(w http.ResponseWriter, r *http.Request) {
-	hexId := r.PathValue("id")
-	id, err := hex.DecodeString(hexId)
+	blockId, err := parseBlockId(r.PathValue("id"))
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "invalid block ID"), w, http.StatusBadRequest)
+		s.emitError(err, w, http.StatusBadRequest)
 		return
 	}
 	buf := lib.NewBlockBuf()
-	data, err := s.Storage.ReadBlock(lib.BlockId(id), buf)
+	data, err := s.Storage.ReadBlock(blockId, buf)
 	if err != nil {
 		if errors.Is(err, lib.ErrBlockNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		s.error(lib.WrapErrorf(err, "failed to read block"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to read block"), w, http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	if _, err := w.Write(data); err != nil {
-		s.error(lib.WrapErrorf(err, "failed to write block data"), w, http.StatusInternalServerError)
+	if _, err := w.Write(data); err != nil { //nolint:gosec
+		s.emitError(lib.WrapErrorf(err, "failed to write block data"), w, http.StatusInternalServerError)
 		return
 	}
 }
@@ -358,21 +415,19 @@ func (s *HTTPStorageServer) ReadBlock(w http.ResponseWriter, r *http.Request) {
 // Return `200 OK` if the block already existed.
 // Return `201 Created` if the block was written.
 func (s *HTTPStorageServer) WriteBlock(w http.ResponseWriter, r *http.Request) {
-	hexId := r.PathValue("id")
-	blockIdBytes, err := hex.DecodeString(hexId)
+	blockId, err := parseBlockId(r.PathValue("id"))
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "invalid block ID"), w, http.StatusBadRequest)
+		s.emitError(err, w, http.StatusBadRequest)
 		return
 	}
-	blockId := lib.BlockId(blockIdBytes)
-	data, err := io.ReadAll(r.Body)
+	data, err := readBoundedBody(w, r, lib.MaxBlockSize)
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "failed to read block data"), w, http.StatusBadRequest)
+		s.emitBodyReadError(w, err, "block")
 		return
 	}
 	exists, err := s.Storage.WriteBlock(blockId, data)
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "failed to write block"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to write block"), w, http.StatusInternalServerError)
 		return
 	}
 	if exists {
@@ -387,7 +442,7 @@ func (s *HTTPStorageServer) HasControlFile(w http.ResponseWriter, r *http.Reques
 	name := r.PathValue("name")
 	exists, err := s.Storage.HasControlFile(lib.ControlFileSection(section), name)
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "failed to check if control file exists"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to check if control file exists"), w, http.StatusInternalServerError)
 		return
 	}
 	if exists {
@@ -406,13 +461,13 @@ func (s *HTTPStorageServer) ReadControlFile(w http.ResponseWriter, r *http.Reque
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		s.error(lib.WrapErrorf(err, "failed to read control file"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to read control file"), w, http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	if _, err := w.Write(data); err != nil { //nolint:gosec
-		s.error(lib.WrapErrorf(err, "failed to write control file data"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to write control file data"), w, http.StatusInternalServerError)
 		return
 	}
 }
@@ -420,13 +475,13 @@ func (s *HTTPStorageServer) ReadControlFile(w http.ResponseWriter, r *http.Reque
 func (s *HTTPStorageServer) WriteControlFile(w http.ResponseWriter, r *http.Request) {
 	section := r.PathValue("section")
 	name := r.PathValue("name")
-	data, err := io.ReadAll(r.Body)
+	data, err := readBoundedBody(w, r, lib.MaxControlFileSize)
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "failed to read control file data"), w, http.StatusBadRequest)
+		s.emitBodyReadError(w, err, "control file")
 		return
 	}
 	if err := s.Storage.WriteControlFile(lib.ControlFileSection(section), name, data); err != nil {
-		s.error(lib.WrapErrorf(err, "failed to write control file"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to write control file"), w, http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -440,7 +495,7 @@ func (s *HTTPStorageServer) DeleteControlFile(w http.ResponseWriter, r *http.Req
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		s.error(lib.WrapErrorf(err, "failed to delete control file"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to delete control file"), w, http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -450,13 +505,13 @@ func (s *HTTPStorageServer) Lock(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	token, err := lib.RandStr(32)
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "failed to generate random token"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to generate random token"), w, http.StatusInternalServerError)
 		return
 	}
 
 	unlockPure, err := s.Storage.Lock(r.Context(), name)
 	if err != nil {
-		s.error(lib.WrapErrorf(err, "failed to create lock %s", name), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to create lock %s", name), w, http.StatusInternalServerError)
 		return
 	}
 	// Make sure the unlock function is called exactly once.
@@ -468,8 +523,9 @@ func (s *HTTPStorageServer) Lock(w http.ResponseWriter, r *http.Request) {
 	}
 	s.locks.Store(token, handle)
 
+	leaseMin := s.LockLeaseMin
 	go func() {
-		timer := time.NewTimer(LockLeaseMin)
+		timer := time.NewTimer(leaseMin)
 		defer timer.Stop()
 		defer s.locks.Delete(token)
 		for {
@@ -495,7 +551,7 @@ func (s *HTTPStorageServer) Lock(w http.ResponseWriter, r *http.Request) {
 					default:
 					}
 				}
-				timer.Reset(LockLeaseMin)
+				timer.Reset(leaseMin)
 			case <-handle.done:
 				if err := unlock(); err != nil {
 					slog.Error("Failed to unlock lock", "error", err, "token", token, "name", name) //nolint:gosec
@@ -506,7 +562,7 @@ func (s *HTTPStorageServer) Lock(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if _, err := w.Write([]byte(token)); err != nil {
-		s.error(lib.WrapErrorf(err, "failed to write token"), w, http.StatusInternalServerError)
+		s.emitError(lib.WrapErrorf(err, "failed to write token"), w, http.StatusInternalServerError)
 		return
 	}
 }
@@ -527,7 +583,7 @@ func (s *HTTPStorageServer) ExtendLock(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	value, ok := s.locks.Load(token)
 	if !ok {
-		s.error(lib.Errorf("lock %s does not exist", token), w, http.StatusNotFound)
+		s.emitError(lib.Errorf("lock %s does not exist", token), w, http.StatusNotFound)
 		return
 	}
 	handle := value.(*lockHandle) //nolint:forcetypeassert
@@ -539,11 +595,26 @@ func (s *HTTPStorageServer) ExtendLock(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *HTTPStorageServer) error(wrappedError *lib.WrappedError, w http.ResponseWriter, status int) {
-	slog.Error("HTTP error", "error", wrappedError) //nolint:gosec
+// emitBodyReadError responds with 413 when the input exceeded `MaxBytesReader`'s
+// limit, otherwise 400 for any other read failure.
+func (s *HTTPStorageServer) emitBodyReadError(w http.ResponseWriter, err error, kind string) {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		s.emitError(lib.WrapErrorf(err, "%s body too large", kind), w, http.StatusRequestEntityTooLarge)
+		return
+	}
+	s.emitError(lib.WrapErrorf(err, "failed to read %s body", kind), w, http.StatusBadRequest)
+}
+
+func (s *HTTPStorageServer) emitError(err error, w http.ResponseWriter, status int) {
+	slog.Error("HTTP error", "error", err)
 	w.WriteHeader(status)
 	w.Header().Set("Content-Type", "text/plain")
-	if _, err := w.Write([]byte(wrappedError.Msg)); err != nil { //nolint:gosec
+	msg := err.Error()
+	if we, ok := errors.AsType[*lib.WrappedError](err); ok {
+		// Prefer the top-level message; the chain has already been logged.
+		msg = we.Msg
+	}
+	if _, err := w.Write([]byte(msg)); err != nil { //nolint:gosec
 		slog.Error("Failed to write error response", "error", err)
 		return
 	}
