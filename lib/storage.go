@@ -43,6 +43,12 @@ func NewBlockBuf() BlockBuf {
 	return BlockBuf{buf: new([MaxBlockSize]byte)}
 }
 
+// Bytes exposes the underlying fixed-size slice so callers (e.g. transport
+// layers) can read directly into it without allocating.
+func (b BlockBuf) Bytes() []byte {
+	return b.buf[:]
+}
+
 func (id BlockId) String() string {
 	return hex.EncodeToString(id[:])
 }

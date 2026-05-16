@@ -22,8 +22,13 @@ const DefaultLockLeaseMin = 5 * time.Second
 
 // We use a simplified interface to improve support for Wasm, i.e. we don't
 // bring in the full HTTP client which adds a lot of dependencies.
+//
+// `dst`, when non-nil, is the destination slice for the response body. The
+// body is read into `dst`; `resp.Body` slices into `dst[:n]`. If the response
+// exceeds `len(dst)` the call returns an error. When `dst` is nil the body
+// is allocated and capped at `lib.MaxBlockSize` for safety.
 type HTTPClient interface {
-	Request(ctx context.Context, method string, url string, body []byte) (*HTTPResponse, error)
+	Request(ctx context.Context, method, url string, body, dst []byte) (*HTTPResponse, error)
 }
 
 type HTTPResponse struct {
@@ -41,9 +46,8 @@ func NewDefaultHTTPClient(client *http.Client) *DefaultHTTPClient {
 
 func (c *DefaultHTTPClient) Request(
 	ctx context.Context,
-	method string,
-	url string,
-	body []byte,
+	method, url string,
+	body, dst []byte,
 ) (*HTTPResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
@@ -54,6 +58,29 @@ func (c *DefaultHTTPClient) Request(
 		return nil, lib.WrapErrorf(err, "failed to execute request")
 	}
 	defer resp.Body.Close() //nolint:errcheck
+	if dst != nil {
+		// SEC: A malicious server must not be allowed to overflow `dst`.
+		if resp.ContentLength > int64(len(dst)) {
+			return nil, lib.Errorf(
+				"response body of %d bytes exceeds buffer of %d", resp.ContentLength, len(dst),
+			)
+		}
+		limit := io.LimitReader(resp.Body, int64(len(dst))+1)
+		n, err := io.ReadFull(limit, dst)
+		switch {
+		case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
+			// Short body - that's fine; n is the actual size.
+		case err != nil:
+			return nil, lib.WrapErrorf(err, "failed to read response body")
+		default:
+			// Filled `dst` completely. Make sure there isn't more.
+			extra, _ := io.ReadFull(limit, dst[:1])
+			if extra > 0 {
+				return nil, lib.Errorf("response body exceeds buffer of %d", len(dst))
+			}
+		}
+		return &HTTPResponse{resp.StatusCode, dst[:n]}, nil
+	}
 	// SEC: Cap at MaxBlockSize. The server might misbehave or be malicious.
 	limit := io.LimitReader(resp.Body, lib.MaxBlockSize)
 	if resp.ContentLength > 0 && resp.ContentLength <= lib.MaxBlockSize {
@@ -117,7 +144,9 @@ func (c *HTTPStorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
 }
 
 func (c *HTTPStorageClient) ReadBlock(blockId lib.BlockId, buf lib.BlockBuf) ([]byte, error) {
-	resp, err := c.request(context.Background(), http.MethodGet, "/storage/block/"+blockId.String(), nil, 404)
+	resp, err := c.requestInto(
+		context.Background(), http.MethodGet, "/storage/block/"+blockId.String(), nil, buf.Bytes(), 404,
+	)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read block")
 	}
@@ -271,6 +300,18 @@ func (c *HTTPStorageClient) request(
 	body []byte,
 	ignoreStatusCodes ...int,
 ) (*HTTPResponse, error) {
+	return c.requestInto(ctx, method, path, body, nil, ignoreStatusCodes...)
+}
+
+// requestInto is the buffered variant of `request`: when `dst` is non-nil
+// the response body is read into `dst` and `resp.Body` slices into it,
+// avoiding a per-call allocation on the read path.
+func (c *HTTPStorageClient) requestInto(
+	ctx context.Context,
+	method, path string,
+	body, dst []byte,
+	ignoreStatusCodes ...int,
+) (*HTTPResponse, error) {
 	if err := c.lockLeaseError.Load(); err != nil {
 		err, ok := err.(error)
 		if !ok {
@@ -278,7 +319,7 @@ func (c *HTTPStorageClient) request(
 		}
 		return nil, lib.WrapErrorf(err, "failed to execute request because a lock lease expired")
 	}
-	resp, err := c.Client.Request(ctx, method, c.Address+path, body)
+	resp, err := c.Client.Request(ctx, method, c.Address+path, body, dst)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to execute request")
 	}

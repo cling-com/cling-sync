@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"strconv"
 	"syscall/js"
 	"time"
 
@@ -83,9 +84,8 @@ func (e FetchError) Error() string {
 
 func (c *WasmHTTPClient) Request( //nolint:funlen
 	ctx context.Context,
-	method string,
-	url string,
-	body []byte,
+	method, url string,
+	body, dst []byte,
 ) (*clingHTTP.HTTPResponse, error) {
 	// Convert body to JS.
 	var bodyJS js.Value
@@ -120,7 +120,19 @@ func (c *WasmHTTPClient) Request( //nolint:funlen
 				defer arrayBufferHandler.Release()
 				arrayBuffer := args[0]
 				uint8Array := js.Global().Get("Uint8Array").New(arrayBuffer)
-				bodyBytes := make([]byte, uint8Array.Length())
+				n := uint8Array.Length()
+				var bodyBytes []byte
+				if dst != nil {
+					if n > len(dst) {
+						errChan <- FetchError{
+							"response body of " + strconv.Itoa(n) + " bytes exceeds buffer of " + strconv.Itoa(len(dst)),
+						}
+						return nil
+					}
+					bodyBytes = dst[:n]
+				} else {
+					bodyBytes = make([]byte, n)
+				}
 				js.CopyBytesToGo(bodyBytes, uint8Array)
 
 				respChan <- &clingHTTP.HTTPResponse{
