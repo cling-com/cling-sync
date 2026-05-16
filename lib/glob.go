@@ -231,7 +231,7 @@ func GlobMatch(pattern GlobPattern, text []byte, isDir bool) bool { //nolint:fun
 					for p < pend && pattern[p] != ']' {
 						p += 1
 					}
-					if p == pend || pattern[p-1] != ':' {
+					if p >= pend || pattern[p-1] != ':' {
 						// Not a POSIX character class, treat it like a normal character.
 						p = posixStartP
 						if tc == pc {

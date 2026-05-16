@@ -341,6 +341,11 @@ func TestGlobMatch(t *testing.T) {
 
 		// Unknown POSIX character classes.
 		g.non("[[:beta:]]*", "README.md")
+
+		// Malformed: an opening POSIX class marker `[[:` without a body or
+		// closing `]` must not match and must not panic.
+		g.non("[[:", "README.md")
+		g.non("*[[:", "README.md")
 	})
 
 	// "Two consecutive asterisks ("**") in patterns matched against full
@@ -1005,5 +1010,18 @@ func cleanIgnoreFiles(tb testing.TB, dir string) {
 			assert.NoError(os.Remove(path), "Failed to remove %s", path)
 		}
 		return nil
+	})
+}
+
+func FuzzGlobMatch(f *testing.F) {
+	// Some "happy path" seeds.
+	f.Add([]byte("*.go"), []byte("foo.go"), true)
+	f.Add([]byte("**/foo"), []byte("a/b/foo"), false)
+	f.Add([]byte("[a-z]"), []byte("x"), false)
+	f.Add([]byte("[[:alnum:]]"), []byte("x"), false)
+	f.Add([]byte("foo/"), []byte("foo"), true)
+	f.Add([]byte("\\*"), []byte("*"), false)
+	f.Fuzz(func(t *testing.T, pattern, text []byte, isDir bool) {
+		_ = GlobMatch(PrepareGlobPattern(string(pattern)), text, isDir)
 	})
 }
