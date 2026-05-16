@@ -14,7 +14,7 @@ import (
 // protoc to decode the wire bytes against format.proto.
 func TestFormatMarshall(t *testing.T) {
 	assert := NewAssert(t)
-	err := exec.Command("protoc", "--version").Run()
+	err := exec.Command(protocPath(), "--version").Run()
 	assert.NoError(err)
 
 	check := func(name string, msg Marshallable, unmarshall any, expected string) {
@@ -372,7 +372,7 @@ func sha256Hash(b string) Sha256 {
 // format.proto` and returns the textproto output.
 func protocDecode(t *testing.T, message string, in []byte) string {
 	t.Helper()
-	cmd := exec.Command("protoc", "--decode=lib."+message, "format.proto")
+	cmd := exec.Command(protocPath(), "--decode=lib."+message, "format.proto")
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

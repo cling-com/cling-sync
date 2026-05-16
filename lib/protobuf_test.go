@@ -8,9 +8,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func protocPath() string {
+	_, file, _, _ := runtime.Caller(0) //nolint:dogsled
+	return filepath.Join(filepath.Dir(file), "..", "tools", "protoc", "bin", "protoc")
+}
 
 // protoTester encodes a single proto field and returns the wire bytes.
 // Switch implementations with `PROTO_TEST_IMPL=protoc go test`. The protoc
@@ -23,7 +29,7 @@ type protoTester interface {
 func newProtoTester(tb testing.TB) protoTester {
 	tb.Helper()
 	if os.Getenv("PROTO_TEST_IMPL") == "protoc" {
-		if err := exec.Command("protoc", "--version").Run(); err != nil {
+		if err := exec.Command(protocPath(), "--version").Run(); err != nil {
 			tb.Fatalf("PROTO_TEST_IMPL=protoc but protoc is not available: %v", err)
 		}
 		tb.Log("Using protoc proto tester")
@@ -391,7 +397,7 @@ func (p *protocProtoTester) runProtoc(schema, text string) []byte {
 	schemaPath := filepath.Join(p.dir, "test.proto")
 	err := os.WriteFile(schemaPath, []byte(schema), 0o600)
 	assert.NoError(err, "write schema")
-	cmd := exec.Command("protoc", "--encode=M", "--proto_path="+p.dir, "test.proto")
+	cmd := exec.Command(protocPath(), "--encode=M", "--proto_path="+p.dir, "test.proto")
 	cmd.Stdin = strings.NewReader(text)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

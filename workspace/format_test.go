@@ -5,18 +5,27 @@ package workspace
 import (
 	"bytes"
 	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/flunderpero/cling-sync/lib"
 )
 
+// protocPath returns the absolute path to the pinned protoc binary that
+// `./build.sh tools` downloads to <repo>/tools/protoc/bin/protoc.
+func protocPath() string {
+	_, file, _, _ := runtime.Caller(0) //nolint:dogsled
+	return filepath.Join(filepath.Dir(file), "..", "tools", "protoc", "bin", "protoc")
+}
+
 // TestFormatMarshall encodes a message with the generated Marshall and asks
 // protoc to decode the wire bytes against workspace/format.proto.
 func TestFormatMarshall(t *testing.T) {
 	assert := lib.NewAssert(t)
-	err := exec.Command("protoc", "--version").Run()
+	err := exec.Command(protocPath(), "--version").Run()
 	assert.NoError(err)
 
 	type marshaller interface {
@@ -113,7 +122,7 @@ func sha256Hash(b string) lib.Sha256 {
 // output.
 func protocDecode(t *testing.T, message string, in []byte) string {
 	t.Helper()
-	cmd := exec.Command("protoc", "-I.", "--decode=workspace."+message, "workspace/format.proto")
+	cmd := exec.Command(protocPath(), "-I.", "--decode=workspace."+message, "workspace/format.proto")
 	cmd.Dir = ".."
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout, stderr bytes.Buffer
