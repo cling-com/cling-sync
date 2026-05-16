@@ -362,19 +362,21 @@ func TestTempCache(t *testing.T) {
 
 func BenchmarkRevisionTemp(b *testing.B) {
 	assert := NewAssert(b)
-	fs := td.NewFS(b)
-	sut := NewRevisionEntryTempWriter(fs, 16*1024) // Force chunk rotation.
+	const n = 5000
+	paths := make([]string, n)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("%d/%d/%d", rand.Int(), rand.Int(), rand.Int())
+	}
+	b.ResetTimer()
 	for b.Loop() {
-		path := fmt.Sprintf("/%d/%d/%d", rand.Int(), rand.Int(), rand.Int())
-		_ = sut.Add(td.RevisionEntry(path, RevisionEntryKindAdd))
+		fs := td.NewFS(b)
+		sut := NewRevisionEntryTempWriter(fs, 16*1024) // Force chunk rotation.
+		for _, p := range paths {
+			_ = sut.Add(td.RevisionEntry(p, RevisionEntryKindAdd))
+		}
+		_, err := sut.Finalize()
+		assert.NoError(err)
 	}
-	if b.N > 1000 {
-		files, _ := fs.ReadDir(".")
-		// Make sure we wrote multiple files.
-		assert.Greater(len(files), 1)
-	}
-	_, err := sut.Finalize()
-	assert.NoError(err)
 }
 
 func readAllRevsisionTemp(t *testing.T, sut *Temp[*RevisionEntry], pathFilter PathFilter) []*RevisionEntry {

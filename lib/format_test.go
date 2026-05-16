@@ -409,3 +409,54 @@ func dedent(s string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+func FuzzUnmarshallBlock(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte{0x0a, 0x00})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = UnmarshallBlock(NewProtobufReader(data))
+	})
+}
+
+func FuzzUnmarshallBlockHeader(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte{0x08, 0x01})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = UnmarshallBlockHeader(NewProtobufReader(data))
+	})
+}
+
+func FuzzUnmarshallTimestamp(f *testing.F) {
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = UnmarshallTimestamp(NewProtobufReader(data))
+	})
+}
+
+func FuzzUnmarshallPathMetadata(f *testing.F) {
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = UnmarshallPathMetadata(NewProtobufReader(data))
+	})
+}
+
+func FuzzUnmarshallRevisionEntry(f *testing.F) {
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = UnmarshallRevisionEntry(NewProtobufReader(data))
+	})
+}
+
+func FuzzUnmarshallRevisionEntryChunk(f *testing.F) {
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = UnmarshallRevisionEntryChunk(NewProtobufReader(data))
+	})
+}
+
+func FuzzUnmarshallRevision(f *testing.F) {
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = UnmarshallRevision(NewProtobufReader(data))
+	})
+}

@@ -151,3 +151,17 @@ func dedent(s string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+func FuzzUnmarshallStagingEntry(f *testing.F) {
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = UnmarshallStagingEntry(lib.NewProtobufReader(data))
+	})
+}
+
+func FuzzUnmarshallStagingEntryChunk(f *testing.F) {
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = UnmarshallStagingEntryChunk(lib.NewProtobufReader(data))
+	})
+}

@@ -412,3 +412,20 @@ func protoStringLiteral(b []byte) string {
 	sb.WriteByte('"')
 	return sb.String()
 }
+
+func FuzzProtobufReaderVarintAndSkip(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		r := NewProtobufReader(data)
+		for !r.AtEnd() {
+			_, wire, err := r.ReadTag()
+			if err != nil {
+				return
+			}
+			if err := r.Skip(wire); err != nil {
+				return
+			}
+		}
+	})
+}

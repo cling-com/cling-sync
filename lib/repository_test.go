@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -492,4 +493,25 @@ func BenchmarkReadBlock(b *testing.B) {
 			}
 		})
 	}
+}
+
+func FuzzParseRepositoryConfig(f *testing.F) {
+	f.Add("")
+	f.Add(`
+[storage]
+version = "1"
+[encryption]
+version = "1"
+passphrase-derivation = "$argon2id$v=19$m=131072,t=4,p=2$MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+encrypted-key-encryption-key = "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA"
+encrypted-block-id-hmac = "AAAA-AAAA"
+encrypted-gear-cdc-seed = "AAAA-AAAA"
+`)
+	f.Fuzz(func(t *testing.T, s string) {
+		toml, err := ReadToml(strings.NewReader(s))
+		if err != nil {
+			return
+		}
+		_, _ = parseRepositoryConfig(toml)
+	})
 }

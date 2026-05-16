@@ -90,3 +90,11 @@ func TestMarshalArgon2id(t *testing.T) {
 		assert.Equal(s, argon2id.Marshal())
 	})
 }
+
+func FuzzUnmarshalArgon2idConfig(f *testing.F) {
+	f.Add("")
+	f.Add("$argon2id$v=19$m=131072,t=4,p=2$MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY")
+	f.Fuzz(func(t *testing.T, s string) {
+		_, _ = UnmarshalArgon2idConfig(s)
+	})
+}

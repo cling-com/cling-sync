@@ -127,3 +127,11 @@ func TestRecoveryCode(t *testing.T) {
 		}
 	})
 }
+
+func FuzzReadToml(f *testing.F) {
+	f.Add("")
+	f.Add("[encryption]\nversion = \"1\"\n")
+	f.Fuzz(func(t *testing.T, s string) {
+		_, _ = ReadToml(strings.NewReader(s))
+	})
+}

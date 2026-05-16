@@ -31,12 +31,54 @@ if [ $# -eq 0 ]; then
     echo "  test [project|integration-bash]"
     echo "      Run tests. If no project is specified, run all tests including integration tests."
     echo
+    echo "  bench [project]"
+    echo "      Run all benchmarks. If no project is specified, run for all projects."
+    echo
+    echo "  fuzz [project] [duration]"
+    echo "      Run each fuzz target sequentially for the given duration (default 30s)."
+    echo "      If no project is specified, run for all projects with fuzz targets."
+    echo
     echo "  tools"
     echo "      Build tools needed for development."
     exit 1
 fi
 
 projects="lib workspace http cli wasm test"
+
+# Reformat raw `go test -bench` output into an aligned table with humanized
+# units (ns/us/ms/s, B/KB/MB/GB) and comma-separated counters. Non-benchmark
+# lines are dropped so the file diffs cleanly run-to-run.
+format_bench() {
+    awk '
+function commify(n,   s, i) {
+    s = sprintf("%d", n + 0)
+    for (i = length(s) - 3; i > 0; i -= 3) s = substr(s, 1, i) "," substr(s, i + 1)
+    return s
+}
+function fmt_time(n) {
+    if (n >= 1e9) return sprintf("%.2f s",  n / 1e9)
+    if (n >= 1e6) return sprintf("%.2f ms", n / 1e6)
+    if (n >= 1e3) return sprintf("%.2f us", n / 1e3)
+    return sprintf("%.1f ns", n + 0)
+}
+function fmt_bytes(n) {
+    if (n >= 2^30) return sprintf("%.2f GB", n / 2^30)
+    if (n >= 2^20) return sprintf("%.2f MB", n / 2^20)
+    if (n >= 2^10) return sprintf("%.2f KB", n / 2^10)
+    return sprintf("%d B", n + 0)
+}
+/^Benchmark/ {
+    sub(/-[0-9]+$/, "", $1); sub(/^Benchmark/, "", $1)
+    tm = thr = mem = alloc = ""
+    for (i = 3; i <= NF; i++) {
+        if      ($i == "ns/op")     tm    = fmt_time($(i-1))
+        else if ($i == "MB/s")      thr   = sprintf("%.1f MB/s", $(i-1))
+        else if ($i == "B/op")      mem   = fmt_bytes($(i-1)) "/op"
+        else if ($i == "allocs/op") alloc = commify($(i-1)) " allocs/op"
+    }
+    printf "  %-34s %12s  %11s  %12s  %14s  %20s\n", $1, commify($2), tm, thr, mem, alloc
+}'
+}
 
 # Build all or a specific target.
 # Input:
@@ -160,6 +202,44 @@ case "$cmd" in
             exit 0
         fi
         run_project_cmd "go test ./... -count 1" "$@"
+        ;;
+    bench)
+        echo ">>> Running benchmarks"
+        if [ $# -gt 0 ]; then
+            (cd "$1" && go test ./... -run '^$' -bench . -benchmem -count 1) | format_bench
+        else
+            out="$root/benchmarks.txt"
+            : > "$out"
+            for project in $projects; do
+                [ -d "$project" ] || continue
+                (cd "$project" && go test -list '^Benchmark' ./... 2>/dev/null | grep -qE '^Benchmark') || continue
+                {
+                    printf '\n## %s\n\n' "$project"
+                    (cd "$project" && go test ./... -run '^$' -bench . -benchmem -count 1) | format_bench
+                } | tee -a "$out"
+            done
+            echo
+            echo "Results written to $out"
+        fi
+        ;;
+    fuzz)
+        fuzz_dur="${2:-30s}"
+        if [ $# -gt 0 ]; then
+            proj_list="$1"
+        else
+            proj_list="$projects"
+        fi
+        echo ">>> Running fuzz tests (${fuzz_dur} per target)"
+        for project in $proj_list; do
+            [ -d "$project" ] || continue
+            targets=$(cd "$project" && go test -list '^Fuzz' ./... 2>/dev/null | grep -E '^Fuzz' || true)
+            [ -n "$targets" ] || continue
+            echo "$project"
+            for target in $targets; do
+                echo "  >>> $target"
+                (cd "$project" && go test ./... -run '^$' -fuzz "^${target}\$" -fuzztime "$fuzz_dur") || true
+            done
+        done
         ;;
     precommit)
         bash $0 gen "$@"
