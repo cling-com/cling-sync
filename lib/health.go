@@ -53,8 +53,8 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 			}
 			opts.Monitor.OnRevisionEntry(entry)
 			entryCount++
-			if lastEntry != nil && RevisionEntryPathCompare(lastEntry, entry) > 0 {
-				return Errorf("paths of revision %s are not sorted at position %d: %s > %s",
+			if lastEntry != nil && RevisionEntryPathCompare(lastEntry, entry) >= 0 {
+				return Errorf("paths of revision %s are not strictly sorted at position %d: %s >= %s",
 					revisionId, entryCount, lastEntry.Path, entry.Path)
 			}
 			if opts.DataBlocks {

@@ -90,6 +90,33 @@ func TestCheckHealth(t *testing.T) {
 		assert.Error(err, "block not found")
 	})
 
+	t.Run("Duplicate path", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		// Normal commits reject duplicate entries, so write a malformed revision block directly.
+		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
+		e2 := td.RevisionEntry("a.txt", RevisionEntryKindUpdate)
+		chunk := RevisionEntryChunk{Entries: []*RevisionEntry{e1, e2}}
+		chunkBuf := make([]byte, chunk.MarshallSize()+chunkMarshallingOverhead)
+		chunkWriter := NewProtobufWriter(chunkBuf)
+		assert.NoError(chunk.Marshall(chunkWriter))
+		chunkBlockId, _, err := r.WriteBlock(chunkWriter.Bytes())
+		assert.NoError(err)
+		_, err = r.WriteRevision(&Revision{ //nolint:exhaustruct
+			Timestamp:        NewTimestampNow(),
+			ParentRevisionId: RevisionId{},
+			BlockIds:         []BlockId{chunkBlockId},
+		})
+		assert.NoError(err)
+
+		monitor := td.NewHealthCheckMonitor()
+		err = CheckHealth(r.Repository, HealthCheckOptions{Monitor: monitor, DataBlocks: false})
+		assert.Error(err, "not strictly sorted")
+		assert.Error(err, "a.txt >= a.txt")
+	})
+
 	t.Run("Invalid file size in metadata", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
