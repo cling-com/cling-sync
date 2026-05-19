@@ -49,6 +49,22 @@ func (b BlockBuf) Bytes() []byte {
 	return b.buf[:]
 }
 
+// Counterpart of `BlockId.String()`. Parse a hex-encoded BlockId.
+func NewBlockIdFromString(s string) (BlockId, error) {
+	if len(s) != 2*BlockIdSize {
+		return BlockId{}, Errorf(
+			"invalid block id length %d hex chars, want %d",
+			len(s),
+			2*BlockIdSize,
+		)
+	}
+	raw, err := hex.DecodeString(s)
+	if err != nil {
+		return BlockId{}, WrapErrorf(err, "invalid block id")
+	}
+	return BlockId(raw), nil
+}
+
 func (id BlockId) String() string {
 	return hex.EncodeToString(id[:])
 }
@@ -64,6 +80,9 @@ type Storage interface {
 	Init(config Toml, headerComment string) error
 	Open() (Toml, error)
 	HasBlock(blockId BlockId) (bool, error)
+
+	// Stream all block ids present in storage.
+	ReadBlockIds(yield func(BlockId) error) error
 
 	// Return `ErrBlockNotFound` if the block does not exist.
 	ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error)
@@ -170,6 +189,48 @@ func (s *FileStorage) HasBlock(blockId BlockId) (bool, error) {
 		return false, WrapErrorf(err, "failed to stat block file %s", p)
 	}
 	return true, nil
+}
+
+func (s *FileStorage) ReadBlockIds(yield func(BlockId) error) error {
+	objectsPath := filepath.Join(".cling", string(s.Purpose), "objects")
+	stat, err := s.FS.Stat(objectsPath)
+	if err != nil {
+		return WrapErrorf(err, "failed to stat objects directory %s", objectsPath)
+	}
+	if !stat.IsDir() {
+		return Errorf("objects path %s is not a directory", objectsPath)
+	}
+	err = s.FS.WalkDir(objectsPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if IsAtomicWriteTempFile(path) {
+			return nil
+		}
+		relPath, err := filepath.Rel(objectsPath, path)
+		if err != nil {
+			return WrapErrorf(err, "failed to get relative block path for %s", path)
+		}
+		parts := strings.Split(filepath.ToSlash(relPath), "/")
+		if len(parts) != 3 || len(parts[0]) != 2 || len(parts[1]) != 2 || len(parts[2]) != 60 {
+			return Errorf("invalid block path %s", path)
+		}
+		blockId, err := NewBlockIdFromString(parts[0] + parts[1] + parts[2])
+		if err != nil {
+			return WrapErrorf(err, "invalid block path %s", path)
+		}
+		if err := yield(blockId); err != nil {
+			return WrapErrorf(err, "failed to handle block id %s", blockId)
+		}
+		return nil
+	})
+	if err != nil {
+		return WrapErrorf(err, "failed to read block ids")
+	}
+	return nil
 }
 
 func (s *FileStorage) WriteBlock(blockId BlockId, data []byte) (bool, error) {

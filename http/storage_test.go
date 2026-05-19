@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +64,64 @@ func TestHTTPStorageClient(t *testing.T) {
 		ok, err = client.HasBlock(blockId)
 		assert.NoError(err)
 		assert.Equal(true, ok)
+	})
+
+	t.Run("ReadBlockIds", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		storage, srv := newSut(t)
+		defer srv.Close()
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
+		blockId1 := td.BlockId("1")
+		blockId2 := td.BlockId("2")
+		blockId3 := td.BlockId("3")
+		testWriteBlock(t, storage, blockId3, []byte("block 3"))
+		testWriteBlock(t, storage, blockId2, []byte("block 2"))
+		testWriteBlock(t, storage, blockId1, []byte("block 1"))
+
+		blockIds := []lib.BlockId{}
+		err := client.ReadBlockIds(func(blockId lib.BlockId) error {
+			blockIds = append(blockIds, blockId)
+			return nil
+		})
+		assert.NoError(err)
+		slices.SortFunc(blockIds, func(a, b lib.BlockId) int {
+			return strings.Compare(a.String(), b.String())
+		})
+		assert.Equal([]lib.BlockId{blockId1, blockId2, blockId3}, blockIds)
+	})
+
+	t.Run("ReadBlockIds rejects truncated stream", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(make([]byte, lib.BlockIdSize-1))
+		}))
+		defer srv.Close()
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
+
+		err := client.ReadBlockIds(func(blockId lib.BlockId) error {
+			t.Fatalf("unexpected block id %s", blockId)
+			return nil
+		})
+		assert.Error(err, "truncated block id stream")
+	})
+
+	t.Run("ReadBlockIds detects aborted server stream", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		server := NewHTTPStorageServer(failingReadBlockIdsStorage{Storage: nil}, ":9999")
+		mux := http.NewServeMux()
+		server.RegisterRoutes(mux)
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
+
+		err := client.ReadBlockIds(func(blockId lib.BlockId) error {
+			return nil
+		})
+		assert.Error(err, "block id stream")
 	})
 
 	t.Run("ReadBlock", func(t *testing.T) {
@@ -130,6 +190,21 @@ func TestHTTPStorageClient(t *testing.T) {
 		readData, err := client.ReadBlock(blockId, lib.NewBlockBuf())
 		assert.NoError(err)
 		assert.Equal(data, readData)
+	})
+
+	t.Run("ReadBlock rejects oversized response without Content-Length", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush() //nolint:forcetypeassert
+			_, _ = io.CopyN(w, zeroReader{}, int64(lib.MaxBlockSize)+1)
+		}))
+		defer srv.Close()
+		client := NewHTTPStorageClient(srv.URL, NewDefaultHTTPClient(srv.Client()))
+
+		_, err := client.ReadBlock(td.BlockId("1"), lib.NewBlockBuf())
+		assert.Error(err, "response body exceeds buffer")
 	})
 
 	t.Run("HasControlFile", func(t *testing.T) {
@@ -304,6 +379,34 @@ func TestHTTPStorageServer(t *testing.T) {
 		assert.Equal(200, resp.StatusCode)
 	})
 
+	t.Run("ReadBlockIds streams raw block ids", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		storage, srv := newSut(t)
+		defer srv.Close()
+		testWriteBlock(t, storage, td.BlockId("1"), []byte("block 1"))
+		testWriteBlock(t, storage, td.BlockId("2"), []byte("block 2"))
+		testWriteBlock(t, storage, td.BlockId("3"), []byte("block 3"))
+
+		resp, err := http.Get(srv.URL + "/storage/block-ids")
+		assert.NoError(err)
+		defer resp.Body.Close() //nolint:errcheck
+		assert.Equal(http.StatusOK, resp.StatusCode)
+		assert.Equal("application/octet-stream", resp.Header.Get("Content-Type"))
+		data, err := io.ReadAll(resp.Body)
+		assert.NoError(err)
+		assert.Equal(3*lib.BlockIdSize, len(data))
+		blockIds := []lib.BlockId{}
+		for len(data) > 0 {
+			blockIds = append(blockIds, lib.BlockId(data[:lib.BlockIdSize]))
+			data = data[lib.BlockIdSize:]
+		}
+		slices.SortFunc(blockIds, func(a, b lib.BlockId) int {
+			return strings.Compare(a.String(), b.String())
+		})
+		assert.Equal([]lib.BlockId{td.BlockId("1"), td.BlockId("2"), td.BlockId("3")}, blockIds)
+	})
+
 	t.Run("ReadBlock", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
@@ -444,7 +547,7 @@ func TestHTTPStorageServer(t *testing.T) {
 		assert.Equal(false, ok)
 	})
 
-	t.Run("Server rejects block IDs with the wrong byte length", func(t *testing.T) {
+	t.Run("Server rejects block ids with the wrong byte length", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		_, srv := newSut(t)
@@ -525,6 +628,26 @@ func testWriteBlock(t *testing.T, storage *lib.FileStorage, blockId lib.BlockId,
 	assert.NoError(err)
 }
 
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+type failingReadBlockIdsStorage struct {
+	lib.Storage
+}
+
+func (s failingReadBlockIdsStorage) ReadBlockIds(yield func(lib.BlockId) error) error {
+	for i := range 4097 {
+		if err := yield(td.BlockId(strconv.Itoa(i))); err != nil {
+			return err
+		}
+	}
+	return lib.Errorf("boom")
+}
+
 func testStorage(t *testing.T) *lib.FileStorage {
 	t.Helper()
 	assert := lib.NewAssert(t)
@@ -542,8 +665,7 @@ func newSut(t *testing.T) (*lib.FileStorage, *httptest.Server) {
 	sut.LockLeaseMin = testLockLeaseMin
 	mux := http.NewServeMux()
 	sut.RegisterRoutes(mux)
-	srv := httptest.NewServer(mux)
-	return storage, srv
+	return storage, httptest.NewServer(mux)
 }
 
 // newClient builds an `HTTPStorageClient` against `srv` with the tight test
@@ -555,9 +677,8 @@ func newClient(srv *httptest.Server) *HTTPStorageClient {
 }
 
 // BenchmarkRoundtripBlock writes a block over the HTTP storage layer and
-// reads it back. The block is `MaxBlockSize` so the allocation behaviour of
-// the body-read path is exposed cleanly; smaller blocks would understate the
-// cost of `io.ReadAll`'s geometric growth.
+// reads it back. The block is `MaxBlockSize` so the fixed-buffer read path is
+// exercised cleanly.
 func BenchmarkRoundtripBlock(b *testing.B) {
 	storage, err := lib.NewFileStorage(td.NewFS(b), lib.StoragePurposeRepository)
 	if err != nil {

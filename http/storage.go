@@ -1,9 +1,9 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"context"
-	"encoding/hex"
 	"errors"
 	"io"
 	"log/slog"
@@ -22,18 +22,23 @@ const DefaultLockLeaseMin = 5 * time.Second
 
 // We use a simplified interface to improve support for Wasm, i.e. we don't
 // bring in the full HTTP client which adds a lot of dependencies.
-//
-// `dst`, when non-nil, is the destination slice for the response body. The
-// body is read into `dst`; `resp.Body` slices into `dst[:n]`. If the response
-// exceeds `len(dst)` the call returns an error. When `dst` is nil the body
-// is allocated and capped at `lib.MaxBlockSize` for safety.
 type HTTPClient interface {
+	// `dst`, when non-nil, is the destination slice for the response body. The
+	// body is read into `dst`; `resp.Body` slices into `dst[:n]`. If the response
+	// exceeds `len(dst)` the call returns an error. When `dst` is nil the body
+	// is allocated and capped at `lib.MaxBlockSize` for safety.
 	Request(ctx context.Context, method, url string, body, dst []byte) (*HTTPResponse, error)
+	RequestStreaming(ctx context.Context, method, url string, body []byte) (*HTTPStreamingResponse, error)
 }
 
 type HTTPResponse struct {
 	StatusCode int
 	Body       []byte
+}
+
+type HTTPStreamingResponse struct {
+	StatusCode int
+	Body       io.ReadCloser
 }
 
 type DefaultHTTPClient struct {
@@ -49,22 +54,13 @@ func (c *DefaultHTTPClient) Request(
 	method, url string,
 	body, dst []byte,
 ) (*HTTPResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	resp, err := c.RequestStreaming(ctx, method, url, body)
 	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to create request")
-	}
-	resp, err := c.Client.Do(req)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to execute request")
+		return nil, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if dst != nil {
 		// SEC: A malicious server must not be allowed to overflow `dst`.
-		if resp.ContentLength > int64(len(dst)) {
-			return nil, lib.Errorf(
-				"response body of %d bytes exceeds buffer of %d", resp.ContentLength, len(dst),
-			)
-		}
 		limit := io.LimitReader(resp.Body, int64(len(dst))+1)
 		n, err := io.ReadFull(limit, dst)
 		switch {
@@ -74,27 +70,40 @@ func (c *DefaultHTTPClient) Request(
 			return nil, lib.WrapErrorf(err, "failed to read response body")
 		default:
 			// Filled `dst` completely. Make sure there isn't more.
-			extra, _ := io.ReadFull(limit, dst[:1])
+			var extraBuf [1]byte
+			extra, _ := limit.Read(extraBuf[:])
 			if extra > 0 {
 				return nil, lib.Errorf("response body exceeds buffer of %d", len(dst))
 			}
 		}
-		return &HTTPResponse{resp.StatusCode, dst[:n]}, nil
+		return &HTTPResponse{StatusCode: resp.StatusCode, Body: dst[:n]}, nil
 	}
 	// SEC: Cap at MaxBlockSize. The server might misbehave or be malicious.
-	limit := io.LimitReader(resp.Body, lib.MaxBlockSize)
-	if resp.ContentLength > 0 && resp.ContentLength <= lib.MaxBlockSize {
-		buf := bytes.NewBuffer(make([]byte, 0, resp.ContentLength))
-		if _, err := buf.ReadFrom(limit); err != nil {
-			return nil, lib.WrapErrorf(err, "failed to read response body")
-		}
-		return &HTTPResponse{resp.StatusCode, buf.Bytes()}, nil
-	}
+	limit := io.LimitReader(resp.Body, int64(lib.MaxBlockSize)+1)
 	data, err := io.ReadAll(limit)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read response body")
 	}
-	return &HTTPResponse{resp.StatusCode, data}, nil
+	if len(data) > lib.MaxBlockSize {
+		return nil, lib.Errorf("response body exceeds maximum of %d", lib.MaxBlockSize)
+	}
+	return &HTTPResponse{StatusCode: resp.StatusCode, Body: data}, nil
+}
+
+func (c *DefaultHTTPClient) RequestStreaming(
+	ctx context.Context,
+	method, url string,
+	body []byte,
+) (*HTTPStreamingResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to create request")
+	}
+	resp, err := c.Client.Do(req) //nolint:bodyclose,gosec
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to execute request")
+	}
+	return &HTTPStreamingResponse{StatusCode: resp.StatusCode, Body: resp.Body}, nil
 }
 
 type HTTPStorageClient struct {
@@ -141,6 +150,31 @@ func (c *HTTPStorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
 		return false, lib.WrapErrorf(err, "failed to check if block exists")
 	}
 	return resp.StatusCode == http.StatusOK, nil
+}
+
+func (c *HTTPStorageClient) ReadBlockIds(yield func(lib.BlockId) error) error {
+	resp, err := c.requestStreaming(context.Background(), http.MethodGet, "/storage/block-ids", nil)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to read block ids")
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	reader := bufio.NewReaderSize(resp.Body, lib.BlockIdSize*4096)
+	for {
+		var blockId lib.BlockId
+		_, err := io.ReadFull(reader, blockId[:])
+		switch {
+		case err == nil:
+			if err := yield(blockId); err != nil {
+				return lib.WrapErrorf(err, "failed to handle block id %s", blockId)
+			}
+		case errors.Is(err, io.EOF):
+			return nil
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return lib.Errorf("truncated block id stream")
+		default:
+			return lib.WrapErrorf(err, "failed to read block id stream")
+		}
+	}
 }
 
 func (c *HTTPStorageClient) ReadBlock(blockId lib.BlockId, buf lib.BlockBuf) ([]byte, error) {
@@ -303,9 +337,6 @@ func (c *HTTPStorageClient) request(
 	return c.requestInto(ctx, method, path, body, nil, ignoreStatusCodes...)
 }
 
-// requestInto is the buffered variant of `request`: when `dst` is non-nil
-// the response body is read into `dst` and `resp.Body` slices into it,
-// avoiding a per-call allocation on the read path.
 func (c *HTTPStorageClient) requestInto(
 	ctx context.Context,
 	method, path string,
@@ -329,40 +360,53 @@ func (c *HTTPStorageClient) requestInto(
 	return resp, nil
 }
 
+func (c *HTTPStorageClient) requestStreaming(
+	ctx context.Context,
+	method, path string,
+	body []byte,
+	ignoreStatusCodes ...int,
+) (*HTTPStreamingResponse, error) {
+	if err := c.lockLeaseError.Load(); err != nil {
+		err, ok := err.(error)
+		if !ok {
+			return nil, lib.Errorf("failed to execute request because a lock lease expired")
+		}
+		return nil, lib.WrapErrorf(err, "failed to execute request because a lock lease expired")
+	}
+	resp, err := c.Client.RequestStreaming(ctx, method, c.Address+path, body)
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to execute streaming request")
+	}
+	if resp.StatusCode >= 400 && !slices.Contains(ignoreStatusCodes, resp.StatusCode) {
+		defer resp.Body.Close() //nolint:errcheck
+		data, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to read error response")
+		}
+		return nil, lib.Errorf("failed request %s %s: got %d (%s)", method, path, resp.StatusCode, string(data))
+	}
+	return resp, nil
+}
+
 type lockHandle struct {
 	extend chan struct{}
 	done   chan struct{}
 }
 
 type HTTPStorageServer struct {
-	Storage      *lib.FileStorage
+	Storage      lib.Storage
 	Address      string
 	LockLeaseMin time.Duration
 	locks        sync.Map // token -> *lockHandle
 }
 
-func NewHTTPStorageServer(storage *lib.FileStorage, address string) *HTTPStorageServer {
+func NewHTTPStorageServer(storage lib.Storage, address string) *HTTPStorageServer {
 	return &HTTPStorageServer{
 		Storage:      storage,
 		Address:      address,
 		LockLeaseMin: DefaultLockLeaseMin,
 		locks:        sync.Map{},
 	}
-}
-
-func parseBlockId(hexId string) (lib.BlockId, error) {
-	if len(hexId) != 2*lib.BlockIdSize {
-		return lib.BlockId{}, lib.Errorf(
-			"invalid block ID length %d hex chars, want %d",
-			len(hexId),
-			2*lib.BlockIdSize,
-		)
-	}
-	raw, err := hex.DecodeString(hexId)
-	if err != nil {
-		return lib.BlockId{}, lib.WrapErrorf(err, "invalid block ID")
-	}
-	return lib.BlockId(raw), nil
 }
 
 // readBoundedBody reads at most `max` bytes from `r.Body` and returns them as
@@ -383,6 +427,7 @@ func readBoundedBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byt
 
 func (s *HTTPStorageServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /storage/open", s.Open)
+	mux.HandleFunc("GET /storage/block-ids", s.ReadBlockIds)
 	mux.HandleFunc("HEAD /storage/block/{id}", s.HasBlock)
 	mux.HandleFunc("GET /storage/block/{id}", s.ReadBlock)
 	mux.HandleFunc("PUT /storage/block/{id}", s.WriteBlock)
@@ -409,7 +454,7 @@ func (s *HTTPStorageServer) Open(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *HTTPStorageServer) HasBlock(w http.ResponseWriter, r *http.Request) {
-	blockId, err := parseBlockId(r.PathValue("id"))
+	blockId, err := lib.NewBlockIdFromString(r.PathValue("id"))
 	if err != nil {
 		s.emitError(err, w, http.StatusBadRequest)
 		return
@@ -426,9 +471,65 @@ func (s *HTTPStorageServer) HasBlock(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Return the block with the given ID. The response body is the opaque block bytes as stored.
+func (s *HTTPStorageServer) ReadBlockIds(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/octet-stream")
+	flusher, _ := w.(http.Flusher)
+	buf := make([]byte, 0, lib.BlockIdSize*4096)
+	written := false
+
+	flush := func() error {
+		if len(buf) == 0 {
+			return nil
+		}
+		if _, err := w.Write(buf); err != nil {
+			return lib.WrapErrorf(err, "failed to write block id stream")
+		}
+		written = true
+		buf = buf[:0]
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
+	}
+
+	err := s.Storage.ReadBlockIds(func(blockId lib.BlockId) error {
+		select {
+		case <-r.Context().Done():
+			return r.Context().Err()
+		default:
+		}
+		if len(buf)+lib.BlockIdSize > cap(buf) {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		buf = append(buf, blockId[:]...)
+		return nil
+	})
+	if err == nil {
+		err = flush()
+	}
+	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	if !written {
+		s.emitError(lib.WrapErrorf(err, "failed to read block ids"), w, http.StatusInternalServerError)
+		return
+	}
+	slog.Error("Failed to stream block ids - aborting the transport", "error", err)
+	conn, _, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		slog.Error("Failed to abort HTTP response", "error", err)
+		return
+	}
+	if err := conn.Close(); err != nil {
+		slog.Error("Failed to close aborted HTTP response", "error", err)
+	}
+}
+
+// Return the block with the given id. The response body is the opaque block bytes as stored.
 func (s *HTTPStorageServer) ReadBlock(w http.ResponseWriter, r *http.Request) {
-	blockId, err := parseBlockId(r.PathValue("id"))
+	blockId, err := lib.NewBlockIdFromString(r.PathValue("id"))
 	if err != nil {
 		s.emitError(err, w, http.StatusBadRequest)
 		return
@@ -456,7 +557,7 @@ func (s *HTTPStorageServer) ReadBlock(w http.ResponseWriter, r *http.Request) {
 // Return `200 OK` if the block already existed.
 // Return `201 Created` if the block was written.
 func (s *HTTPStorageServer) WriteBlock(w http.ResponseWriter, r *http.Request) {
-	blockId, err := parseBlockId(r.PathValue("id"))
+	blockId, err := lib.NewBlockIdFromString(r.PathValue("id"))
 	if err != nil {
 		s.emitError(err, w, http.StatusBadRequest)
 		return

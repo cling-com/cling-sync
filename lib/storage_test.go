@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -261,6 +262,40 @@ func TestFileStorageBlocks(t *testing.T) {
 		buf := NewBlockBuf()
 		_, err = sut.ReadBlock(td.BlockId("1"), buf)
 		assert.ErrorIs(err, ErrBlockNotFound)
+	})
+
+	t.Run("ReadBlockIds", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
+		assert.NoError(err)
+		err = sut.Init(nil, "")
+		assert.NoError(err)
+
+		blockId1 := td.BlockId("1")
+		blockId2 := td.BlockId("2")
+		_, err = sut.WriteBlock(blockId2, []byte("block 2"))
+		assert.NoError(err)
+		_, err = sut.WriteBlock(blockId1, []byte("block 1"))
+		assert.NoError(err)
+
+		// Simulate a crash leaving behind AtomicWriteFile's temporary file.
+		f, err := sut.FS.OpenWrite(AtomicWriteTempFilename(sut.blockPath(blockId1)))
+		assert.NoError(err)
+		_, err = f.Write([]byte("temp"))
+		assert.NoError(err)
+		assert.NoError(f.Close())
+
+		blockIds := []BlockId{}
+		err = sut.ReadBlockIds(func(blockId BlockId) error {
+			blockIds = append(blockIds, blockId)
+			return nil
+		})
+		assert.NoError(err)
+		slices.SortFunc(blockIds, func(a, b BlockId) int {
+			return strings.Compare(a.String(), b.String())
+		})
+		assert.Equal([]BlockId{blockId1, blockId2}, blockIds)
 	})
 
 	t.Run("WriteBlock: data length must not exceed limits", func(t *testing.T) {
