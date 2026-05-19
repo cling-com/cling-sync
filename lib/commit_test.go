@@ -90,6 +90,37 @@ func TestCommit(t *testing.T) {
 		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
 		assert.ErrorIs(err, ErrHeadChanged)
 	})
+
+	t.Run("Second Commit after success returns closed", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		assert.NoError(commit.Add(td.RevisionEntry("a.txt", RevisionEntryKindAdd)))
+		_, err = commit.Commit(td.CommitInfo())
+		assert.NoError(err)
+
+		_, err = commit.Commit(td.CommitInfo())
+		assert.Error(err, "commit is closed")
+		err = commit.Add(td.RevisionEntry("b.txt", RevisionEntryKindAdd))
+		assert.Error(err, "commit is closed")
+	})
+
+	t.Run("Second Commit after failure returns closed", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		_, err = commit.Commit(td.CommitInfo())
+		assert.ErrorIs(err, ErrEmptyCommit)
+
+		_, err = commit.Commit(td.CommitInfo())
+		assert.Error(err, "commit is closed")
+	})
 }
 
 func TestCommitEnsureDirExists(t *testing.T) {

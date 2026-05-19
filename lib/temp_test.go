@@ -17,7 +17,7 @@ func TestTemp(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
-		sut := NewRevisionEntryTempWriter(fs, 400)
+		sut := NewRevisionEntryTempWriter(fs, 400+chunkFramingOverhead)
 
 		add := func(path string, mode FileMode) {
 			err := sut.Add(
@@ -70,7 +70,7 @@ func TestTemp(t *testing.T) {
 
 		// First, try with a chunk size that *exactly* fits 3 entries.
 		entry := td.RevisionEntry("1.txt", RevisionEntryKindAdd)
-		sut := NewRevisionEntryTempWriter(fs, marshallSize(entry)*3)
+		sut := NewRevisionEntryTempWriter(fs, marshallSize(entry)*3+chunkFramingOverhead)
 		for i := range 3 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryKindAdd))
 			assert.NoError(err)
@@ -80,8 +80,8 @@ func TestTemp(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(1, sut.chunks, "chunk should have been rotated")
 
-		// Now, try with a chunk size that is on byte smaller than 3 entries.
-		sut = NewRevisionEntryTempWriter(fs, marshallSize(entry)*3-1)
+		// Now, try with a chunk size that is one byte smaller than 3 entries.
+		sut = NewRevisionEntryTempWriter(fs, marshallSize(entry)*3-1+chunkFramingOverhead)
 		for i := range 2 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryKindAdd))
 			assert.NoError(err)
@@ -221,6 +221,60 @@ func TestTemp(t *testing.T) {
 			last = curr
 		}
 	})
+
+	t.Run("Multi-frame chunk files", func(t *testing.T) {
+		t.Parallel()
+		// Push enough entries through that the writer produces multiple chunk
+		// files, each containing multiple frames. Then check Finalize streams
+		// the merge correctly: count matches, output is sorted, every chunk
+		// file is multi-frame.
+		assert := NewAssert(t)
+		sut := NewRevisionEntryTempWriter(td.NewFS(t), 256*1024)
+		const n = 4000
+		for range n {
+			p := fmt.Sprintf("p-%d.txt", rand.Int())
+			assert.NoError(sut.Add(td.RevisionEntry(p, RevisionEntryKindAdd)))
+		}
+		temp, err := sut.Finalize()
+		assert.NoError(err)
+		assert.Greater(temp.Chunks(), 1)
+		for i := range temp.Chunks() {
+			f, err := countFramesInChunkFile(temp, i)
+			assert.NoError(err)
+			assert.Greater(f, 1, "chunk %d has %d frame(s)", i, f)
+		}
+		merged := readAllRevsisionTemp(t, temp, nil)
+		assert.Equal(n, len(merged))
+		for i := 1; i < len(merged); i++ {
+			a, b := merged[i-1].Path.String(), merged[i].Path.String()
+			assert.Equal(true, a < b, "unsorted at %d: %q >= %q", i, a, b)
+		}
+	})
+}
+
+func countFramesInChunkFile[T Marshallable](temp *Temp[T], i int) (int, error) {
+	f, err := temp.fs.OpenRead(fmt.Sprintf("%d.sorted", i))
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close() //nolint:errcheck
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return 0, err
+	}
+	r := NewProtobufReader(data)
+	n := 0
+	for !r.AtEnd() {
+		_, _, err := r.ReadTag()
+		if err != nil {
+			return 0, err
+		}
+		if _, err := r.ReadBytes(); err != nil {
+			return 0, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 func TestTempCache(t *testing.T) {
@@ -229,7 +283,7 @@ func TestTempCache(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
-		sut := NewRevisionEntryTempWriter(fs, 400)
+		sut := NewRevisionEntryTempWriter(fs, 400+chunkFramingOverhead)
 		add := func(path string, mode FileMode) {
 			err := sut.Add(
 				&RevisionEntry{Kind: RevisionEntryKindAdd, Path: Path{path}, Metadata: *td.PathMetadata(mode)},
@@ -282,7 +336,7 @@ func TestTempCache(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
-		sut := NewRevisionEntryTempWriter(fs, 400)
+		sut := NewRevisionEntryTempWriter(fs, 400+chunkFramingOverhead)
 		add := func(path string, mode FileMode) {
 			err := sut.Add(
 				&RevisionEntry{Kind: RevisionEntryKindAdd, Path: Path{path}, Metadata: *td.PathMetadata(mode)},

@@ -99,7 +99,7 @@ func TestCheckHealth(t *testing.T) {
 		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		e2 := td.RevisionEntry("a.txt", RevisionEntryKindUpdate)
 		chunk := RevisionEntryChunk{Entries: []*RevisionEntry{e1, e2}}
-		chunkBuf := make([]byte, chunk.MarshallSize()+chunkMarshallingOverhead)
+		chunkBuf := make([]byte, chunk.MarshallSize()+revisionEntryChunkMarshallScratch)
 		chunkWriter := NewProtobufWriter(chunkBuf)
 		assert.NoError(chunk.Marshall(chunkWriter))
 		chunkBlockId, _, err := r.WriteBlock(chunkWriter.Bytes())

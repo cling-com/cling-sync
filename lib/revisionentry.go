@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// `ProtobufWriter.WriteMessage` reserves 10B of scratch per nesting level.
+// A `RevisionEntryChunk` nests 3 deep (entry → metadata → timestamp). 64
+// covers the worst case with slack.
+const revisionEntryChunkMarshallScratch = 64
+
 func (k RevisionEntryKind) String() string {
 	switch k {
 	case RevisionEntryKindAdd:

@@ -654,6 +654,62 @@ func UnmarshallRevisionEntryChunk(r *ProtobufReader) (*RevisionEntryChunk, error
 	return o, nil
 }
 
+type TempFrame struct {
+	Data []byte
+}
+
+func (o *TempFrame) Validate() error {
+	if len(o.Data) > 8257536 {
+		return Errorf("TempFrame.Data must not be longer than 8257536")
+	}
+	return nil
+}
+
+func (o *TempFrame) Marshall(w ProtobufWriter) error {
+	if err := o.Validate(); err != nil {
+		return err
+	}
+	if err := w.WriteBytes(1, o.Data[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (o *TempFrame) MarshallSize() int {
+	sw := NewProtobufSizeWriter()
+	_ = o.Marshall(sw)
+	return sw.Size()
+}
+
+func UnmarshallTempFrame(r *ProtobufReader) (*TempFrame, error) {
+	o := &TempFrame{}
+	for !r.AtEnd() {
+		tag, wireType, err := r.ReadTag()
+		if err != nil {
+			return nil, err
+		}
+		switch tag {
+		case 1:
+			if wireType != 2 {
+				return nil, Errorf("TempFrame.Data: unexpected wire type %d, want 2", wireType)
+			}
+			b, err := r.ReadBytes()
+			if err != nil {
+				return nil, err
+			}
+			o.Data = b
+		default:
+			if err := r.Skip(wireType); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := o.Validate(); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
 type Revision struct {
 	Magic            string
 	Timestamp        Timestamp

@@ -86,6 +86,10 @@ message RevisionEntryChunk {
     repeated RevisionEntry entries = 1 [(cling) = {max_length: 0x40000}];
 }
 
+message TempFrame {
+    bytes data = 1 [(cling) = {max_length: 0x7E0000}];
+}
+
 message Revision {
     // Magic prefix identifying a marshalled `Revision`. Always
     // `"cling-revision"`. Lets a disaster-recovery tool iterate every block,

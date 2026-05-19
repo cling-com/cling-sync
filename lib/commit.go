@@ -92,8 +92,15 @@ type CommitInfo struct {
 
 // Return `ErrHeadChanged` if the head has changed during the commit.
 // Return `ErrEmptyCommit` if the commit is empty.
+// A `Commit` is single-use: any call after the first closes it, so further
+// `Add` / `Commit` calls return "commit is closed".
 func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
-	sorted, err := c.tempWriter.Finalize()
+	if c.tempWriter == nil {
+		return RevisionId{}, Errorf("commit is closed")
+	}
+	tw := c.tempWriter
+	c.tempWriter = nil
+	sorted, err := tw.Finalize()
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to finalize temp writer")
 	}
@@ -112,14 +119,20 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	blockIds := []BlockId{}
 	sortedReader := sorted.Reader(nil)
 	buf := NewBlockBuf()
-	for chunk := range sorted.Chunks() {
-		data, err := sortedReader.ReadChunkRaw(chunk, buf)
+	for i := range sorted.Chunks() {
+		entries, err := sortedReader.ReadChunk(i, buf)
 		if err != nil {
-			return RevisionId{}, WrapErrorf(err, "failed to read sorted chunk file")
+			return RevisionId{}, WrapErrorf(err, "failed to read sorted chunk %d", i)
 		}
-		blockId, _, err := c.repository.WriteBlock(data)
+		chunk := &RevisionEntryChunk{Entries: entries}
+		blockBuf := make([]byte, chunk.MarshallSize()+revisionEntryChunkMarshallScratch)
+		pw := NewProtobufWriter(blockBuf)
+		if err := chunk.Marshall(pw); err != nil {
+			return RevisionId{}, WrapErrorf(err, "failed to marshall revision entry chunk")
+		}
+		blockId, _, err := c.repository.WriteBlock(pw.Bytes())
 		if err != nil {
-			return RevisionId{}, WrapErrorf(err, "failed to write block")
+			return RevisionId{}, WrapErrorf(err, "failed to write revision entry chunk block")
 		}
 		blockIds = append(blockIds, blockId)
 	}

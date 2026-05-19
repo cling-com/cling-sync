@@ -2,6 +2,7 @@
 package lib
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -11,11 +12,14 @@ import (
 
 const DefaultTempChunkSize = 4 * 1024 * 1024
 
-// chunkMarshallingOverhead is the slack a chunk's marshal buffer needs on
-// top of the running budget (10 bytes per ProtobufBytesWriter.WriteMessage
-// nesting level — our deepest is RevisionEntryChunk → RevisionEntry →
-// PathMetadata → Timestamp, plus a little headroom).
-const chunkMarshallingOverhead = 64
+// Splitting a sorted chunk into this many frames lets Finalize stream the
+// k-way merge with only one frame per input file in memory.
+const framesPerChunk = 16
+
+// Worst-case `TempFrame` envelope overhead (tag + varint length) per frame
+// times `framesPerChunk`. Reserved against `maxChunkSize` so the on-disk
+// chunk file stays under budget even after framing.
+const chunkFramingOverhead = framesPerChunk * 8
 
 // Marshallable is the constraint for entry types stored by TempWriter/Temp.
 type Marshallable interface {
@@ -112,43 +116,25 @@ func (tr *TempReader[T]) ReadChunk(i int, buf BlockBuf) ([]T, error) {
 	if i < 0 || i >= tr.chunks {
 		return nil, Errorf("chunk index out of range")
 	}
-	data, err := tr.ReadChunkRaw(i, buf)
+	fr, err := newFrameReader(tr.fs, tr.chunkFilename(i), tr.marshaller, buf)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := tr.marshaller.UnmarshallAll(NewProtobufReader(data))
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to unmarshall chunk %d", i)
-	}
-	if tr.filter == nil {
-		return entries, nil
-	}
-	filtered := entries[:0]
-	for _, e := range entries {
-		if tr.filter(e) {
-			filtered = append(filtered, e)
+	defer fr.Close() //nolint:errcheck
+	var entries []T
+	for {
+		e, err := fr.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if tr.filter == nil || tr.filter(e) {
+			entries = append(entries, e)
 		}
 	}
-	return filtered, nil
-}
-
-// ReadChunkRaw returns the chunk's raw on-disk bytes (a marshalled chunk
-// message with same wire format as a repository revision block). The returned
-// slice aliases `buf`; the caller must consume it before reusing `buf`.
-func (tr *TempReader[T]) ReadChunkRaw(i int, buf BlockBuf) ([]byte, error) {
-	if i < 0 || i >= tr.chunks {
-		return nil, Errorf("chunk index out of range")
-	}
-	file, err := tr.fs.OpenRead(tr.chunkFilename(i))
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to open chunk file %d", i)
-	}
-	defer file.Close() //nolint:errcheck
-	data, err := buf.Read(file)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to read chunk file %d", i)
-	}
-	return data, nil
+	return entries, nil
 }
 
 func (tr *TempReader[T]) chunkFilename(index int) string {
@@ -171,6 +157,8 @@ type TempWriter[T Marshallable] struct {
 	fileExt      string
 	compare      func(a, b T) int
 	marshaller   chunkMarshaller[T]
+	// Lazily allocated on first rotateChunk and reused for every frame.
+	frameBuf BlockBuf
 }
 
 // Create a new TempWriter.
@@ -183,12 +171,19 @@ func NewTempWriter[T Marshallable](
 	fs FS,
 	maxChunkSize int,
 ) *TempWriter[T] {
-	return &TempWriter[T]{fs, nil, 0, maxChunkSize, 0, "raw", compare, marshaller}
+	return &TempWriter[T]{ //nolint:exhaustruct
+		fs:           fs,
+		maxChunkSize: maxChunkSize,
+		fileExt:      "raw",
+		compare:      compare,
+		marshaller:   marshaller,
+	}
 }
 
 func (tw *TempWriter[T]) Add(t T) error {
 	size := marshallSize(t)
-	if tw.chunkSize > 0 && tw.chunkSize+size > tw.maxChunkSize {
+	budget := tw.maxChunkSize - chunkFramingOverhead
+	if tw.chunkSize > 0 && tw.chunkSize+size > budget {
 		if err := tw.rotateChunk(); err != nil {
 			return err
 		}
@@ -199,57 +194,65 @@ func (tw *TempWriter[T]) Add(t T) error {
 }
 
 // Rotate the current chunk and then sort all chunks and return the merged result.
-func (tw *TempWriter[T]) Finalize() (*Temp[T], error) {
+func (tw *TempWriter[T]) Finalize() (*Temp[T], error) { //nolint:funlen
 	if err := tw.rotateChunk(); err != nil {
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
 	sorted := NewTempWriter(tw.compare, tw.marshaller, tw.fs, tw.maxChunkSize)
 	sorted.fileExt = "sorted"
-	// Load each input chunk fully (chunks are bounded by maxChunkSize).
-	chunks := make([][]T, tw.chunks)
+	readers := make([]*frameReader[T], 0, tw.chunks)
+	heads := make([]T, 0, tw.chunks)
+	defer func() {
+		for _, r := range readers {
+			_ = r.Close()
+		}
+	}()
 	for i := range tw.chunks {
-		data, err := ReadFile(tw.fs, tw.chunkFilename(i))
+		r, err := newFrameReader(tw.fs, tw.chunkFilename(i), tw.marshaller, NewBlockBuf())
 		if err != nil {
-			return nil, WrapErrorf(err, "failed to read chunk file %d", i)
+			return nil, err
 		}
-		entries, err := tw.marshaller.UnmarshallAll(NewProtobufReader(data))
+		e, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			_ = r.Close()
+			continue
+		}
 		if err != nil {
-			return nil, WrapErrorf(err, "failed to unmarshall chunk file %d", i)
+			_ = r.Close()
+			return nil, err
 		}
-		chunks[i] = entries
+		readers = append(readers, r)
+		heads = append(heads, e)
 	}
-	// k-way merge.
-	cursors := make([]int, tw.chunks)
-	for {
-		minChunk := -1
-		for i, idx := range cursors {
-			if idx >= len(chunks[i]) {
-				continue
-			}
-			if minChunk == -1 {
-				minChunk = i
-				continue
-			}
-			c := tw.compare(chunks[i][idx], chunks[minChunk][cursors[minChunk]])
+	for len(readers) > 0 {
+		minIdx := 0
+		for i := 1; i < len(readers); i++ {
+			c := tw.compare(heads[i], heads[minIdx])
 			if c == 0 {
-				return nil, Errorf("duplicate entry: %v", chunks[i][idx])
+				return nil, Errorf("duplicate entry: %v", heads[i])
 			}
 			if c < 0 {
-				minChunk = i
+				minIdx = i
 			}
 		}
-		if minChunk == -1 {
-			break
-		}
-		if err := sorted.Add(chunks[minChunk][cursors[minChunk]]); err != nil {
+		if err := sorted.Add(heads[minIdx]); err != nil {
 			return nil, WrapErrorf(err, "failed to write to target file")
 		}
-		cursors[minChunk]++
+		e, err := readers[minIdx].Read()
+		if errors.Is(err, io.EOF) {
+			_ = readers[minIdx].Close()
+			readers = slices.Delete(readers, minIdx, minIdx+1)
+			heads = slices.Delete(heads, minIdx, minIdx+1)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		heads[minIdx] = e
 	}
 	if err := sorted.rotateChunk(); err != nil {
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}
-	// Delete all input chunk files.
 	for i := range tw.chunks {
 		if err := tw.fs.Remove(tw.chunkFilename(i)); err != nil {
 			return nil, WrapErrorf(err, "failed to remove chunk file")
@@ -258,7 +261,6 @@ func (tw *TempWriter[T]) Finalize() (*Temp[T], error) {
 	return &Temp[T]{sorted.fs, sorted.chunks, sorted.marshaller}, nil
 }
 
-// Sort the current chunk and serialize it as a typed chunk message.
 func (tw *TempWriter[T]) rotateChunk() error {
 	if len(tw.chunk) == 0 {
 		return nil
@@ -274,22 +276,124 @@ func (tw *TempWriter[T]) rotateChunk() error {
 	if sortErr != nil {
 		return sortErr
 	}
-	buf := make([]byte, tw.chunkSize+chunkMarshallingOverhead)
-	pw := NewProtobufWriter(buf)
-	if err := tw.marshaller.MarshallAll(tw.chunk, pw); err != nil {
-		return WrapErrorf(err, "failed to marshall chunk")
+	f, err := tw.fs.OpenWrite(tw.chunkFilename(tw.chunks))
+	if err != nil {
+		return WrapErrorf(err, "failed to open chunk file")
 	}
-	if err := WriteFile(tw.fs, tw.chunkFilename(tw.chunks), pw.Bytes()); err != nil {
-		return WrapErrorf(err, "failed to write chunk file")
+	if err := tw.writeFrames(f); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return WrapErrorf(err, "failed to close chunk file")
 	}
 	tw.chunk = nil
 	tw.chunkSize = 0
-	tw.chunks += 1
+	tw.chunks++
+	return nil
+}
+
+// Frames are contiguous windows of the already-sorted `tw.chunk`, written
+// in order, so reading them sequentially produces a globally sorted stream.
+func (tw *TempWriter[T]) writeFrames(w io.Writer) error {
+	if tw.frameBuf.buf == nil {
+		tw.frameBuf = NewBlockBuf()
+	}
+	entriesPerFrame := max((len(tw.chunk)+framesPerChunk-1)/framesPerChunk, 1)
+	var envelopeScratch [11]byte
+	for start := 0; start < len(tw.chunk); start += entriesPerFrame {
+		end := min(start+entriesPerFrame, len(tw.chunk))
+		slice := tw.chunk[start:end]
+		pw := NewProtobufWriter(tw.frameBuf.Bytes())
+		if err := tw.marshaller.MarshallAll(slice, pw); err != nil {
+			return WrapErrorf(err, "failed to marshall frame")
+		}
+		// Marshall the frame "by hand" so we don't have to allocate a
+		// buffer.
+		data := pw.Bytes()
+		ew := NewProtobufWriter(envelopeScratch[:])
+		if err := ew.WriteTag(1, 2); err != nil {
+			return WrapErrorf(err, "failed to write frame tag")
+		}
+		if err := ew.WriteVarint(int64(len(data))); err != nil {
+			return WrapErrorf(err, "failed to write frame length")
+		}
+		if _, err := w.Write(ew.Bytes()); err != nil {
+			return WrapErrorf(err, "failed to write frame envelope")
+		}
+		if _, err := w.Write(data); err != nil {
+			return WrapErrorf(err, "failed to write frame data")
+		}
+	}
 	return nil
 }
 
 func (tw *TempWriter[T]) chunkFilename(index int) string {
 	return fmt.Sprintf("%d.%s", index, tw.fileExt)
+}
+
+// `buf` must remain unused by the caller until Close() returns.
+// The reader holds its bytes for the lifetime of the iteration.
+type frameReader[T Marshallable] struct {
+	closer     io.Closer
+	pb         *ProtobufReader
+	marshaller chunkMarshaller[T]
+	current    []T
+	cursor     int
+}
+
+func newFrameReader[T Marshallable](
+	fs FS,
+	name string,
+	m chunkMarshaller[T],
+	buf BlockBuf,
+) (*frameReader[T], error) {
+	f, err := fs.OpenRead(name)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to open chunk file %s", name)
+	}
+	data, err := buf.Read(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, WrapErrorf(err, "failed to read chunk file %s", name)
+	}
+	return &frameReader[T]{ //nolint:exhaustruct
+		closer: f, pb: NewProtobufReader(data), marshaller: m,
+	}, nil
+}
+
+// Read returns the next entry or io.EOF when the chunk file is exhausted.
+func (r *frameReader[T]) Read() (T, error) {
+	var zero T
+	for r.cursor >= len(r.current) {
+		if r.pb.AtEnd() {
+			return zero, io.EOF
+		}
+		tag, wireType, err := r.pb.ReadTag()
+		if err != nil {
+			return zero, WrapErrorf(err, "failed to read frame tag")
+		}
+		if tag != 1 || wireType != 2 {
+			return zero, Errorf("unexpected frame tag %d/wire %d", tag, wireType)
+		}
+		frameData, err := r.pb.ReadBytes()
+		if err != nil {
+			return zero, WrapErrorf(err, "failed to read frame data")
+		}
+		entries, err := r.marshaller.UnmarshallAll(NewProtobufReader(frameData))
+		if err != nil {
+			return zero, WrapErrorf(err, "failed to unmarshall frame")
+		}
+		r.current = entries
+		r.cursor = 0
+	}
+	e := r.current[r.cursor]
+	r.cursor++
+	return e, nil
+}
+
+func (r *frameReader[T]) Close() error {
+	return r.closer.Close() //nolint:wrapcheck
 }
 
 type TempCache[T Marshallable] struct {
