@@ -125,7 +125,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 			return RevisionId{}, WrapErrorf(err, "failed to read sorted chunk %d", i)
 		}
 		chunk := &RevisionEntryChunk{Entries: entries}
-		blockBuf := make([]byte, chunk.MarshallSize()+revisionEntryChunkMarshallScratch)
+		blockBuf := make([]byte, chunk.MarshallSize())
 		pw := NewProtobufWriter(blockBuf)
 		if err := chunk.Marshall(pw); err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to marshall revision entry chunk")

@@ -28,10 +28,7 @@ type ProtobufBytesWriter struct {
 	offset int
 }
 
-// `out` has to be large enough to hold the expected message. As a rule of
-// thumb, the marshalled wire size plus 10 bytes per level of embedded-message
-// nesting is safe (WriteMessage reserves a 10-byte scratch slot at each
-// depth while it writes the inner message and patches the length varint).
+// `out` must be at least `MarshallSize()` bytes for what's being written.
 //
 // The Write* methods return an error when the buffer would overflow.
 // Errors are not recoverable: by the time a write fails, the writer may
@@ -60,25 +57,23 @@ func (w *ProtobufBytesWriter) WriteBytes(field int, v []byte) error {
 }
 
 func (w *ProtobufBytesWriter) WriteMessage(field int, marshall func(ProtobufWriter) error) error {
+	sw := NewProtobufSizeWriter()
+	if err := marshall(sw); err != nil {
+		return err
+	}
+	n := sw.Size()
 	if err := w.WriteTag(field, 2); err != nil {
 		return err
 	}
-	if w.offset+10 > len(w.out) {
-		return Errorf("buffer too small")
-	}
-	ww := NewProtobufWriter(w.out[w.offset+10:])
-	if err := marshall(ww); err != nil {
-		return err
-	}
-	n := len(ww.Bytes())
-	lengthStart := w.offset
 	if err := w.WriteVarint(int64(n)); err != nil {
 		return err
 	}
-	if gap := lengthStart + 10 - w.offset; gap > 0 {
-		copy(w.out[w.offset:], w.out[w.offset+gap:w.offset+gap+n])
+	if n > len(w.out)-w.offset {
+		return Errorf("buffer too small")
 	}
-	w.offset += n
+	if err := marshall(w); err != nil {
+		return err
+	}
 	return nil
 }
 
