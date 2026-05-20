@@ -67,12 +67,14 @@ func Await(promise js.Value) (js.Value, error) {
 	promise.Call("then", thenFunc).Call("catch", catchFunc)
 
 	// Wait for result or error.
+	timeout := time.NewTimer(30 * time.Second)
+	defer timeout.Stop()
 	select {
 	case result := <-resultChan:
 		return result, nil
 	case err := <-errorChan:
 		return js.Null(), err
-	case <-time.After(30 * time.Second):
+	case <-timeout.C:
 		return js.Null(), PromiseError{"promise timeout after 30 seconds" + promise.String()}
 	}
 }
