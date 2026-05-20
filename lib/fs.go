@@ -63,6 +63,8 @@ type memoryFileWriter struct {
 }
 
 func (w *memoryFileWriter) Write(p []byte) (n int, err error) {
+	w.fs.mu.Lock()
+	defer w.fs.mu.Unlock()
 	if int64(w.Len()+len(p)) > w.fs.maxMemory {
 		return 0, WrapErrorf(io.ErrShortWrite, "memory limit of %d bytes exceeded", w.fs.maxMemory)
 	}
@@ -74,6 +76,8 @@ func (w *memoryFileWriter) Sync() error {
 }
 
 func (w *memoryFileWriter) Close() error {
+	w.fs.mu.Lock()
+	defer w.fs.mu.Unlock()
 	if w.closed {
 		return nil
 	}
@@ -137,33 +141,45 @@ func (f *MemoryFileInfo) Type() fs.FileMode {
 	return f.mode.Type()
 }
 
+// MemoryFS matches RealFS thread-safety guarantees: every method is safe to
+// call concurrently from multiple goroutines. A single mutex serializes all
+// access to `files` and `usedMemory`; the per-path Lock map has its own
+// mutex so locking doesn't contend with FS operations.
 type MemoryFS struct {
+	mu         sync.Mutex
 	files      map[string]*MemoryFileInfo
-	locks      map[string]*sync.Mutex
+	locks      map[string]chan struct{}
 	locksMutex sync.Mutex
 	maxMemory  int64
 	usedMemory int64
 }
 
 func NewMemoryFS(maxMemory int64) *MemoryFS {
-	f := &MemoryFS{make(map[string]*MemoryFileInfo), make(map[string]*sync.Mutex), sync.Mutex{}, maxMemory, 0}
+	f := &MemoryFS{
+		mu:         sync.Mutex{},
+		files:      make(map[string]*MemoryFileInfo),
+		locks:      make(map[string]chan struct{}),
+		locksMutex: sync.Mutex{},
+		maxMemory:  maxMemory,
+		usedMemory: 0,
+	}
 	f.create(".", 0o700|os.ModeDir)
 	return f
 }
 
 func (f *MemoryFS) OpenWrite(name string) (io.WriteCloser, error) {
-	if file, ok := f.files[name]; ok && file.mode.IsDir() {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.EISDIR}
-	}
-	file := f.create(name, 0o600)
-	return &memoryFileWriter{&file.content, f, false}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.openWriteLocked(name)
 }
 
 func (f *MemoryFS) OpenWriteExcl(name string) (io.WriteCloser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.files[name]; ok {
 		return nil, fs.ErrExist
 	}
-	return f.OpenWrite(name)
+	return f.openWriteLocked(name)
 }
 
 func (f *MemoryFS) FSync(file io.WriteCloser) error {
@@ -175,6 +191,8 @@ func (f *MemoryFS) FSyncDir(path string) error {
 }
 
 func (f *MemoryFS) OpenRead(name string) (io.ReadCloser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	file, ok := f.files[name]
 	if !ok {
 		return nil, fs.ErrNotExist
@@ -182,10 +200,17 @@ func (f *MemoryFS) OpenRead(name string) (io.ReadCloser, error) {
 	if file.mode.IsDir() {
 		return io.NopCloser(errorReader{&fs.PathError{Op: "read", Path: name, Err: syscall.EISDIR}}), nil
 	}
-	return io.NopCloser(bytes.NewReader(file.content.Bytes())), nil
+	// Copy so the returned reader is a stable snapshot — concurrent writes
+	// to the file must not perturb in-flight reads.
+	src := file.content.Bytes()
+	data := make([]byte, len(src))
+	copy(data, src)
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 func (f *MemoryFS) Chmod(name string, mode fs.FileMode) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	file, ok := f.files[name]
 	if !ok {
 		return fs.ErrNotExist
@@ -197,6 +222,8 @@ func (f *MemoryFS) Chmod(name string, mode fs.FileMode) error {
 }
 
 func (f *MemoryFS) Chmtime(name string, mtime time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	file, ok := f.files[name]
 	if !ok {
 		return fs.ErrNotExist
@@ -207,6 +234,8 @@ func (f *MemoryFS) Chmtime(name string, mtime time.Time) error {
 }
 
 func (f *MemoryFS) Chown(name string, uid int, gid int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	file, ok := f.files[name]
 	if !ok {
 		return fs.ErrNotExist
@@ -217,14 +246,21 @@ func (f *MemoryFS) Chown(name string, uid int, gid int) error {
 }
 
 func (f *MemoryFS) Stat(name string) (fs.FileInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	file, ok := f.files[name]
 	if !ok {
 		return nil, fs.ErrNotExist
 	}
-	return file, nil
+	// Return a value-copy so concurrent mutation of the live struct does
+	// not race with the caller's reads.
+	snapshot := *file
+	return &snapshot, nil
 }
 
 func (f *MemoryFS) ReadDir(path string) ([]fs.DirEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	file, ok := f.files[path]
 	if !ok {
 		return nil, fs.ErrNotExist
@@ -244,6 +280,8 @@ func (f *MemoryFS) ReadDir(path string) ([]fs.DirEntry, error) {
 }
 
 func (f *MemoryFS) Mkdir(path string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.files[path]; ok {
 		return fs.ErrExist
 	}
@@ -263,6 +301,8 @@ func (f *MemoryFS) Mkdir(path string) error {
 }
 
 func (f *MemoryFS) MkdirAll(path string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for path != "." {
 		if file, ok := f.files[path]; ok && file.mode.IsDir() {
 			file.mode |= 0o700
@@ -275,6 +315,8 @@ func (f *MemoryFS) MkdirAll(path string) error {
 }
 
 func (f *MemoryFS) Remove(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	file, ok := f.files[name]
 	if !ok {
 		return fs.ErrNotExist
@@ -297,6 +339,8 @@ func (f *MemoryFS) Remove(name string) error {
 }
 
 func (f *MemoryFS) RemoveAll(path string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	toDelete := []string{}
 	for _, file := range f.files {
 		if strings.HasPrefix(file.name, path+"/") || file.name == path {
@@ -311,6 +355,8 @@ func (f *MemoryFS) RemoveAll(path string) error {
 }
 
 func (f *MemoryFS) Rename(oldpath, newpath string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	oldFile, ok := f.files[oldpath]
 	if !ok {
 		return fs.ErrNotExist
@@ -330,6 +376,8 @@ func (f *MemoryFS) Rename(oldpath, newpath string) error {
 }
 
 func (f *MemoryFS) Sub(path string) (FS, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.files[path]; !ok {
 		return nil, fs.ErrNotExist
 	}
@@ -337,6 +385,8 @@ func (f *MemoryFS) Sub(path string) (FS, error) {
 }
 
 func (f *MemoryFS) MkSub(path string) (FS, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.files[path]; ok {
 		return nil, fs.ErrExist
 	}
@@ -348,25 +398,33 @@ func (f *MemoryFS) WalkDir(path string, fn fs.WalkDirFunc) error {
 	if path == "." {
 		path = ""
 	}
-	var names []string
-	for name := range f.files {
+	// Snapshot the matching entries under the lock so `fn` can safely call
+	// back into the FS without deadlocking.
+	type walkEntry struct {
+		name string
+		info MemoryFileInfo
+	}
+	f.mu.Lock()
+	entries := make([]walkEntry, 0, len(f.files))
+	for name, file := range f.files {
 		if !strings.HasPrefix(name, path) {
 			continue
 		}
-		names = append(names, name)
+		entries = append(entries, walkEntry{name: name, info: *file})
 	}
-	sort.Strings(names)
+	f.mu.Unlock()
+	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 	skipDir := ""
-	for _, name := range names {
-		d := f.files[name]
+	for i := range entries {
+		e := &entries[i]
 		if skipDir != "" {
-			if strings.HasPrefix(name, skipDir) {
+			if strings.HasPrefix(e.name, skipDir) {
 				continue
 			}
 		}
-		if err := fn(name, d, nil); err != nil {
+		if err := fn(e.name, &e.info, nil); err != nil {
 			if errors.Is(err, fs.SkipDir) {
-				skipDir = name + "/"
+				skipDir = e.name + "/"
 			} else {
 				return err
 			}
@@ -379,43 +437,46 @@ func (f *MemoryFS) String() string {
 	return "MemoryFS"
 }
 
-// This uses a sync.Mutex because MemoryFS can only be used in a single process.
+// A buffered channel of size 1 acts as the per-path mutex: sending claims it,
+// receiving releases it. Selecting the send against ctx.Done() makes the
+// acquisition itself cancel-aware, so a bailed-out caller can't leave the
+// lock held by a stranded goroutine.
 func (f *MemoryFS) Lock(ctx context.Context, path string) (func() error, error) {
-	if _, ok := f.locks[path]; !ok {
-		f, err := f.OpenWriteExcl(path)
-		if err != nil {
-			return nil, WrapErrorf(err, "failed to create lock file %s", path)
-		}
-		if _, err := f.Write([]byte(time.Now().Format(time.RFC3339Nano) + "\n")); err != nil {
-			return nil, WrapErrorf(err, "failed to write lock file %s", path)
-		}
-		if err := f.Close(); err != nil {
-			return nil, WrapErrorf(err, "failed to close lock file %s", path)
-		}
-	}
 	f.locksMutex.Lock()
-	m := f.locks[path]
-	if m == nil {
-		m = new(sync.Mutex)
-		f.locks[path] = m
+	ch, existed := f.locks[path]
+	if !existed {
+		ch = make(chan struct{}, 1)
+		f.locks[path] = ch
 	}
 	f.locksMutex.Unlock()
 
-	locked := make(chan struct{}, 1)
-	go func() {
-		m.Lock()
-		locked <- struct{}{}
-	}()
+	if !existed {
+		lf, err := f.OpenWriteExcl(path)
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to create lock file %s", path)
+		}
+		if _, err := lf.Write([]byte(time.Now().Format(time.RFC3339Nano) + "\n")); err != nil {
+			return nil, WrapErrorf(err, "failed to write lock file %s", path)
+		}
+		if err := lf.Close(); err != nil {
+			return nil, WrapErrorf(err, "failed to close lock file %s", path)
+		}
+	}
 
+	// Honor an already-cancelled context before attempting the send: with
+	// both cases ready, the select below would pick at random.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	select {
-	case <-locked:
+	case ch <- struct{}{}:
 		unlocked := false
 		return func() error {
 			if unlocked {
 				return nil
 			}
 			unlocked = true
-			m.Unlock()
+			<-ch
 			return nil
 		}, nil
 	case <-ctx.Done():
@@ -424,6 +485,8 @@ func (f *MemoryFS) Lock(ctx context.Context, path string) (func() error, error) 
 }
 
 func (f *MemoryFS) Debug() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var sb strings.Builder
 	sb.WriteString("MemoryFS(")
 	for _, file := range f.files {
@@ -655,4 +718,13 @@ func (f *MemoryFS) create(path string, mode fs.FileMode) *MemoryFileInfo {
 	}
 	f.files[path] = file
 	return file
+}
+
+// Caller must hold f.mu.
+func (f *MemoryFS) openWriteLocked(name string) (io.WriteCloser, error) {
+	if file, ok := f.files[name]; ok && file.mode.IsDir() {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.EISDIR}
+	}
+	file := f.create(name, 0o600)
+	return &memoryFileWriter{&file.content, f, false}, nil
 }

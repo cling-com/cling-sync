@@ -2,12 +2,14 @@ package lib
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -174,6 +176,73 @@ func TestMemoryFS(t *testing.T) {
 		assert.Equal(int64(15), sut.usedMemory)
 		assert.NoError(sut.Rename("b.txt", "c.txt"))
 		assert.Equal(int64(10), sut.usedMemory)
+	})
+
+	t.Run("Concurrent FS operations are race-free", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewMemoryFS(10000000)
+		assert.NoError(sut.Mkdir("d"))
+
+		// Hammer the FS from many goroutines doing every kind of operation
+		// against an overlapping set of files. We don't care which call
+		// happens to win a given race — only that the FS does not corrupt
+		// itself. `go test -race` flags any unsynchronized access.
+		const workers = 16
+		const iters = 200
+		var wg sync.WaitGroup
+		wg.Add(workers)
+		for w := range workers {
+			go func(w int) {
+				defer wg.Done()
+				for i := range iters {
+					name := fmt.Sprintf("d/f-%d.txt", (w+i)%4)
+					switch i % 7 {
+					case 0:
+						_ = WriteFile(sut, name, []byte("data"))
+					case 1:
+						_, _ = ReadFile(sut, name)
+					case 2:
+						_, _ = sut.Stat(name)
+					case 3:
+						_, _ = sut.ReadDir("d")
+					case 4:
+						_ = sut.Remove(name)
+					case 5:
+						_ = sut.Rename(name, name+".renamed")
+					case 6:
+						_ = sut.WalkDir(".", func(string, fs.DirEntry, error) error { return nil })
+					}
+				}
+			}(w)
+		}
+		wg.Wait()
+	})
+
+	t.Run("Lock with a cancelled context does not leak the lock", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewMemoryFS(10000000)
+
+		// Repeatedly call Lock with an already-cancelled context. Each call
+		// must release whatever internal state it temporarily acquired, so a
+		// subsequent clean Lock still succeeds. (Without the fix, the
+		// internal goroutine racing toward the per-path mutex could acquire
+		// it after the caller bailed and leak it.)
+		for range 100 {
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			_, err := sut.Lock(ctx, "lock")
+			assert.ErrorIs(err, context.Canceled)
+		}
+
+		// Bound the wait so we surface DeadlineExceeded instead of hanging
+		// the whole suite if the regression returns.
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		unlock, err := sut.Lock(ctx, "lock")
+		assert.NoError(err)
+		assert.NoError(unlock())
 	})
 
 	checkConsistency(t, func() FS {
