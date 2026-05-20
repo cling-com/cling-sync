@@ -149,22 +149,24 @@ func marshallSize[T Marshallable](t T) int {
 }
 
 type TempWriter[T Marshallable] struct {
-	fs           FS
-	chunk        []T
-	chunkSize    int
-	maxChunkSize int
-	chunks       int
-	fileExt      string
-	compare      func(a, b T) int
-	marshaller   chunkMarshaller[T]
+	fs               FS
+	chunk            []T
+	chunkSize        int
+	maxChunkSize     int
+	chunks           int
+	fileExt          string
+	compare          func(a, b T) int
+	marshaller       chunkMarshaller[T]
+	ignoreDuplicates bool
 	// Lazily allocated on first rotateChunk and reused for every frame.
 	frameBuf BlockBuf
 }
 
 // Create a new TempWriter.
 // Parameters:
-// - compare: A function that compares two entries. Two entries must never be equal.
-// - marshaller: Serializes a sorted batch of entries to a chunk file.
+//   - compare: A function that compares two entries. Two entries must never be
+//     equal — use NewTempWriterWithIgnoreDuplicates to silently drop duplicates.
+//   - marshaller: Serializes a sorted batch of entries to a chunk file.
 func NewTempWriter[T Marshallable](
 	compare func(a, b T) int,
 	marshaller chunkMarshaller[T],
@@ -178,6 +180,19 @@ func NewTempWriter[T Marshallable](
 		compare:      compare,
 		marshaller:   marshaller,
 	}
+}
+
+// Like NewTempWriter, but duplicate entries (compare == 0) are silently
+// dropped in rotateChunk and the Finalize k-way merge instead of erroring.
+func NewTempWriterWithIgnoreDuplicates[T Marshallable](
+	compare func(a, b T) int,
+	marshaller chunkMarshaller[T],
+	fs FS,
+	maxChunkSize int,
+) *TempWriter[T] {
+	tw := NewTempWriter(compare, marshaller, fs, maxChunkSize)
+	tw.ignoreDuplicates = true
+	return tw
 }
 
 func (tw *TempWriter[T]) Add(t T) error {
@@ -228,27 +243,52 @@ func (tw *TempWriter[T]) Finalize() (*Temp[T], error) { //nolint:funlen
 		minIdx := 0
 		for i := 1; i < len(readers); i++ {
 			c := tw.compare(heads[i], heads[minIdx])
-			if c == 0 {
+			if c == 0 && !tw.ignoreDuplicates {
 				return nil, Errorf("duplicate entry: %v", heads[i])
 			}
 			if c < 0 {
 				minIdx = i
 			}
 		}
-		if err := sorted.Add(heads[minIdx]); err != nil {
+		minHead := heads[minIdx]
+		if err := sorted.Add(minHead); err != nil {
 			return nil, WrapErrorf(err, "failed to write to target file")
 		}
-		e, err := readers[minIdx].Read()
-		if errors.Is(err, io.EOF) {
-			_ = readers[minIdx].Close()
-			readers = slices.Delete(readers, minIdx, minIdx+1)
-			heads = slices.Delete(heads, minIdx, minIdx+1)
-			continue
+		if tw.ignoreDuplicates {
+			// Advance every reader whose head matches `minHead`; several
+			// may since the min-find loop tolerated duplicates.
+			i := 0
+			for i < len(readers) {
+				if tw.compare(heads[i], minHead) != 0 {
+					i++
+					continue
+				}
+				e, err := readers[i].Read()
+				if errors.Is(err, io.EOF) {
+					_ = readers[i].Close()
+					readers = slices.Delete(readers, i, i+1)
+					heads = slices.Delete(heads, i, i+1)
+					continue
+				}
+				if err != nil {
+					return nil, err
+				}
+				heads[i] = e
+				i++
+			}
+		} else {
+			e, err := readers[minIdx].Read()
+			if errors.Is(err, io.EOF) {
+				_ = readers[minIdx].Close()
+				readers = slices.Delete(readers, minIdx, minIdx+1)
+				heads = slices.Delete(heads, minIdx, minIdx+1)
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			heads[minIdx] = e
 		}
-		if err != nil {
-			return nil, err
-		}
-		heads[minIdx] = e
 	}
 	if err := sorted.rotateChunk(); err != nil {
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
@@ -268,13 +308,25 @@ func (tw *TempWriter[T]) rotateChunk() error {
 	var sortErr error
 	slices.SortFunc(tw.chunk, func(a, b T) int {
 		c := tw.compare(a, b)
-		if c == 0 {
+		if c == 0 && !tw.ignoreDuplicates {
 			sortErr = Errorf("duplicate entry: %v", a)
 		}
 		return c
 	})
 	if sortErr != nil {
 		return sortErr
+	}
+	if tw.ignoreDuplicates {
+		// Compact adjacent duplicates in the now-sorted chunk.
+		w := 1
+		for i := 1; i < len(tw.chunk); i++ {
+			if tw.compare(tw.chunk[i], tw.chunk[w-1]) == 0 {
+				continue
+			}
+			tw.chunk[w] = tw.chunk[i]
+			w++
+		}
+		tw.chunk = tw.chunk[:w]
 	}
 	f, err := tw.fs.OpenWrite(tw.chunkFilename(tw.chunks))
 	if err != nil {

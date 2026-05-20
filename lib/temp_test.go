@@ -147,6 +147,51 @@ func TestTemp(t *testing.T) {
 		assert.Error(err, "some/dir/file")
 	})
 
+	t.Run("IgnoreDuplicates drops duplicates inside a chunk", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		fs := td.NewFS(t)
+		sut := NewTempWriterWithIgnoreDuplicates[*RevisionEntry](
+			RevisionEntryPathCompare, revisionEntryChunkMarshaller{}, fs, DefaultTempChunkSize,
+		)
+
+		for _, p := range []string{"b.txt", "a.txt", "b.txt", "c.txt", "a.txt"} {
+			assert.NoError(sut.Add(td.RevisionEntry(p, RevisionEntryKindAdd)))
+		}
+		temp, err := sut.Finalize()
+		assert.NoError(err)
+		merged := readAllRevsisionTemp(t, temp, nil)
+		paths := make([]string, len(merged))
+		for i, e := range merged {
+			paths[i] = e.Path.String()
+		}
+		assert.Equal([]string{"a.txt", "b.txt", "c.txt"}, paths)
+	})
+
+	t.Run("IgnoreDuplicates drops duplicates across chunks", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		fs := td.NewFS(t)
+		// Tiny budget forces each Add into its own chunk so duplicates land in
+		// different chunks and the dedup has to happen in the Finalize merge.
+		sut := NewTempWriterWithIgnoreDuplicates[*RevisionEntry](
+			RevisionEntryPathCompare, revisionEntryChunkMarshaller{}, fs, 1,
+		)
+
+		for _, p := range []string{"a.txt", "b.txt", "a.txt", "c.txt", "b.txt", "a.txt"} {
+			assert.NoError(sut.Add(td.RevisionEntry(p, RevisionEntryKindAdd)))
+		}
+		assert.Greater(sut.chunks, 1, "test setup: duplicates must span multiple chunks")
+		temp, err := sut.Finalize()
+		assert.NoError(err)
+		merged := readAllRevsisionTemp(t, temp, nil)
+		paths := make([]string, len(merged))
+		for i, e := range merged {
+			paths[i] = e.Path.String()
+		}
+		assert.Equal([]string{"a.txt", "b.txt", "c.txt"}, paths)
+	})
+
 	t.Run("PathFilter", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
