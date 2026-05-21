@@ -216,6 +216,40 @@ func TestHappyPath(t *testing.T) {
 		assert.Contains(check, "Repository is healthy")
 		assert.Contains(check, "5 revisions")
 	}
+
+	t.Log("Attach to a non-empty directory (attach --allow-non-empty)")
+	{
+		nonEmptyDir := sut.Path("../workspace_nonempty")
+		err := os.MkdirAll(nonEmptyDir, 0o700)
+		assert.NoError(err, "failed to create non-empty dir")
+		err = os.WriteFile(filepath.Join(nonEmptyDir, "local-only.txt"), []byte("local"), 0o600)
+		assert.NoError(err, "failed to write local-only.txt")
+
+		// Attach should refuse a non-empty target by default.
+		stderr := sut.ClingSyncError("attach", "../repository", "../workspace_nonempty")
+		assert.Contains(stderr, "is not empty")
+		assert.Contains(stderr, "--allow-non-empty")
+
+		// With --allow-non-empty, attach succeeds; merge then preserves the
+		// pre-existing local file and pulls down the repository state.
+		sut.ClingSyncStdin(
+			passphrase,
+			"--passphrase-from-stdin",
+			"attach",
+			"--allow-non-empty",
+			"../repository",
+			"../workspace_nonempty",
+		)
+		sut.Chdir("../workspace_nonempty")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
+		sut.ClingSync("merge", "--no-progress", "--message", "attach non-empty workspace")
+		assert.Equal("local", sut.Cat("local-only.txt"), "local-only file should be preserved")
+		assert.Equal("C", sut.Cat("c.txt"), "repository file should have been pulled down")
+		assert.Equal(
+			td.Sort(sut.Ls(), 4),
+			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
+			"Files of head should match the workspace")
+	}
 }
 
 func TestSyncRepoHappyPath(t *testing.T) {

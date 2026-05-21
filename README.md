@@ -107,6 +107,11 @@ workspace config to `<directory>/.cling/workspace.txt`.
 The `--path-prefix <p>` flag attaches to a subtree of the repository.
 All operations except `cp` are then limited to that subtree.
 
+By default, the local directory must be empty or not yet exist. This
+guards against accidentally attaching to the wrong directory. Pass
+`--allow-non-empty` to attach to a directory that already contains
+files.
+
 ### `merge`
 
 The main operation. Pulls all new revisions from the repository into the

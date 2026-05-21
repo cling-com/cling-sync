@@ -29,12 +29,19 @@ const (
 
 func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
-		Help       bool
-		PathPrefix string
+		Help          bool
+		PathPrefix    string
+		AllowNonEmpty bool
 	}{}
 	flags := flag.NewFlagSet("attach", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.PathPrefix, "path-prefix", "", "Only attach to this path inside the repository")
+	flags.BoolVar(
+		&args.AllowNonEmpty,
+		"allow-non-empty",
+		false,
+		"Allow attaching to a directory that already contains files.\nExisting files matching the repository by content are adopted as-is;\nfiles at the same path with different content become merge conflicts;\nfiles not present in the repository are committed as new additions\non the next merge.",
+	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s attach <repository-uri> <directory>\n\n", appName)
 		fmt.Fprint(os.Stderr, "Attach a local directory to a repository.\n")
@@ -62,7 +69,8 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(1))
 	}
-	// Make sure the local directory either does not exist or is empty.
+	// Make sure the local directory either does not exist or is empty
+	// (unless --allow-non-empty was passed).
 	_, err = os.Stat(localPath)
 	if errors.Is(err, os.ErrNotExist) { //nolint:gocritic
 		if err := os.MkdirAll(localPath, 0o700); err != nil {
@@ -70,13 +78,16 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		}
 	} else if err != nil {
 		return lib.Errorf("cannot stat local directory %s", localPath)
-	} else {
+	} else if !args.AllowNonEmpty {
 		files, err := os.ReadDir(localPath)
 		if err != nil {
 			return lib.Errorf("failed to read local directory %s", localPath)
 		}
 		if len(files) > 0 {
-			return lib.Errorf("local directory %s is not empty", localPath)
+			return lib.Errorf(
+				"local directory %s is not empty (use --allow-non-empty to attach anyway)",
+				localPath,
+			)
 		}
 	}
 	repositoryURI := flags.Arg(0)
