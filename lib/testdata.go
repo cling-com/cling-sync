@@ -135,8 +135,12 @@ func (m *TestHealthCheckMonitor) OnRevisionEntry(entry *RevisionEntry) {
 	m.Calls = append(m.Calls, NewMockCall("OnRevisionEntry", entry))
 }
 
-func (m *TestHealthCheckMonitor) OnBlockOk(blockId BlockId, duplicate bool, length int) {
-	m.Calls = append(m.Calls, NewMockCall("OnBlockOk", blockId, duplicate, length))
+func (m *TestHealthCheckMonitor) OnBlockVerified(blockId BlockId, length int) {
+	m.Calls = append(m.Calls, NewMockCall("OnBlockVerified", blockId, length))
+}
+
+func (m *TestHealthCheckMonitor) OnOrphanedBlock(blockId BlockId) {
+	m.Calls = append(m.Calls, NewMockCall("OnOrphanedBlock", blockId))
 }
 
 func (td TestData) NewHealthCheckMonitor() *TestHealthCheckMonitor {

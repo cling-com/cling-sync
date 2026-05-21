@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -67,6 +68,47 @@ func NewBlockIdFromString(s string) (BlockId, error) {
 
 func (id BlockId) String() string {
 	return hex.EncodeToString(id[:])
+}
+
+func BlockIdCompare(a, b BlockId) int {
+	return bytes.Compare(a[:], b[:])
+}
+
+type blockIdChunkMarshaller struct{}
+
+func (blockIdChunkMarshaller) MarshallAll(ids []BlockId, w ProtobufWriter) error {
+	for _, id := range ids {
+		if err := w.WriteBytes(1, id[:]); err != nil {
+			return WrapErrorf(err, "failed to write block id")
+		}
+	}
+	return nil
+}
+
+func (blockIdChunkMarshaller) UnmarshallAll(r *ProtobufReader) ([]BlockId, error) {
+	var ids []BlockId
+	for !r.AtEnd() {
+		tag, wireType, err := r.ReadTag()
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to read block id tag")
+		}
+		if tag != 1 || wireType != 2 {
+			return nil, Errorf("unexpected tag %d / wire type %d for block id", tag, wireType)
+		}
+		b, err := r.ReadBytes()
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to read block id")
+		}
+		if len(b) != BlockIdSize {
+			return nil, Errorf("block id must have length %d, got %d", BlockIdSize, len(b))
+		}
+		ids = append(ids, BlockId(b))
+	}
+	return ids, nil
+}
+
+func (blockIdChunkMarshaller) EntrySize(_ BlockId) int {
+	return TagLen(1, 2) + VarintLen(BlockIdSize) + BlockIdSize
 }
 
 var (

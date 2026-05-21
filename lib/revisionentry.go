@@ -68,6 +68,11 @@ func (revisionEntryChunkMarshaller) UnmarshallAll(r *ProtobufReader) ([]*Revisio
 	return chunk.Entries, nil
 }
 
+func (revisionEntryChunkMarshaller) EntrySize(entry *RevisionEntry) int {
+	n := entry.MarshallSize()
+	return TagLen(1, 2) + VarintLen(int64(n)) + n
+}
+
 func NewRevisionEntryTempCache(
 	temp *Temp[*RevisionEntry],
 	maxChunksInCache int,

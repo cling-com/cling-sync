@@ -97,3 +97,8 @@ func (stagingEntryChunkMarshaller) UnmarshallAll(r *lib.ProtobufReader) ([]*Stag
 	}
 	return chunk.Entries, nil
 }
+
+func (stagingEntryChunkMarshaller) EntrySize(entry *StagingEntry) int {
+	n := entry.MarshallSize()
+	return lib.TagLen(1, 2) + lib.VarintLen(int64(n)) + n
+}

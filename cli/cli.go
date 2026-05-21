@@ -872,24 +872,35 @@ func LogCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	return nil
 }
 
-func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
+const (
+	healthCheckReportDir          = ".cling/report"
+	healthCheckReportFile         = "health-check.txt"
+	healthCheckOrphanedBlocksFile = "health-check-orphaned-blocks.txt"
+)
+
+func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen,gocognit
 	workspace, err := openWorkspace()
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer workspace.Close() //nolint:errcheck
 	args := struct {        //nolint:exhaustruct
-		Help       bool
-		Verbose    bool
-		NoProgress bool
-		Data       bool
-		Repository string
+		Help           bool
+		Verbose        bool
+		NoProgress     bool
+		Data           bool
+		OrphanedBlocks bool
+		Full           bool
+		Repository     string
 	}{}
 	flags := flag.NewFlagSet("check", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Data, "data", false, "Check all file data blocks of all paths in all revisions")
+	flags.BoolVar(&args.OrphanedBlocks, "orphaned-blocks", false,
+		"Detect blocks in storage that are not referenced by any revision")
+	flags.BoolVar(&args.Full, "full", false, "Run all checks (implies --data and --orphaned-blocks)")
 	flags.StringVar(&args.Repository, "repository", "", "Check this repository instead of the workspace repository")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s check\n\n", appName)
@@ -907,6 +918,10 @@ func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("too many positional arguments")
 	}
+	if args.Full {
+		args.Data = true
+		args.OrphanedBlocks = true
+	}
 	var repository *lib.Repository
 	if args.Repository != "" {
 		storage, err := openStorage(args.Repository)
@@ -923,46 +938,36 @@ func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 			return err
 		}
 	}
+	tempFS, err := workspace.TempFS.MkSub("check")
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to create temp directory for health check")
+	}
+	defer tempFS.RemoveAll(".") //nolint:errcheck
 	monitor := NewHeathCheckMonitor(CLIMonitorMode(args.Verbose, args.NoProgress))
-	err = lib.CheckHealth(repository, lib.HealthCheckOptions{Monitor: monitor, DataBlocks: args.Data})
+	err = lib.CheckHealth(repository, tempFS, lib.HealthCheckOptions{
+		Monitor:             monitor,
+		CheckBlocks:         args.Data,
+		CheckOrphanedBlocks: args.OrphanedBlocks,
+	})
+	monitor.Finish()
 	monitor.close()
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	fmt.Printf("Repository is healthy\n")
-	fmt.Printf("  [ok] revision chain is intact\n")
-	fmt.Printf("  [ok] metadata blocks are valid\n")
-	fmt.Printf("  [ok] paths in each revision are sorted\n")
-	dataChecked := "--"
-	if args.Data {
-		dataChecked = "ok"
+	if err := os.MkdirAll(healthCheckReportDir, 0o700); err != nil {
+		return lib.WrapErrorf(err, "failed to create %s", healthCheckReportDir)
 	}
-	fmt.Printf("  [%s] actual file size matches path metadata\n", dataChecked)
-	fmt.Printf("  [%s] actual file hash matches path metadata\n", dataChecked)
-	fmt.Printf("  [%s] data blocks are valid\n", dataChecked)
-	fmt.Printf("\nStatistics:\n")
-	fmt.Printf("  %d revisions\n", monitor.Revisions)
-	fmt.Printf("  %d paths entries in all revisions\n", monitor.Paths)
-	dataBlocks := "data blocks not checked"
-	dataSize := "data blocks not checked"
-	if args.Data {
-		dataBlocks = fmt.Sprintf("%d data", monitor.DataBlocks)
-		dataSize = fmt.Sprintf("%s (%dB) data", ws.FormatBytes(monitor.DataBytes), monitor.DataBytes)
+	reportPath := filepath.Join(healthCheckReportDir, healthCheckReportFile)
+	orphansPath := filepath.Join(healthCheckReportDir, healthCheckOrphanedBlocksFile)
+	report, err := monitor.Report(args.Data, args.OrphanedBlocks, orphansPath)
+	if err != nil {
+		return err //nolint:wrapcheck
 	}
-	fmt.Printf(
-		"  %d unique blocks, %d metadata, %s\n",
-		monitor.DataBlocks+monitor.MetadataBlocks,
-		monitor.MetadataBlocks,
-		dataBlocks,
-	)
-	totalBytes := monitor.MetadataBytes + monitor.DataBytes
-	fmt.Printf("  %s (%dB) total, %s (%dB) metadata, %s\n",
-		ws.FormatBytes(totalBytes),
-		totalBytes,
-		ws.FormatBytes(monitor.MetadataBytes),
-		monitor.MetadataBytes,
-		dataSize,
-	)
+	fmt.Print(report)
+	if err := os.WriteFile(reportPath, []byte(report), 0o600); err != nil {
+		return lib.WrapErrorf(err, "failed to write %s", reportPath)
+	}
+	fmt.Printf("Report saved to: %s\n", reportPath)
 	return nil
 }
 

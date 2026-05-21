@@ -1,44 +1,92 @@
 package lib
 
 import (
-	"crypto/sha256"
 	"errors"
-	"hash"
 	"io"
 )
 
 type HealthCheckMonitor interface {
 	OnRevisionStart(revisionId RevisionId)
-	OnBlockOk(blockId BlockId, duplicate bool, length int)
 	OnRevisionEntry(entry *RevisionEntry)
+	OnBlockVerified(blockId BlockId, length int)
+	OnOrphanedBlock(blockId BlockId)
 }
 
 type HealthCheckOptions struct {
-	Monitor    HealthCheckMonitor
-	DataBlocks bool
+	Monitor HealthCheckMonitor
+	// Read and decrypt every block referenced by any revision.
+	CheckBlocks bool
+	// Report every block in storage that is not referenced by any revision.
+	CheckOrphanedBlocks bool
 }
 
-// Check that the revision chain is intact, i.e. all revisions are reachable from the
-// given revision.
-func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //nolint:funlen
-	blocksSeen := make(map[BlockId]bool)
+// CheckHealth verifies the integrity of `repository`.
+//
+// It always traverses the entire revision chain (head to root), checking that
+// every revision can be read and that every revision's path entries are
+// strictly sorted. Additional checks can be enabled via `opts`.
+func CheckHealth(repository *Repository, tempFS FS, opts HealthCheckOptions) error {
+	var seenWriter *TempWriter[BlockId]
+	if opts.CheckBlocks || opts.CheckOrphanedBlocks {
+		seenFS, err := tempFS.MkSub("seen")
+		if err != nil {
+			return WrapErrorf(err, "failed to create temp directory for seen block ids")
+		}
+		seenWriter = NewTempWriterWithIgnoreDuplicates[BlockId](
+			BlockIdCompare,
+			blockIdChunkMarshaller{},
+			seenFS,
+			DefaultTempChunkSize,
+		)
+	}
+	if err := walkRevisions(repository, opts.Monitor, seenWriter); err != nil {
+		return err
+	}
+	if seenWriter == nil {
+		return nil
+	}
+	seen, err := seenWriter.Finalize()
+	if err != nil {
+		return WrapErrorf(err, "failed to sort seen block ids")
+	}
+	defer seen.Remove() //nolint:errcheck
+	if opts.CheckOrphanedBlocks {
+		if err := checkOrphanedBlocks(repository, tempFS, opts.Monitor, seen); err != nil {
+			return err
+		}
+	}
+	if opts.CheckBlocks {
+		if err := checkBlocks(repository, opts.Monitor, seen); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func walkRevisions(repository *Repository, monitor HealthCheckMonitor, seen *TempWriter[BlockId]) error {
 	revisionId, err := repository.Head()
 	if err != nil {
 		return WrapErrorf(err, "failed to get head revision")
 	}
 	blockBuf := NewBlockBuf()
 	for !revisionId.IsRoot() {
-		opts.Monitor.OnRevisionStart(revisionId)
+		monitor.OnRevisionStart(revisionId)
+		if seen != nil {
+			// The revision is itself stored as a block whose id equals revisionId.
+			if err := seen.Add(BlockId(revisionId)); err != nil {
+				return WrapErrorf(err, "failed to record revision block %s", revisionId)
+			}
+		}
 		revision, err := repository.ReadRevision(revisionId, blockBuf)
 		if err != nil {
 			return WrapErrorf(err, "failed to read revision %s", revisionId)
 		}
-		for _, blockId := range revision.BlockIds {
-			length, duplicate, err := VerifyBlock(repository, blocksSeen, nil, blockId, blockBuf)
-			if err != nil {
-				return WrapErrorf(err, "failed to check block %s of revision %s", blockId, revisionId)
+		if seen != nil {
+			for _, blockId := range revision.BlockIds {
+				if err := seen.Add(blockId); err != nil {
+					return WrapErrorf(err, "failed to record block id %s of revision %s", blockId, revisionId)
+				}
 			}
-			opts.Monitor.OnBlockOk(blockId, duplicate, length)
 		}
 		reader := NewRevisionReader(repository, &revision)
 		var lastEntry *RevisionEntry
@@ -51,41 +99,18 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 			if err != nil {
 				return WrapErrorf(err, "failed to read revision entry #%d of revision %s", entryCount, revisionId)
 			}
-			opts.Monitor.OnRevisionEntry(entry)
 			entryCount++
 			if lastEntry != nil && RevisionEntryPathCompare(lastEntry, entry) >= 0 {
 				return Errorf("paths of revision %s are not strictly sorted at position %d: %s >= %s",
 					revisionId, entryCount, lastEntry.Path, entry.Path)
 			}
-			if opts.DataBlocks {
-				var fileSize int64 = 0
-				fileHash := sha256.New()
+			monitor.OnRevisionEntry(entry)
+			if seen != nil {
 				for _, blockId := range entry.Metadata.BlockIds {
-					length, duplicate, err := VerifyBlock(repository, blocksSeen, fileHash, blockId, blockBuf)
-					if err != nil {
-						return WrapErrorf(
-							err,
-							"failed to check block %s of path %s of revision %s",
-							blockId,
-							entry.Path,
-							revisionId,
-						)
+					if err := seen.Add(blockId); err != nil {
+						return WrapErrorf(err,
+							"failed to record block id %s of path %s of revision %s", blockId, entry.Path, revisionId)
 					}
-					opts.Monitor.OnBlockOk(blockId, duplicate, length)
-					fileSize += int64(length)
-				}
-				if entry.Metadata.Size != fileSize {
-					return Errorf("file size mismatch for path %s of revision %s: want %d, got %d",
-						entry.Path, revisionId, entry.Metadata.Size, fileSize)
-				}
-				expectedHash := Sha256(fileHash.Sum(nil))
-				if entry.Metadata.FileMode.IsDir() {
-					// Directories have no hash.
-					expectedHash = Sha256{}
-				}
-				if expectedHash != entry.Metadata.FileHash {
-					return Errorf("file hash mismatch for path %s of revision %s: want %s, got %s",
-						entry.Path, revisionId, expectedHash, entry.Metadata.FileHash)
 				}
 			}
 			lastEntry = entry
@@ -95,26 +120,74 @@ func CheckHealth(repository *Repository, opts HealthCheckOptions) error { //noli
 	return nil
 }
 
-// Check that the block can be read and decrypted/uncompressed.
-// Return the size of the unencrypted/uncompressed data.
-func VerifyBlock(
-	repository *Repository,
-	seen map[BlockId]bool,
-	fileHash hash.Hash,
-	blockId BlockId,
-	buf BlockBuf,
-) (int, bool, error) {
-	duplicate := seen[blockId]
-	data, err := repository.ReadBlock(blockId, buf)
+func checkOrphanedBlocks(repository *Repository, tempFS FS, monitor HealthCheckMonitor, seen *Temp[BlockId]) error {
+	// Read all block ids.
+	storedFS, err := tempFS.MkSub("stored")
 	if err != nil {
-		return 0, false, WrapErrorf(err, "failed to read block %s", blockId)
+		return WrapErrorf(err, "failed to create temp directory for stored block ids")
 	}
-	if fileHash != nil {
-		if _, err := fileHash.Write(data); err != nil {
-			return 0, false, WrapErrorf(err, "failed to hash block %s", blockId)
+	storedWriter := NewTempWriterWithIgnoreDuplicates[BlockId](
+		BlockIdCompare,
+		blockIdChunkMarshaller{},
+		storedFS,
+		DefaultTempChunkSize,
+	)
+	err = repository.storage.ReadBlockIds(func(id BlockId) error {
+		return storedWriter.Add(id)
+	})
+	if err != nil {
+		return WrapErrorf(err, "failed to read storage block ids")
+	}
+	stored, err := storedWriter.Finalize()
+	if err != nil {
+		return WrapErrorf(err, "failed to sort stored block ids")
+	}
+	defer stored.Remove() //nolint:errcheck
+
+	// Keep seen block ids in a cache for lookup.
+	seenCache, err := NewTempCache(seen, func(id BlockId) string { return string(id[:]) }, 1)
+	if err != nil {
+		return WrapErrorf(err, "failed to open seen cache")
+	}
+
+	// Go through all blocks and report those not in `seen`.
+	reader := stored.Reader(nil)
+	buf := NewBlockBuf()
+	for {
+		id, err := reader.Read(buf)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return WrapErrorf(err, "failed to read stored block id")
+		}
+		_, ok, err := seenCache.Get(string(id[:]))
+		if err != nil {
+			return WrapErrorf(err, "failed to look up block id %s in seen cache", id)
+		}
+		if !ok {
+			monitor.OnOrphanedBlock(id)
 		}
 	}
-	// todo: We should warn if the number of blocks gets too high and `seen` consumes too much memory.
-	seen[blockId] = true
-	return len(data), duplicate, nil
+	return nil
+}
+
+func checkBlocks(repository *Repository, monitor HealthCheckMonitor, seen *Temp[BlockId]) error {
+	reader := seen.Reader(nil)
+	buf := NewBlockBuf()
+	for {
+		id, err := reader.Read(buf)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return WrapErrorf(err, "failed to read seen block id")
+		}
+		data, err := repository.ReadBlock(id, buf)
+		if err != nil {
+			return WrapErrorf(err, "failed to verify block %s", id)
+		}
+		monitor.OnBlockVerified(id, len(data))
+	}
+	return nil
 }

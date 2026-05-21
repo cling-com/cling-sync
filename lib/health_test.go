@@ -1,6 +1,10 @@
 package lib
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"slices"
 	"testing"
 )
 
@@ -35,33 +39,105 @@ func TestCheckHealth(t *testing.T) {
 		rev1Id, err := commit.Commit(td.CommitInfo())
 		assert.NoError(err)
 
-		// Check without data blocks.
 		monitor := td.NewHealthCheckMonitor()
-		err = CheckHealth(r.Repository, HealthCheckOptions{Monitor: monitor, DataBlocks: false})
+		err = CheckHealth(
+			r.Repository,
+			td.NewFS(t),
+			HealthCheckOptions{Monitor: monitor, CheckBlocks: false, CheckOrphanedBlocks: false},
+		)
 		assert.NoError(err)
 		assert.Calls([]MockCall{
 			NewMockCall("OnRevisionStart", rev1Id),
-			NewMockCall("OnBlockOk", assert.Any, false, 366),
 			NewMockCall("OnRevisionEntry", e1),
 			NewMockCall("OnRevisionEntry", e2),
 			NewMockCall("OnRevisionEntry", e3),
 		}, monitor.Calls)
+	})
 
-		// Check with data blocks.
-		monitor = td.NewHealthCheckMonitor()
-		err = CheckHealth(r.Repository, HealthCheckOptions{Monitor: monitor, DataBlocks: true})
+	t.Run("Verify blocks", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
+		blockId1, _, err := r.WriteBlock([]byte("abc"))
+		assert.NoError(err)
+		blockId2, _, err := r.WriteBlock([]byte("de"))
+		assert.NoError(err)
+		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
+		e1.Metadata.BlockIds = []BlockId{blockId1}
+		e1.Metadata.Size = 3
+		e1.Metadata.FileHash = td.SHA256("abc")
+		e2 := td.RevisionEntry("b.txt", RevisionEntryKindUpdate)
+		e2.Metadata.BlockIds = []BlockId{blockId2}
+		e2.Metadata.Size = 2
+		e2.Metadata.FileHash = td.SHA256("de")
+		e3 := td.RevisionEntry("c.txt", RevisionEntryKindDelete)
+		e3.Metadata.BlockIds = []BlockId{blockId1, blockId2}
+		e3.Metadata.Size = 5
+		e3.Metadata.FileHash = td.SHA256("abcde")
+		assert.NoError(commit.Add(e2))
+		assert.NoError(commit.Add(e1))
+		assert.NoError(commit.Add(e3))
+		rev1Id, err := commit.Commit(td.CommitInfo())
+		assert.NoError(err)
+
+		monitor := td.NewHealthCheckMonitor()
+		err = CheckHealth(
+			r.Repository,
+			td.NewFS(t),
+			HealthCheckOptions{Monitor: monitor, CheckBlocks: true, CheckOrphanedBlocks: false},
+		)
+		assert.NoError(err)
+		assert.Equal(8, len(monitor.Calls))
 		assert.Calls([]MockCall{
 			NewMockCall("OnRevisionStart", rev1Id),
-			NewMockCall("OnBlockOk", assert.Any, false, 366),
 			NewMockCall("OnRevisionEntry", e1),
-			NewMockCall("OnBlockOk", blockId1, false, 3),
 			NewMockCall("OnRevisionEntry", e2),
-			NewMockCall("OnBlockOk", blockId2, false, 2),
 			NewMockCall("OnRevisionEntry", e3),
-			NewMockCall("OnBlockOk", blockId1, true, 3),
-			NewMockCall("OnBlockOk", blockId2, true, 2),
-		}, monitor.Calls)
+		}, monitor.Calls[:4])
+		assert.Call(NewMockCall("OnBlockVerified", blockId1, 3), monitor.Calls[4:])
+		assert.Call(NewMockCall("OnBlockVerified", blockId2, 2), monitor.Calls[4:])
+	})
+
+	t.Run("Verify blocks detects broken blocks", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		blockId1, _, err := r.WriteBlock([]byte("abc"))
+		assert.NoError(err)
+		blockId2, _, err := r.WriteBlock([]byte("def"))
+		assert.NoError(err)
+		blockId3, _, err := r.WriteBlock([]byte("ghi"))
+		assert.NoError(err)
+		e := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
+		e.Metadata.BlockIds = []BlockId{blockId1, blockId2, blockId3}
+		e.Metadata.Size = 9
+		e.Metadata.FileHash = td.SHA256("abcdefghi")
+		assert.NoError(commit.Add(e))
+		_, err = commit.Commit(td.CommitInfo())
+		assert.NoError(err)
+
+		// Flip a bit in the second data block.
+		path := r.Storage.blockPath(blockId2)
+		data, err := ReadFile(r.Storage.FS, path)
+		assert.NoError(err)
+		data[len(data)/2] ^= 1
+		assert.NoError(r.Storage.FS.Chmod(path, 0o600))
+		assert.NoError(WriteFile(r.Storage.FS, path, data))
+
+		monitor := td.NewHealthCheckMonitor()
+		err = CheckHealth(
+			r.Repository,
+			td.NewFS(t),
+			HealthCheckOptions{Monitor: monitor, CheckBlocks: true, CheckOrphanedBlocks: false},
+		)
+		assert.Error(err, "failed to verify block")
+		assert.Error(err, blockId2.String())
 	})
 
 	t.Run("Missing block", func(t *testing.T) {
@@ -81,12 +157,20 @@ func TestCheckHealth(t *testing.T) {
 
 		// When not checking for data blocks, nothing is detected.
 		monitor := td.NewHealthCheckMonitor()
-		err = CheckHealth(r.Repository, HealthCheckOptions{Monitor: monitor, DataBlocks: false})
+		err = CheckHealth(
+			r.Repository,
+			td.NewFS(t),
+			HealthCheckOptions{Monitor: monitor, CheckBlocks: false, CheckOrphanedBlocks: false},
+		)
 		assert.NoError(err)
 
-		// Now check for data blocks.
-		err = CheckHealth(r.Repository, HealthCheckOptions{Monitor: monitor, DataBlocks: true})
-		assert.Error(err, "failed to check block")
+		// With --data the missing block surfaces as a read error.
+		err = CheckHealth(
+			r.Repository,
+			td.NewFS(t),
+			HealthCheckOptions{Monitor: monitor, CheckBlocks: true, CheckOrphanedBlocks: false},
+		)
+		assert.Error(err, "failed to verify block")
 		assert.Error(err, "block not found")
 	})
 
@@ -112,61 +196,66 @@ func TestCheckHealth(t *testing.T) {
 		assert.NoError(err)
 
 		monitor := td.NewHealthCheckMonitor()
-		err = CheckHealth(r.Repository, HealthCheckOptions{Monitor: monitor, DataBlocks: false})
+		err = CheckHealth(
+			r.Repository,
+			td.NewFS(t),
+			HealthCheckOptions{Monitor: monitor, CheckBlocks: false, CheckOrphanedBlocks: false},
+		)
 		assert.Error(err, "not strictly sorted")
 		assert.Error(err, "a.txt >= a.txt")
 	})
 
-	t.Run("Invalid file size in metadata", func(t *testing.T) {
+	t.Run("Orphaned blocks", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
+		// One referenced block and two orphaned blocks (written directly to storage,
+		// never referenced by any revision).
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
-		blockId, _, err := r.WriteBlock([]byte{1, 2, 3})
+		referenced, _, err := r.WriteBlock([]byte("hello"))
 		assert.NoError(err)
-		e1.Metadata.BlockIds = []BlockId{blockId}
-		e1.Metadata.Size = 42
-		assert.NoError(commit.Add(e1))
-		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+		orphan1, _, err := r.WriteBlock([]byte("orphan-1"))
+		assert.NoError(err)
+		orphan2, _, err := r.WriteBlock([]byte("orphan-2"))
+		assert.NoError(err)
+		e := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
+		e.Metadata.BlockIds = []BlockId{referenced}
+		e.Metadata.Size = 5
+		e.Metadata.FileHash = td.SHA256("hello")
+		assert.NoError(commit.Add(e))
+		rev1Id, err := commit.Commit(td.CommitInfo())
 		assert.NoError(err)
 
-		// When not checking for data blocks, file sizes are not checked.
 		monitor := td.NewHealthCheckMonitor()
-		err = CheckHealth(r.Repository, HealthCheckOptions{Monitor: monitor, DataBlocks: false})
+		err = CheckHealth(r.Repository, td.NewFS(t), HealthCheckOptions{
+			Monitor: monitor, CheckBlocks: false, CheckOrphanedBlocks: true,
+		})
 		assert.NoError(err)
 
-		// But when checking for data blocks, file sizes are checked.
-		err = CheckHealth(r.Repository, HealthCheckOptions{Monitor: monitor, DataBlocks: true})
-		assert.Error(err, "file size mismatch")
+		// Orphans are emitted in BlockIdCompare order after the revision walk.
+		sortedOrphans := []BlockId{orphan1, orphan2}
+		slices.SortFunc(sortedOrphans, BlockIdCompare)
+		assert.Calls([]MockCall{
+			NewMockCall("OnRevisionStart", rev1Id),
+			NewMockCall("OnRevisionEntry", e),
+			NewMockCall("OnOrphanedBlock", sortedOrphans[0]),
+			NewMockCall("OnOrphanedBlock", sortedOrphans[1]),
+		}, monitor.Calls)
 	})
+}
 
-	t.Run("Invalid file hash in metadata", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		r := td.NewTestRepository(t, td.NewFS(t))
-
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
-		assert.NoError(err)
-		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
-		blockId, _, err := r.WriteBlock([]byte("abc"))
-		assert.NoError(err)
-		e1.Metadata.BlockIds = []BlockId{blockId}
-		e1.Metadata.Size = 3
-		e1.Metadata.FileHash = td.SHA256("not abc")
-		assert.NoError(commit.Add(e1))
-		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
-		assert.NoError(err)
-
-		// When not checking for data blocks, file hashes are not checked.
-		monitor := td.NewHealthCheckMonitor()
-		err = CheckHealth(r.Repository, HealthCheckOptions{Monitor: monitor, DataBlocks: false})
-		assert.NoError(err)
-
-		// But when checking for data blocks, file hashes are checked.
-		err = CheckHealth(r.Repository, HealthCheckOptions{Monitor: monitor, DataBlocks: true})
-		assert.Error(err, "file hash mismatch")
-	})
+func TestFormatDoesNotChangeUnexpectedly(t *testing.T) {
+	t.Parallel()
+	assert := NewAssert(t)
+	want := "119c51dd05c7a50f321ec70ae5bbd51f6de311bcacf06e9436b0afea6c72e208"
+	data, err := os.ReadFile("format.proto") //nolint:forbidigo
+	assert.NoError(err)
+	sum := sha256.Sum256(data)
+	assert.Equal(
+		want,
+		hex.EncodeToString(sum[:]),
+		"format.proto changed: Please check whether health.go still scans all blocks",
+	)
 }

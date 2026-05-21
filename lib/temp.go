@@ -21,7 +21,8 @@ const framesPerChunk = 16
 // chunk file stays under budget even after framing.
 const chunkFramingOverhead = framesPerChunk * 8
 
-// Marshallable is the constraint for entry types stored by TempWriter/Temp.
+// Marshallable is the proto-message contract: serialize to a writer and
+// report the size of what was written.
 type Marshallable interface {
 	Marshall(ProtobufWriter) error
 	MarshallSize() int
@@ -33,18 +34,24 @@ type Marshallable interface {
 // `stagingEntryChunkMarshaller` in workspace) and are passed by value into
 // NewTempWriter / OpenTemp / NewRevisionReader. Go's structural interfaces
 // let external packages satisfy this without naming the type.
+//
+// `EntrySize` returns the wire size of one entry as written by `MarshallAll`
+// — used by `TempWriter` for chunk-budget accounting. It belongs on the
+// marshaller (not on `T`) because the per-entry framing depends on the
+// chunk format, not just on `T`.
 type chunkMarshaller[T any] interface {
 	MarshallAll(entries []T, w ProtobufWriter) error
 	UnmarshallAll(r *ProtobufReader) ([]T, error)
+	EntrySize(entry T) int
 }
 
-type Temp[T Marshallable] struct {
+type Temp[T any] struct {
 	fs         FS
 	chunks     int
 	marshaller chunkMarshaller[T]
 }
 
-func OpenTemp[T Marshallable](fs FS, marshaller chunkMarshaller[T]) (*Temp[T], error) {
+func OpenTemp[T any](fs FS, marshaller chunkMarshaller[T]) (*Temp[T], error) {
 	chunks, err := fs.ReadDir(".")
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read temp files")
@@ -75,7 +82,7 @@ func (t *Temp[T]) Remove() error {
 	return nil
 }
 
-type TempReader[T Marshallable] struct {
+type TempReader[T any] struct {
 	fs           FS
 	chunks       int
 	chunkIndex   int
@@ -141,14 +148,7 @@ func (tr *TempReader[T]) chunkFilename(index int) string {
 	return fmt.Sprintf("%d.sorted", index)
 }
 
-// marshallSize returns the size of the marshalled representation of `t`
-// including their protobuf overhead when used in a slice (tag + len).
-func marshallSize[T Marshallable](t T) int {
-	n := t.MarshallSize()
-	return TagLen(1, 2) + VarintLen(int64(n)) + n
-}
-
-type TempWriter[T Marshallable] struct {
+type TempWriter[T any] struct {
 	fs               FS
 	chunk            []T
 	chunkSize        int
@@ -167,7 +167,7 @@ type TempWriter[T Marshallable] struct {
 //   - compare: A function that compares two entries. Two entries must never be
 //     equal — use NewTempWriterWithIgnoreDuplicates to silently drop duplicates.
 //   - marshaller: Serializes a sorted batch of entries to a chunk file.
-func NewTempWriter[T Marshallable](
+func NewTempWriter[T any](
 	compare func(a, b T) int,
 	marshaller chunkMarshaller[T],
 	fs FS,
@@ -184,7 +184,7 @@ func NewTempWriter[T Marshallable](
 
 // Like NewTempWriter, but duplicate entries (compare == 0) are silently
 // dropped in rotateChunk and the Finalize k-way merge instead of erroring.
-func NewTempWriterWithIgnoreDuplicates[T Marshallable](
+func NewTempWriterWithIgnoreDuplicates[T any](
 	compare func(a, b T) int,
 	marshaller chunkMarshaller[T],
 	fs FS,
@@ -196,7 +196,7 @@ func NewTempWriterWithIgnoreDuplicates[T Marshallable](
 }
 
 func (tw *TempWriter[T]) Add(t T) error {
-	size := marshallSize(t)
+	size := tw.marshaller.EntrySize(t)
 	budget := tw.maxChunkSize - chunkFramingOverhead
 	if tw.chunkSize > 0 && tw.chunkSize+size > budget {
 		if err := tw.rotateChunk(); err != nil {
@@ -386,7 +386,7 @@ func (tw *TempWriter[T]) chunkFilename(index int) string {
 
 // `buf` must remain unused by the caller until Close() returns.
 // The reader holds its bytes for the lifetime of the iteration.
-type frameReader[T Marshallable] struct {
+type frameReader[T any] struct {
 	closer     io.Closer
 	pb         *ProtobufReader
 	marshaller chunkMarshaller[T]
@@ -394,7 +394,7 @@ type frameReader[T Marshallable] struct {
 	cursor     int
 }
 
-func newFrameReader[T Marshallable](
+func newFrameReader[T any](
 	fs FS,
 	name string,
 	m chunkMarshaller[T],
@@ -448,7 +448,7 @@ func (r *frameReader[T]) Close() error {
 	return r.closer.Close() //nolint:wrapcheck
 }
 
-type TempCache[T Marshallable] struct {
+type TempCache[T any] struct {
 	Source           *Temp[T]
 	maxChunksInCache int
 	reader           *TempReader[T]
@@ -461,7 +461,7 @@ type TempCache[T Marshallable] struct {
 	CacheMisses      int
 }
 
-func NewTempCache[T Marshallable](
+func NewTempCache[T any](
 	temp *Temp[T],
 	cacheKey func(T) string,
 	maxChunksInCache int,

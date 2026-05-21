@@ -70,7 +70,7 @@ func TestTemp(t *testing.T) {
 
 		// First, try with a chunk size that *exactly* fits 3 entries.
 		entry := td.RevisionEntry("1.txt", RevisionEntryKindAdd)
-		sut := NewRevisionEntryTempWriter(fs, marshallSize(entry)*3+chunkFramingOverhead)
+		sut := NewRevisionEntryTempWriter(fs, revisionEntryChunkMarshaller{}.EntrySize(entry)*3+chunkFramingOverhead)
 		for i := range 3 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryKindAdd))
 			assert.NoError(err)
@@ -81,7 +81,7 @@ func TestTemp(t *testing.T) {
 		assert.Equal(1, sut.chunks, "chunk should have been rotated")
 
 		// Now, try with a chunk size that is one byte smaller than 3 entries.
-		sut = NewRevisionEntryTempWriter(fs, marshallSize(entry)*3-1+chunkFramingOverhead)
+		sut = NewRevisionEntryTempWriter(fs, revisionEntryChunkMarshaller{}.EntrySize(entry)*3-1+chunkFramingOverhead)
 		for i := range 2 {
 			err := sut.Add(td.RevisionEntry(fmt.Sprintf("%d.txt", i), RevisionEntryKindAdd))
 			assert.NoError(err)
@@ -297,7 +297,7 @@ func TestTemp(t *testing.T) {
 	})
 }
 
-func countFramesInChunkFile[T Marshallable](temp *Temp[T], i int) (int, error) {
+func countFramesInChunkFile[T any](temp *Temp[T], i int) (int, error) {
 	f, err := temp.fs.OpenRead(fmt.Sprintf("%d.sorted", i))
 	if err != nil {
 		return 0, err

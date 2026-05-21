@@ -1,9 +1,11 @@
 package workspace
 
 import (
+	"bufio"
 	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"os"
 	"strings"
 	"time"
 
@@ -382,31 +384,28 @@ func (m *DefaultCpMonitor) emitProgress() {
 type DefaultHealthCheckMonitor struct {
 	defaultMonitorBase
 	StartTime      time.Time
+	EndTime        time.Time
 	Revisions      int
 	Paths          int
-	MetadataBytes  int64
-	MetadataBlocks int
-	DataBytes      int64
-	DataBlocks     int
-	RevisionEntry  *lib.RevisionEntry
+	Blocks         int
+	BlockBytes     int64
+	OrphanedBlocks []lib.BlockId
 }
 
 func NewDefaultHealthCheckMonitor(mode DefaultMonitorMode, emit MonitorEmit) *DefaultHealthCheckMonitor {
 	return &DefaultHealthCheckMonitor{
 		defaultMonitorBase: newDefaultMonitorBase(mode, nil, emit),
 		StartTime:          time.Time{},
+		EndTime:            time.Time{},
 		Revisions:          0,
 		Paths:              0,
-		MetadataBytes:      0,
-		MetadataBlocks:     0,
-		DataBytes:          0,
-		DataBlocks:         0,
-		RevisionEntry:      nil,
+		Blocks:             0,
+		BlockBytes:         0,
+		OrphanedBlocks:     nil,
 	}
 }
 
 func (m *DefaultHealthCheckMonitor) OnRevisionStart(revisionID lib.RevisionId) {
-	m.RevisionEntry = nil
 	if m.StartTime.IsZero() {
 		m.StartTime = time.Now()
 	}
@@ -418,7 +417,6 @@ func (m *DefaultHealthCheckMonitor) OnRevisionStart(revisionID lib.RevisionId) {
 }
 
 func (m *DefaultHealthCheckMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
-	m.RevisionEntry = entry
 	m.Paths++
 	m.emitProgress()
 	if m.Mode == DefaultMonitorModeVerbose {
@@ -426,44 +424,137 @@ func (m *DefaultHealthCheckMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
 	}
 }
 
-func (m *DefaultHealthCheckMonitor) OnBlockOk(blockID lib.BlockId, duplicate bool, length int) {
-	if !duplicate {
-		if m.RevisionEntry == nil {
-			m.MetadataBytes += int64(length)
-			m.MetadataBlocks++
+func (m *DefaultHealthCheckMonitor) OnBlockVerified(blockID lib.BlockId, length int) {
+	m.Blocks++
+	m.BlockBytes += int64(length)
+	m.emitProgress()
+	if m.Mode == DefaultMonitorModeVerbose {
+		m.emit("  block    " + blockID.String())
+	}
+}
+
+func (m *DefaultHealthCheckMonitor) OnOrphanedBlock(blockID lib.BlockId) {
+	m.OrphanedBlocks = append(m.OrphanedBlocks, blockID)
+	m.emitProgress()
+	if m.Mode == DefaultMonitorModeVerbose {
+		m.emit("  orphan   " + blockID.String())
+	}
+}
+
+func (m *DefaultHealthCheckMonitor) Finish() {
+	m.EndTime = time.Now()
+}
+
+func (m *DefaultHealthCheckMonitor) Duration() time.Duration {
+	if m.StartTime.IsZero() {
+		return 0
+	}
+	end := m.EndTime
+	if end.IsZero() {
+		end = time.Now()
+	}
+	return end.Sub(m.StartTime)
+}
+
+func (m *DefaultHealthCheckMonitor) Report(
+	checkedBlocks bool,
+	checkedOrphanedBlocks bool,
+	orphanedBlocksFile string,
+) (string, error) {
+	check := func(b bool) string {
+		if b {
+			return "ok"
+		}
+		return "--"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Repository is healthy\n")
+	fmt.Fprintf(&b, "  [ok] revision chain is intact\n")
+	fmt.Fprintf(&b, "  [ok] metadata blocks are readable\n")
+	fmt.Fprintf(&b, "  [ok] paths in each revision are sorted\n")
+	fmt.Fprintf(&b, "  [%s] data blocks are valid\n", check(checkedBlocks))
+	orphanLine := "--"
+	if checkedOrphanedBlocks {
+		if len(m.OrphanedBlocks) > 0 {
+			orphanLine = "!!"
 		} else {
-			m.DataBytes += int64(length)
-			m.DataBlocks++
+			orphanLine = "ok"
 		}
 	}
-	m.emitProgress()
-	if m.Mode != DefaultMonitorModeVerbose {
-		return
+	fmt.Fprintf(&b, "  [%s] no orphaned blocks in storage\n", orphanLine)
+	fmt.Fprintf(&b, "\nStatistics:\n")
+	fmt.Fprintf(&b, "  %d revisions\n", m.Revisions)
+	fmt.Fprintf(&b, "  %d path entries in all revisions\n", m.Paths)
+	if checkedBlocks {
+		fmt.Fprintf(&b, "  %d blocks\n", m.Blocks)
+		fmt.Fprintf(&b, "  %s (%dB) read from storage\n", FormatBytes(m.BlockBytes), m.BlockBytes)
 	}
-	prefix := ""
-	if m.RevisionEntry != nil {
-		prefix = "  "
+	if checkedOrphanedBlocks {
+		file := ""
+		if len(m.OrphanedBlocks) > 0 && orphanedBlocksFile != "" {
+			file = fmt.Sprintf(" (%s)", orphanedBlocksFile)
+		}
+		fmt.Fprintf(&b, "  %d orphaned blocks%s\n", len(m.OrphanedBlocks), file)
+		if len(m.OrphanedBlocks) > 0 {
+			fmt.Fprint(&b, "  Note: a concurrent commit may have added  blocks that aren't\n")
+			fmt.Fprint(&b, "        yet referenced by a revision. Re-run after it completes.\n")
+		}
 	}
-	m.emit(prefix + "  block  " + blockID.String())
+	fmt.Fprintf(&b, "\nTiming:\n")
+	fmt.Fprintf(&b, "  start    %s\n", m.StartTime.Format(time.RFC3339))
+	fmt.Fprintf(&b, "  end      %s\n", m.EndTime.Format(time.RFC3339))
+	fmt.Fprintf(&b, "  duration %s\n", m.Duration().Round(time.Millisecond))
+	if checkedOrphanedBlocks && len(m.OrphanedBlocks) > 0 && orphanedBlocksFile != "" {
+		if err := m.writeOrphanedBlocksFile(orphanedBlocksFile); err != nil {
+			return "", err
+		}
+	}
+	return b.String(), nil
+}
+
+//nolint:forbidigo,errcheck
+func (m *DefaultHealthCheckMonitor) writeOrphanedBlocksFile(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to create %s", path)
+	}
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	fmt.Fprintf(w, "# start    %s\n", m.StartTime.Format(time.RFC3339))
+	fmt.Fprintf(w, "# end      %s\n", m.EndTime.Format(time.RFC3339))
+	fmt.Fprintf(w, "# duration %s\n", m.Duration().Round(time.Millisecond))
+	fmt.Fprintln(w)
+	for _, id := range m.OrphanedBlocks {
+		if _, err := fmt.Fprintln(w, id.String()); err != nil {
+			return lib.WrapErrorf(err, "failed to write %s", path)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		return lib.WrapErrorf(err, "failed to flush %s", path)
+	}
+	if err := f.Close(); err != nil {
+		return lib.WrapErrorf(err, "failed to close %s", path)
+	}
+	return nil
 }
 
 func (m *DefaultHealthCheckMonitor) emitProgress() {
 	if m.Mode != DefaultMonitorModeProgress || m.StartTime.IsZero() {
 		return
 	}
-	totalBytes := m.MetadataBytes + m.DataBytes
 	elapsed := time.Since(m.StartTime).Seconds()
 	if elapsed <= 0 {
 		elapsed = 1
 	}
 	m.emit(
 		fmt.Sprintf(
-			"%d revisions, %d path entries, %d unique blocks, %s at %s/s",
+			"%d revisions, %d path entries, %d blocks, %d orphans, %s at %s/s",
 			m.Revisions,
 			m.Paths,
-			m.DataBlocks+m.MetadataBlocks,
-			FormatBytes(totalBytes),
-			FormatBytes(int64(float64(totalBytes)/elapsed)),
+			m.Blocks,
+			len(m.OrphanedBlocks),
+			FormatBytes(m.BlockBytes),
+			FormatBytes(int64(float64(m.BlockBytes)/elapsed)),
 		),
 	)
 }
