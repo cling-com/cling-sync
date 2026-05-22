@@ -56,7 +56,7 @@ func TestStaging(t *testing.T) {
 		// Merge the staging with a snapshot of the remote revision.
 		snapshot, err := lib.NewRevisionSnapshot(r.Repository, remoteRev1, td.NewFS(t))
 		assert.NoError(err)
-		merged, err := staging.MergeWithSnapshot(snapshot, lib.RestorableMetadataAll)
+		merged, err := staging.MergeWithSnapshot(snapshot, lib.RestorableMetadataAll, false)
 		assert.NoError(err)
 		assert.Equal([]lib.TestRevisionEntryInfo{
 			{"a.txt", lib.RevisionEntryKindUpdate, 0o600, td.SHA256("a")},
@@ -66,6 +66,41 @@ func TestStaging(t *testing.T) {
 			{"b/remote.txt", lib.RevisionEntryKindDelete, 0o123, td.SHA256("rrr")},
 			{"b/e", lib.RevisionEntryKindAdd, 0o700 | fs.ModeDir, td.SHA256("")},
 			{"b/e/f.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("fff")},
+		}, r.RevisionTempInfos(merged))
+	})
+
+	t.Run("MergeWithSnapshot with suppressDeletes drops delete entries", func(t *testing.T) {
+		// Used by the attach --allow-non-empty merge path: paths that only
+		// exist in the snapshot are fetched on merge rather than deleted.
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		// Workspace has `a.txt` (modified) and `local.txt` (new); the
+		// snapshot adds a third file `b/remote.txt` that staging never sees.
+		w.Write("a.txt", "aa")
+		w.Write("local.txt", "L")
+
+		commit, err := lib.NewCommit(r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		assert.NoError(commit.Add(td.RevisionEntryExt("a.txt", lib.RevisionEntryKindAdd, 0o600, "a")))
+		assert.NoError(commit.Add(td.RevisionEntryExt("b/remote.txt", lib.RevisionEntryKindAdd, 0o600, "r")))
+		remoteRev, err := commit.Commit(td.CommitInfo())
+		assert.NoError(err)
+
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
+		assert.NoError(err)
+		snapshot, err := lib.NewRevisionSnapshot(r.Repository, remoteRev, td.NewFS(t))
+		assert.NoError(err)
+
+		// With suppressDeletes=true the DELETE for `b/remote.txt` is skipped;
+		// only the UPDATE for `a.txt` and the ADD for `local.txt` remain.
+		merged, err := staging.MergeWithSnapshot(snapshot, lib.RestorableMetadataAll, true)
+		assert.NoError(err)
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"a.txt", lib.RevisionEntryKindUpdate, 0o600, td.SHA256("aa")},
+			{"local.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("L")},
 		}, r.RevisionTempInfos(merged))
 	})
 

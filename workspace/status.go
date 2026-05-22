@@ -69,6 +69,18 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get head")
 	}
+	// A root workspace head means the workspace was attached but never
+	// merged. Compare against the repository head so `status` predicts
+	// what `merge` would commit. `merge` fetches remote-only files rather
+	// than deleting them, so suppress `Delete` entries in that mode.
+	suppressDeletes := false
+	if head.IsRoot() {
+		head, err = repository.Head()
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to read repository head")
+		}
+		suppressDeletes = true
+	}
 	snapshotFS, err := tmpFS.MkSub("snapshot")
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create temporary snapshot directory")
@@ -85,7 +97,7 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}
-	revisionTemp, err := staging.MergeWithSnapshot(snapshot, opts.RestorableMetadataFlag)
+	revisionTemp, err := staging.MergeWithSnapshot(snapshot, opts.RestorableMetadataFlag, suppressDeletes)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to merge staging and revision snapshot")
 	}

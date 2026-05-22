@@ -346,18 +346,25 @@ func TestMerge(t *testing.T) {
 		// Create a second workspace tied to the same repository.
 		w2 := wstd.NewTestWorkspace(t, r.Repository)
 
-		// Add first commit.
+		// Both workspaces start at the same revision so the workspace head
+		// is non-root and we exercise the regular conflict-detection path
+		// (not the attach-non-empty adoption path).
 		w.Write("a.txt", "a")
 		remoteRev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		assert.Equal([]lib.TestFileInfo{
-			{"a.txt", 0o600, 1, "a"},
-		}, r.RevisionSnapshotFileInfos(remoteRev1, nil))
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(remoteRev1, w2.Head())
 
-		// Add conflicting `a.txt` in the workspace.
-		w2.Write("a.txt", "aa")
+		// `w` commits a divergent change.
+		w.Write("a.txt", "aa")
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
 
-		// Merge first commit into workspace.
+		// `w2` introduces its own divergent change.
+		w2.Write("a.txt", "aaa")
+
+		// Merging `w2` should detect the conflict.
 		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.Error(err, "MergeConflictsError")
 		conflicts, ok := err.(MergeConflictsError) //nolint:errorlint
@@ -365,12 +372,12 @@ func TestMerge(t *testing.T) {
 		assert.Equal(1, len(conflicts))
 		assert.Equal("a.txt", conflicts[0].WorkspaceEntry.Path.String())
 		assert.Equal("a.txt", conflicts[0].RepositoryEntry.Path.String())
-		assert.Equal(lib.RevisionEntryKindAdd, conflicts[0].WorkspaceEntry.Kind)
-		assert.Equal(lib.RevisionEntryKindAdd, conflicts[0].RepositoryEntry.Kind)
-		assert.Equal(int64(2), conflicts[0].WorkspaceEntry.Metadata.Size)
-		assert.Equal(int64(1), conflicts[0].RepositoryEntry.Metadata.Size)
+		assert.Equal(lib.RevisionEntryKindUpdate, conflicts[0].WorkspaceEntry.Kind)
+		assert.Equal(lib.RevisionEntryKindUpdate, conflicts[0].RepositoryEntry.Kind)
+		assert.Equal(int64(3), conflicts[0].WorkspaceEntry.Metadata.Size)
+		assert.Equal(int64(2), conflicts[0].RepositoryEntry.Metadata.Size)
 
-		assert.Equal(true, w2.Head().IsRoot(), "workspace head should not be forwarded")
+		assert.Equal(remoteRev1, w2.Head(), "workspace head should not be forwarded")
 	})
 
 	t.Run("Commit is aborted if remote changed", func(t *testing.T) {
@@ -515,15 +522,26 @@ func TestMerge(t *testing.T) {
 		w := wstd.NewTestWorkspace(t, r.Repository)
 		w2 := wstd.NewTestWorkspace(t, r.Repository)
 
-		mtime := time.Now()
+		// Both workspaces start at the same revision so the workspace head
+		// is non-root and we exercise the regular merge code path.
+		mtime1 := time.Now()
 		w.Write("a.txt", "a")
-		w.Touch("a.txt", mtime)
+		w.Touch("a.txt", mtime1)
 		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
 
-		// Adding the same file with the same attributes should be ignored.
-		w2.Write("a.txt", "a")
-		w2.Touch("a.txt", mtime)
+		// `w` updates `a.txt` and commits.
+		mtime2 := mtime1.Add(time.Second)
+		w.Write("a.txt", "aa")
+		w.Touch("a.txt", mtime2)
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// `w2` happens to make the identical update locally.
+		w2.Write("a.txt", "aa")
+		w2.Touch("a.txt", mtime2)
 		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.ErrorIs(err, lib.ErrEmptyCommit)
 
@@ -531,6 +549,77 @@ func TestMerge(t *testing.T) {
 		w2.Touch("a.txt", time.Now())
 		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.Error(err, "MergeConflictsError")
+	})
+
+	t.Run("First merge after attach to a non-empty directory", func(t *testing.T) {
+		// The workspace was attached with `--allow-non-empty` and holds a
+		// mix of matching, modified, local-only, and missing-remote files.
+		// The first merge should:
+		// - adopt matching files (no commit entry),
+		// - commit modified files as UPDATE,
+		// - commit local-only files as ADD,
+		// - fetch remote-only files (no DELETE entry).
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		mtime := time.Now()
+		w.Write("match.txt", "match")
+		w.Touch("match.txt", mtime)
+		w.Write("modified.txt", "old")
+		w.Write("remote-only.txt", "remote")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// `match.txt` is set to the identical mtime so the default flag (which
+		// compares MTime) sees the file as truly matching.
+		w2.Write("match.txt", "match")
+		w2.Touch("match.txt", mtime)
+		w2.Write("modified.txt", "new")
+		w2.Write("local-only.txt", "local")
+		assert.Equal(true, w2.Head().IsRoot())
+
+		newHead, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(newHead, w2.Head())
+
+		assert.Equal("match", w2.Cat("match.txt"))
+		assert.Equal("new", w2.Cat("modified.txt"))
+		assert.Equal("local", w2.Cat("local-only.txt"))
+		assert.Equal("remote", w2.Cat("remote-only.txt"))
+
+		// match.txt is adopted (no commit entry), remote-only.txt is fetched
+		// (no DELETE), only the local divergences appear in the new revision.
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"local-only.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("local")},
+			{"modified.txt", lib.RevisionEntryKindUpdate, 0o600, td.SHA256("new")},
+		}, r.RevisionInfos(newHead))
+	})
+
+	t.Run("First merge after attach when workspace already matches the repository", func(t *testing.T) {
+		// The workspace was attached with `--allow-non-empty` and its files
+		// already match the repository byte-for-byte. The first merge
+		// fast-forwards the workspace head without creating a commit.
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		mtime := time.Now()
+		w.Write("a.txt", "a")
+		w.Touch("a.txt", mtime)
+		remoteRev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		w2.Write("a.txt", "a")
+		w2.Touch("a.txt", mtime)
+		head, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(remoteRev1, head, "no new revision should be created")
+		assert.Equal(remoteRev1, w2.Head())
 	})
 
 	// todo: implement
@@ -681,15 +770,24 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		wRoot := wstd.NewTestWorkspace(t, r.Repository)
 		wPrefix := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
 
-		// Add first commit to the root workspace.
+		// Both workspaces start at the same revision so the prefix workspace
+		// head is non-root and we exercise the regular conflict-detection
+		// path (not the attach-non-empty adoption path).
 		wRoot.Write("look/here/a.txt", "a")
-		_, err := Merge(wRoot.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev1, err := Merge(wRoot.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		_, err = Merge(wPrefix.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(remoteRev1, wPrefix.Head())
+
+		// `wRoot` commits a divergent change.
+		wRoot.Write("look/here/a.txt", "aa")
+		_, err = Merge(wRoot.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		// Add conflicting `a.txt` in the prefixed workspace.
-		wPrefix.Write("a.txt", "aa")
+		// `wPrefix` introduces its own divergent change.
+		wPrefix.Write("a.txt", "aaa")
 
-		// Merge first commit into the prefixed workspace.
 		_, err = Merge(wPrefix.Workspace, r.Repository, wstd.MergeOptions())
 		assert.Error(err, "MergeConflictsError")
 
@@ -698,12 +796,52 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		assert.Equal(1, len(conflicts))
 		assert.Equal("a.txt", conflicts[0].WorkspaceEntry.Path.String())
 		assert.Equal("look/here/a.txt", conflicts[0].RepositoryEntry.Path.String())
-		assert.Equal(lib.RevisionEntryKindAdd, conflicts[0].WorkspaceEntry.Kind)
-		assert.Equal(lib.RevisionEntryKindAdd, conflicts[0].RepositoryEntry.Kind)
-		assert.Equal(int64(2), conflicts[0].WorkspaceEntry.Metadata.Size)
-		assert.Equal(int64(1), conflicts[0].RepositoryEntry.Metadata.Size)
+		assert.Equal(lib.RevisionEntryKindUpdate, conflicts[0].WorkspaceEntry.Kind)
+		assert.Equal(lib.RevisionEntryKindUpdate, conflicts[0].RepositoryEntry.Kind)
+		assert.Equal(int64(3), conflicts[0].WorkspaceEntry.Metadata.Size)
+		assert.Equal(int64(2), conflicts[0].RepositoryEntry.Metadata.Size)
 
-		assert.Equal(true, wPrefix.Head().IsRoot(), "prefixed workspace head should not be forwarded")
+		assert.Equal(remoteRev1, wPrefix.Head(), "prefixed workspace head should not be forwarded")
+	})
+
+	t.Run("First merge after attach to a non-empty directory with path prefix", func(t *testing.T) {
+		// Same `attach --allow-non-empty` semantics as the non-prefix case
+		// but the workspace's view is rooted at `look/here/`.
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		rootW := wstd.NewTestWorkspace(t, r.Repository)
+		prefixW := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+
+		// Populate the repo with files under the prefix.
+		mtime := time.Now()
+		rootW.Write("look/here/match.txt", "match")
+		rootW.Touch("look/here/match.txt", mtime)
+		rootW.Write("look/here/modified.txt", "old")
+		rootW.Write("look/here/remote-only.txt", "remote")
+		_, err := Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// Prefix workspace (head=root) holds the prefix-relative view.
+		prefixW.Write("match.txt", "match")
+		prefixW.Touch("match.txt", mtime)
+		prefixW.Write("modified.txt", "new")
+		prefixW.Write("local-only.txt", "local")
+		assert.Equal(true, prefixW.Head().IsRoot())
+
+		newHead, err := Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(newHead, prefixW.Head())
+
+		assert.Equal("match", prefixW.Cat("match.txt"))
+		assert.Equal("new", prefixW.Cat("modified.txt"))
+		assert.Equal("local", prefixW.Cat("local-only.txt"))
+		assert.Equal("remote", prefixW.Cat("remote-only.txt"))
+
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"look/here/local-only.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("local")},
+			{"look/here/modified.txt", lib.RevisionEntryKindUpdate, 0o600, td.SHA256("new")},
+		}, r.RevisionInfos(newHead))
 	})
 }
 

@@ -222,16 +222,25 @@ func TestHappyPath(t *testing.T) {
 		nonEmptyDir := sut.Path("../workspace_nonempty")
 		err := os.MkdirAll(nonEmptyDir, 0o700)
 		assert.NoError(err, "failed to create non-empty dir")
+		// Three kinds of pre-existing files:
+		// 1. `local-only.txt` has no remote counterpart.
+		// 2. `b.txt` matches the current repository content (silent adopt).
+		// 3. `c.txt` has different content from the repository (commit as update).
 		err = os.WriteFile(filepath.Join(nonEmptyDir, "local-only.txt"), []byte("local"), 0o600)
 		assert.NoError(err, "failed to write local-only.txt")
+		err = os.WriteFile(filepath.Join(nonEmptyDir, "b.txt"), []byte("b from workspace"), 0o600)
+		assert.NoError(err, "failed to write matching b.txt")
+		err = os.WriteFile(filepath.Join(nonEmptyDir, "c.txt"), []byte("locally edited C"), 0o600)
+		assert.NoError(err, "failed to write modified c.txt")
 
 		// Attach should refuse a non-empty target by default.
 		stderr := sut.ClingSyncError("attach", "../repository", "../workspace_nonempty")
 		assert.Contains(stderr, "is not empty")
 		assert.Contains(stderr, "--allow-non-empty")
 
-		// With --allow-non-empty, attach succeeds; merge then preserves the
-		// pre-existing local file and pulls down the repository state.
+		// With --allow-non-empty, attach succeeds. The merge should adopt
+		// matching files, commit the modified file as an update, add the
+		// local-only file, and fetch every other remote file.
 		sut.ClingSyncStdin(
 			passphrase,
 			"--passphrase-from-stdin",
@@ -242,13 +251,19 @@ func TestHappyPath(t *testing.T) {
 		)
 		sut.Chdir("../workspace_nonempty")
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
-		sut.ClingSync("merge", "--no-progress", "--message", "attach non-empty workspace")
+		sut.ClingSync("merge", "--no-progress", "--chtime", "--message", "attach non-empty workspace")
+
 		assert.Equal("local", sut.Cat("local-only.txt"), "local-only file should be preserved")
-		assert.Equal("C", sut.Cat("c.txt"), "repository file should have been pulled down")
+		assert.Equal("b from workspace", sut.Cat("b.txt"), "matching file should be adopted untouched")
+		assert.Equal("locally edited C", sut.Cat("c.txt"), "modified file should be committed as update")
+		// Remote-only files come down.
+		assert.Equal("d", sut.Cat("dir1/d.txt"), "remote-only dir file should be fetched")
+		assert.Equal("e from workspace", sut.Cat("dir2/e.txt"), "remote-only dir file should be fetched")
 		assert.Equal(
 			td.Sort(sut.Ls(), 4),
 			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
 			"Files of head should match the workspace")
+		assert.Equal("No changes", sut.ClingSync("status", "--chtime"), "After merge, no local changes should remain")
 	}
 }
 
@@ -564,6 +579,46 @@ func TestPathPrefix(t *testing.T) {
 		assert.Equal(td.Dedent(`
 			A new.txt
 		`), status)
+	}
+
+	t.Log("Attach a non-empty directory with path-prefix (attach --allow-non-empty --path-prefix)")
+	{
+		// Build a fresh directory whose layout mirrors the prefix-relative
+		// view of the repository under `look/here/`. The merge should
+		// adopt the matching file, commit the modified file as an update,
+		// add the local-only file, and not flag any of them as conflicts.
+		nonEmptyDir := sut.Path("../workspace_prefix_nonempty")
+		err := os.MkdirAll(filepath.Join(nonEmptyDir, "dir2"), 0o700)
+		assert.NoError(err, "failed to create non-empty dir")
+		// 1. Local-only file (committed as ADD).
+		err = os.WriteFile(filepath.Join(nonEmptyDir, "local.txt"), []byte("local"), 0o600)
+		assert.NoError(err)
+		// 2. Matches repo content (adopted silently).
+		err = os.WriteFile(filepath.Join(nonEmptyDir, "c.txt"), []byte("c"), 0o600)
+		assert.NoError(err)
+		// 3. Different content from repo (committed as UPDATE).
+		err = os.WriteFile(filepath.Join(nonEmptyDir, "dir2/d.txt"), []byte("locally edited d"), 0o600)
+		assert.NoError(err)
+
+		sut.ClingSyncStdin(
+			passphrase,
+			"--passphrase-from-stdin",
+			"attach",
+			"--allow-non-empty",
+			"--path-prefix",
+			"look/here/",
+			"../repository",
+			"../workspace_prefix_nonempty",
+		)
+		sut.Chdir("../workspace_prefix_nonempty")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
+
+		sut.ClingSync("merge", "--no-progress", "--message", "prefix attach non-empty workspace")
+
+		assert.Equal("local", sut.Cat("local.txt"))
+		assert.Equal("c", sut.Cat("c.txt"))
+		assert.Equal("locally edited d", sut.Cat("dir2/d.txt"))
+		assert.Equal("No changes", sut.ClingSync("status"))
 	}
 }
 

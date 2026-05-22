@@ -61,7 +61,7 @@ func TestStatus(t *testing.T) {
 		}, statusFilesString(status))
 	})
 
-	t.Run("Status always runs against the workspace head", func(t *testing.T) {
+	t.Run("Status runs against the workspace head once it has been set by a merge", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
@@ -222,6 +222,33 @@ func TestStatus(t *testing.T) {
 		status, err = Status(w2.Workspace, r.Repository, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{}, statusFilesString(status))
+	})
+
+	t.Run("Root workspace head compares against the repository head", func(t *testing.T) {
+		// Simulates `attach --allow-non-empty`: a fresh workspace (head
+		// is root) populated with files that mostly match the repo. The
+		// previous behaviour reported every workspace file as new even
+		// though `merge` would not commit anything for the matching ones.
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("a.txt", "a")
+		w.Write("b.txt", "b")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+		w2.Write("a.txt", "a")
+		w2.Write("c.txt", "c")
+
+		// Ignore metadata diffs (mtime/owner/mode) so the test only
+		// reports content-level changes.
+		opts := wstd.StatusOptions()
+		opts.RestorableMetadataFlag = 0
+		status, err := Status(w2.Workspace, r.Repository, opts, td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{"A c.txt"}, statusFilesString(status))
 	})
 }
 

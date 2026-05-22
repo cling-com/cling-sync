@@ -135,13 +135,13 @@ func (s *Staging) Finalize() (*lib.Temp[*StagingEntry], error) {
 // Merge the staging snapshot with the revision snapshot.
 // The resulting `RevisionTemp` will contain all entries that transition from the
 // revision snapshot to the staging snapshot.
-//
-// Parameters:
-//
-//	compareOwnership: If `true`, ownership of the file is compared.
+// If `suppressDeletes` is `true`, paths that are in the revision snapshot but
+// not in staging do not produce `Delete` entries. Used when the diff baseline
+// is the repository head rather than the workspace head (attach-non-empty).
 func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	snapshot *lib.Temp[*lib.RevisionEntry],
 	restorableMetadataFlag lib.RestorableMetadataFlag,
+	suppressDeletes bool,
 ) (*lib.Temp[*lib.RevisionEntry], error) {
 	stgTemp, err := s.Finalize()
 	if err != nil {
@@ -164,6 +164,9 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	}
 	finalWriter := lib.NewRevisionEntryTempWriter(final, lib.MaxBlockDataSize)
 	add := func(path lib.Path, kind lib.RevisionEntryKind, md lib.PathMetadata) error {
+		if suppressDeletes && kind == lib.RevisionEntryKindDelete {
+			return nil
+		}
 		re := lib.RevisionEntry{Kind: kind, Path: path, Metadata: md}
 		if err := finalWriter.Add(&re); err != nil {
 			return lib.WrapErrorf(err, "failed to write revision entry for path %s", path)

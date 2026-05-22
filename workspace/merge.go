@@ -798,6 +798,9 @@ func AddFileToRepository(
 // workspace `head` revision.
 // Then compute the local changes between the `Staging` and the `head` revision.
 // Return all three (staging, local changes, workspace revision) as a `lib.RevisionTempCache`.
+// When the workspace head is the root revision (the workspace was attached
+// but never merged), the repository head is used as the diff baseline and
+// `Delete` entries are filtered out of `localChanges`.
 func buildLocalChanges(
 	ws *Workspace,
 	tempFS lib.FS,
@@ -808,6 +811,15 @@ func buildLocalChanges(
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to get workspace head")
 	}
+	baselineHead := wsHead
+	suppressDeletes := false
+	if wsHead.IsRoot() {
+		baselineHead, err = repository.Head()
+		if err != nil {
+			return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to get repository head")
+		}
+		suppressDeletes = true
+	}
 	stagingTmpDir, err := tempFS.MkSub("staging")
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create staging tmp dir")
@@ -816,7 +828,7 @@ func buildLocalChanges(
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create snapshot tmp dir")
 	}
-	wsRevisionSnapshot, err := lib.NewRevisionSnapshot(repository, wsHead, wsSnapshotTmpDir)
+	wsRevisionSnapshot, err := lib.NewRevisionSnapshot(repository, baselineHead, wsSnapshotTmpDir)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
@@ -836,7 +848,7 @@ func buildLocalChanges(
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create staging cache")
 	}
-	localChanges, err := staging.MergeWithSnapshot(wsRevisionSnapshot, opts.RestorableMetadataFlag)
+	localChanges, err := staging.MergeWithSnapshot(wsRevisionSnapshot, opts.RestorableMetadataFlag, suppressDeletes)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to merge staging and workspace snapshot")
 	}
