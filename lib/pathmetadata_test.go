@@ -114,6 +114,101 @@ func TestPathMetadata(t *testing.T) {
 		assert.Equal(true, base.IsEqualRestorableAttributes(actual, RestorableMetadataAll))
 	})
 
+	t.Run("NewPathMetadataFromFileInfo regular file", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		fsys := NewMemoryFS(1024 * 1024)
+
+		f, err := fsys.OpenWrite("f.txt")
+		assert.NoError(err)
+		_, err = f.Write([]byte("hello"))
+		assert.NoError(err)
+		assert.NoError(f.Close())
+		fileInfo, err := fsys.Stat("f.txt")
+		assert.NoError(err)
+		md := NewPathMetadataFromFileInfo(fileInfo, Sha256{1}, []BlockId{{2}})
+		assert.Equal(int64(5), md.Size)
+		assert.Equal(false, md.FileMode.IsDir())
+		assert.Equal(false, md.FileMode.IsSymlink())
+		assert.Equal(Sha256{1}, md.FileHash)
+		assert.Equal([]BlockId{{2}}, md.BlockIds)
+	})
+
+	t.Run("NewPathMetadataFromFileInfo directory", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		fsys := NewMemoryFS(1024 * 1024)
+
+		assert.NoError(fsys.Mkdir("d"))
+		info, err := fsys.Stat("d")
+		assert.NoError(err)
+		md := NewPathMetadataFromFileInfo(info, Sha256{}, nil)
+		assert.Equal(int64(0), md.Size)
+		assert.Equal(true, md.FileMode.IsDir())
+	})
+
+	t.Run("NewPathMetadataFromFileInfo symlink", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		fsys := NewMemoryFS(1024 * 1024)
+
+		assert.NoError(fsys.Symlink("anywhere", "link"))
+		info, err := fsys.Stat("link")
+		assert.NoError(err)
+		md := NewPathMetadataFromFileInfo(info, Sha256{}, nil)
+		assert.Equal(int64(0), md.Size)
+		assert.Equal(FileModeSymlink, md.FileMode)
+		assert.Equal(Sha256{}, md.FileHash)
+		assert.Equal(([]BlockId)(nil), md.BlockIds)
+		assert.Equal(false, md.HasUID())
+		assert.Equal(false, md.HasGID())
+		assert.Equal(false, md.HasBirthtime())
+	})
+
+	t.Run("NewPathMetadataFromFileInfo panics on symlink with FileHash or BlockIds", func(t *testing.T) {
+		t.Parallel()
+		fsys := NewMemoryFS(1024 * 1024)
+		_ = fsys.Symlink("anywhere", "link")
+		info, _ := fsys.Stat("link")
+
+		mustPanic := func(label string, fn func()) {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Fatalf("expected panic for %s", label)
+				}
+			}()
+			fn()
+		}
+		mustPanic("symlink + FileHash", func() {
+			NewPathMetadataFromFileInfo(info, Sha256{1}, nil)
+		})
+		mustPanic("symlink + BlockIds", func() {
+			NewPathMetadataFromFileInfo(info, Sha256{}, []BlockId{{2}})
+		})
+	})
+
+	t.Run("NewPathMetadataFromFileInfo panics on dir with FileHash or BlockIds", func(t *testing.T) {
+		t.Parallel()
+		fsys := NewMemoryFS(1024 * 1024)
+		_ = fsys.Mkdir("d")
+		info, _ := fsys.Stat("d")
+
+		mustPanic := func(label string, fn func()) {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Fatalf("expected panic for %s", label)
+				}
+			}()
+			fn()
+		}
+		mustPanic("dir + FileHash", func() {
+			NewPathMetadataFromFileInfo(info, Sha256{1}, nil)
+		})
+		mustPanic("dir + BlockIds", func() {
+			NewPathMetadataFromFileInfo(info, Sha256{}, []BlockId{{2}})
+		})
+	})
+
 	t.Run("NewEmptyDirPathMetadata", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

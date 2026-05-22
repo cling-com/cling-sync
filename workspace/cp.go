@@ -119,6 +119,38 @@ func restore( //nolint:funlen
 	mon CpMonitor,
 ) error {
 	md := entry.Metadata
+	localInfo, statErr := targetFS.Stat(target)
+	if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		return lib.WrapErrorf(statErr, "failed to stat %s", target)
+	}
+	if statErr == nil {
+		// Delete if type changed (dir vs symlink vs file).
+		localMode := lib.NewFileMode(localInfo.Mode())
+		if localMode.IsDir() != md.FileMode.IsDir() || localMode.IsSymlink() != md.FileMode.IsSymlink() {
+			switch mon.OnExists(entry, target) {
+			case CpOnExistsOverwrite:
+				var removeErr error
+				if localMode.IsDir() {
+					removeErr = targetFS.RemoveAll(target)
+				} else {
+					removeErr = targetFS.Remove(target)
+				}
+				if removeErr != nil {
+					return lib.WrapErrorf(removeErr, "failed to remove existing %s", target)
+				}
+			case CpOnExistsIgnore:
+				if endErr := mon.OnEnd(entry, target); endErr != nil {
+					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+				}
+				return nil
+			case CpOnExistsAbort:
+				return lib.Errorf("%s already exists with a different kind", target)
+			}
+		}
+	}
+	if md.FileMode.IsSymlink() {
+		return restoreSymlink(entry, targetFS, target, mon)
+	}
 	if md.FileMode.IsDir() {
 		if err := targetFS.MkdirAll(target); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
@@ -129,30 +161,43 @@ func restore( //nolint:funlen
 			}
 			return lib.WrapErrorf(err, "failed to create directory %s", target)
 		}
-	} else {
-		if err := targetFS.MkdirAll(filepath.Dir(target)); err != nil {
-			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				if endErr := mon.OnEnd(entry, target); endErr != nil {
-					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
-				}
-				return nil
+		return nil
+	}
+	if err := targetFS.MkdirAll(filepath.Dir(target)); err != nil {
+		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
 			}
-			return lib.WrapErrorf(err, "failed to create parent directory %s", target)
+			return nil
 		}
-		f, err := targetFS.OpenWriteExcl(target)
-		if errors.Is(err, fs.ErrExist) {
-			switch mon.OnExists(entry, target) {
-			case CpOnExistsOverwrite:
-				f, err = targetFS.OpenWrite(target)
-			case CpOnExistsIgnore:
-				if endErr := mon.OnEnd(entry, target); endErr != nil {
-					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
-				}
-				return nil
-			case CpOnExistsAbort:
-				return lib.WrapErrorf(err, "failed to open file %s for writing", target)
+		return lib.WrapErrorf(err, "failed to create parent directory %s", target)
+	}
+	f, err := targetFS.OpenWriteExcl(target)
+	if errors.Is(err, fs.ErrExist) {
+		switch mon.OnExists(entry, target) {
+		case CpOnExistsOverwrite:
+			f, err = targetFS.OpenWrite(target)
+		case CpOnExistsIgnore:
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
 			}
+			return nil
+		case CpOnExistsAbort:
+			return lib.WrapErrorf(err, "failed to open file %s for writing", target)
 		}
+	}
+	if err != nil {
+		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+			}
+			return nil
+		}
+		return lib.WrapErrorf(err, "failed to open file %s for writing", target)
+	}
+	defer f.Close() //nolint:errcheck
+	for _, blockId := range entry.Metadata.BlockIds {
+		data, err := repository.ReadBlock(blockId, buf)
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {
@@ -160,51 +205,86 @@ func restore( //nolint:funlen
 				}
 				return nil
 			}
-			return lib.WrapErrorf(err, "failed to open file %s for writing", target)
+			return lib.WrapErrorf(err, "failed to read block %s", blockId)
 		}
-		defer f.Close() //nolint:errcheck
-		for _, blockId := range entry.Metadata.BlockIds {
-			data, err := repository.ReadBlock(blockId, buf)
-			if err != nil {
-				if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-					if endErr := mon.OnEnd(entry, target); endErr != nil {
-						return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
-					}
-					return nil
-				}
-				return lib.WrapErrorf(err, "failed to read block %s", blockId)
-			}
-			if _, err := f.Write(data); err != nil {
-				if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-					if endErr := mon.OnEnd(entry, target); endErr != nil {
-						return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
-					}
-					return nil
-				}
-				return lib.WrapErrorf(err, "failed to write block %s", blockId)
-			}
-			if err := mon.OnWrite(entry, target, blockId, data); err != nil {
-				return lib.WrapErrorf(err, "cp monitor write failed for %s", target)
-			}
-		}
-		if err := f.Close(); err != nil {
+		if _, err := f.Write(data); err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {
 					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
 				}
 				return nil
 			}
-			return lib.WrapErrorf(err, "failed to close file %s", target)
+			return lib.WrapErrorf(err, "failed to write block %s", blockId)
 		}
-		if err := targetFS.Chmod(target, md.FileMode.AsFsFileMode()); err != nil {
-			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
-				if endErr := mon.OnEnd(entry, target); endErr != nil {
-					return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
-				}
-				return nil
+		if err := mon.OnWrite(entry, target, blockId, data); err != nil {
+			return lib.WrapErrorf(err, "cp monitor write failed for %s", target)
+		}
+	}
+	if err := f.Close(); err != nil {
+		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
 			}
-			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.FileMode, target)
+			return nil
 		}
+		return lib.WrapErrorf(err, "failed to close file %s", target)
+	}
+	if err := targetFS.Chmod(target, md.FileMode.AsFsFileMode()); err != nil {
+		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+			}
+			return nil
+		}
+		return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.FileMode, target)
+	}
+	return nil
+}
+
+func restoreSymlink(entry *lib.RevisionEntry, targetFS lib.FS, target string, mon CpMonitor) error {
+	md := entry.Metadata
+	if md.SymLinkTarget == nil {
+		return lib.Errorf("symlink %s has no target", entry.Path)
+	}
+	if err := targetFS.MkdirAll(filepath.Dir(target)); err != nil {
+		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+			}
+			return nil
+		}
+		return lib.WrapErrorf(err, "failed to create parent directory %s", target)
+	}
+	linkStr, err := filepath.Rel(filepath.Dir(entry.Path.String()), md.SymLinkTarget.String())
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to compute symlink string for %s", target)
+	}
+	linkStr = filepath.ToSlash(linkStr)
+	err = targetFS.Symlink(linkStr, target)
+	if errors.Is(err, fs.ErrExist) {
+		switch mon.OnExists(entry, target) {
+		case CpOnExistsOverwrite:
+			if rmErr := targetFS.Remove(target); rmErr != nil {
+				return lib.WrapErrorf(rmErr, "failed to remove existing %s", target)
+			}
+			err = targetFS.Symlink(linkStr, target)
+		case CpOnExistsIgnore:
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+			}
+			return nil
+		case CpOnExistsAbort:
+			return lib.WrapErrorf(err, "failed to create symlink %s", target)
+		}
+	}
+	if err != nil {
+		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
+			if endErr := mon.OnEnd(entry, target); endErr != nil {
+				return lib.WrapErrorf(endErr, "cp monitor end failed for %s", target)
+			}
+			return nil
+		}
+		return lib.WrapErrorf(err, "failed to create symlink %s", target)
 	}
 	return nil
 }
@@ -215,14 +295,25 @@ func restoreFileMode(
 	md *lib.PathMetadata,
 	restorableMetadataFlag lib.RestorableMetadataFlag,
 ) error {
-	if md.HasUID() && md.HasGID() && restorableMetadataFlag&lib.RestorableMetadataOwnership != 0 {
-		if err := fs.Chown(path, int(*md.Uid), int(*md.Gid)); err != nil {
-			return lib.WrapErrorf(err, "failed to restore file owner %d and group %d for %s", *md.Uid, *md.Gid, path)
+	isSymlink := md.FileMode.IsSymlink()
+	// Chmod and Chown follow symlinks on most platforms, and we never want
+	// to mutate the target. Skip them for links regardless of the flag.
+	if !isSymlink {
+		if md.HasUID() && md.HasGID() && restorableMetadataFlag&lib.RestorableMetadataOwnership != 0 {
+			if err := fs.Chown(path, int(*md.Uid), int(*md.Gid)); err != nil {
+				return lib.WrapErrorf(
+					err,
+					"failed to restore file owner %d and group %d for %s",
+					*md.Uid,
+					*md.Gid,
+					path,
+				)
+			}
 		}
-	}
-	if restorableMetadataFlag&lib.RestorableMetadataMode != 0 {
-		if err := fs.Chmod(path, (md.FileMode & lib.FileModePerm).AsFsFileMode()); err != nil {
-			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.FileMode, path)
+		if restorableMetadataFlag&lib.RestorableMetadataMode != 0 {
+			if err := fs.Chmod(path, (md.FileMode & lib.FileModePerm).AsFsFileMode()); err != nil {
+				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.FileMode, path)
+			}
 		}
 	}
 	if restorableMetadataFlag&lib.RestorableMetadataMTime != 0 {

@@ -205,6 +205,37 @@ func TestCheckHealth(t *testing.T) {
 		assert.Error(err, "a.txt >= a.txt")
 	})
 
+	t.Run("Non-symlink with target", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		// Build a malformed entry: regular file but has SymLinkTarget.
+		e := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
+		e.Metadata.FileMode = 0o600
+		target, err := NewPath("stray")
+		assert.NoError(err)
+		e.Metadata.SymLinkTarget = &target
+		chunk := RevisionEntryChunk{Entries: []*RevisionEntry{e}}
+		chunkBuf := make([]byte, chunk.MarshallSize())
+		chunkWriter := NewProtobufWriter(chunkBuf)
+		assert.NoError(chunk.Marshall(chunkWriter))
+		chunkBlockId, _, err := r.WriteBlock(chunkWriter.Bytes())
+		assert.NoError(err)
+		_, err = r.WriteRevision(&Revision{ //nolint:exhaustruct
+			Timestamp:        NewTimestampNow(),
+			ParentRevisionId: RevisionId{},
+			BlockIds:         []BlockId{chunkBlockId},
+		})
+		assert.NoError(err)
+
+		monitor := td.NewHealthCheckMonitor()
+		err = CheckHealth(r.Repository, td.NewFS(t), HealthCheckOptions{
+			Monitor: monitor, CheckBlocks: false, CheckOrphanedBlocks: false,
+		})
+		assert.Error(err, "has SymLinkTarget but is not a symlink")
+	})
+
 	t.Run("Orphaned blocks", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

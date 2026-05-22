@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"io/fs"
 	"syscall"
 	"testing"
@@ -1006,4 +1007,238 @@ func (m *changeRemoteCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
 	_, err = commit.Commit(td.CommitInfo())
 	m.assert.NoError(err)
 	return nil
+}
+
+func TestMergeSymlinks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("commit and restore symlink", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		w.Symlink("a.txt", "link")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		assert.Equal("a.txt", w2.ReadLink("link"))
+		info, err := w2.Workspace.FS.Stat("link")
+		assert.NoError(err)
+		assert.Equal(false, info.IsDir())
+	})
+
+	t.Run("update symlink target", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		w.Write("b.txt", "b")
+		w.Symlink("a.txt", "link")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		w.Rm("link")
+		w.Symlink("b.txt", "link")
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal("b.txt", w2.ReadLink("link"))
+	})
+
+	t.Run("path prefix skips outside-prefix targets", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("outside.txt", "x")
+		w.Write("look/here/a.txt", "a")
+		w.Symlink("../../outside.txt", "look/here/link")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		w2 := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		_, err = w2.Workspace.FS.Stat("link")
+		assert.Equal(true, errors.Is(err, fs.ErrNotExist))
+		info, err := w2.Workspace.FS.Stat("a.txt")
+		assert.NoError(err)
+		assert.Equal(false, info.IsDir())
+
+		// A second merge from w2 must not treat the skipped link as a
+		// local delete. Otherwise w2 would commit a DELETE entry and the
+		// link would silently disappear from the repository for everyone.
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.ErrorIs(err, ErrUpToDate)
+	})
+
+	t.Run("path prefix workspace replacing an outside-prefix symlink commits an update", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("outside.txt", "x")
+		w.Write("look/here/a.txt", "a")
+		w.Symlink("../../outside.txt", "look/here/link")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		w2 := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// The link was silently skipped on restore. Now create a regular
+		// file at the same path. The commit must record this as UPDATE,
+		// not ADD, because the path already exists in the previous
+		// revision (even though w2 couldn't see the original target).
+		w2.Write("link", "newfile")
+		rev, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"look/here/link", lib.RevisionEntryKindUpdate, 0o600, td.SHA256("newfile")},
+		}, r.RevisionInfos(rev))
+	})
+
+	t.Run("local symlink overwritten by file and directory", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("target_file", "tf")
+		w.Write("target_dir/inner.txt", "td")
+		w.Symlink("target_file", "linkf")
+		w.Symlink("target_dir", "linkd")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal("target_file", w2.ReadLink("linkf"))
+		assert.Equal("target_dir", w2.ReadLink("linkd"))
+
+		w.Rm("linkf")
+		w.Write("linkf", "now a file")
+		w.Rm("linkd")
+		w.Write("linkd/inside.txt", "inside")
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		linkfInfo, err := w2.Workspace.FS.Stat("linkf")
+		assert.NoError(err)
+		assert.Equal(false, linkfInfo.Mode()&fs.ModeSymlink != 0)
+		assert.Equal(false, linkfInfo.IsDir())
+		assert.Equal("now a file", w2.Cat("linkf"))
+
+		linkdInfo, err := w2.Workspace.FS.Stat("linkd")
+		assert.NoError(err)
+		assert.Equal(true, linkdInfo.IsDir())
+		assert.Equal("inside", w2.Cat("linkd/inside.txt"))
+	})
+
+	t.Run("local file overwritten by directory and vice versa", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("file_to_dir", "f")
+		w.Write("dir_to_file/inner.txt", "d")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		w.Rm("file_to_dir")
+		w.Write("file_to_dir/inside.txt", "now a dir")
+		w.Rm("dir_to_file")
+		w.Write("dir_to_file", "now a file")
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		info, err := w2.Workspace.FS.Stat("file_to_dir")
+		assert.NoError(err)
+		assert.Equal(true, info.IsDir())
+		assert.Equal("now a dir", w2.Cat("file_to_dir/inside.txt"))
+
+		info, err = w2.Workspace.FS.Stat("dir_to_file")
+		assert.NoError(err)
+		assert.Equal(false, info.IsDir())
+		assert.Equal("now a file", w2.Cat("dir_to_file"))
+	})
+
+	t.Run("local file and directory overwritten by symlink", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("target_file", "tf")
+		w.Write("target_dir/inner.txt", "td")
+		w.Write("realf", "f")
+		w.Write("reald/inside.txt", "d")
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		w.Rm("realf")
+		w.Symlink("target_file", "realf")
+		w.Rm("reald")
+		w.Symlink("target_dir", "reald")
+		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		assert.Equal("target_file", w2.ReadLink("realf"))
+		assert.Equal("target_dir", w2.ReadLink("reald"))
+
+		_, err = w2.Workspace.FS.Stat("reald/inside.txt")
+		assert.Equal(true, errors.Is(err, fs.ErrNotExist))
+	})
+
+	t.Run("symlink mtime is preserved across commit and restore", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		w.Symlink("a.txt", "link")
+		linkMtime := time.Unix(1_700_000_000, 123_456_789)
+		assert.NoError(w.Workspace.FS.Chmtime("link", linkMtime))
+
+		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		info, err := w2.Workspace.FS.Stat("link")
+		assert.NoError(err)
+		assert.Equal(linkMtime.UnixNano(), info.ModTime().UnixNano())
+	})
 }

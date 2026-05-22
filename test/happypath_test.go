@@ -765,6 +765,139 @@ func TestRepositoryOverHTTP(t *testing.T) {
 	}
 }
 
+func TestSymlinks(t *testing.T) {
+	t.Parallel()
+	sut := NewSut(t)
+	assert := sut.assert
+
+	t.Log("Commit a symlink and verify it is restored in another workspace")
+	{
+		sut.Write("a.txt", "a")
+		sut.Symlink("a.txt", "link")
+		sut.ClingSync("merge", "--no-progress", "--message", "first commit")
+		ls := sut.ClingSync("ls", "--short-file-mode")
+		assert.Contains(ls, "link")
+		assert.Contains(ls, "a.txt")
+	}
+
+	t.Log("Attach a second workspace and verify the symlink is materialised")
+	{
+		sut.ClingSyncStdin(
+			passphrase,
+			"--passphrase-from-stdin",
+			"attach",
+			"../repository",
+			"../workspace2",
+		)
+		sut.Chdir("../workspace2")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
+		sut.ClingSync("merge", "--no-progress")
+		linkPath := filepath.Join(sut.workDir, "link")
+		target, err := os.Readlink(linkPath)
+		assert.NoError(err, "readlink %s", linkPath)
+		assert.Equal("a.txt", target)
+	}
+
+	t.Log("Repoint the symlink and verify the new target propagates")
+	{
+		sut.Chdir("../workspace")
+		sut.Write("b.txt", "b")
+		sut.Rm("link")
+		sut.Symlink("b.txt", "link")
+		sut.ClingSync("merge", "--no-progress", "--message", "repoint link")
+		sut.Chdir("../workspace2")
+		sut.ClingSync("merge", "--no-progress")
+		target, err := os.Readlink(filepath.Join(sut.workDir, "link"))
+		assert.NoError(err)
+		assert.Equal("b.txt", target)
+	}
+
+	t.Log("Symlink pointing outside the workspace is rejected at commit time")
+	{
+		sut.Chdir("../workspace")
+		sut.Symlink("../escape", "bad-link")
+		stderr := sut.ClingSyncError("merge", "--no-progress", "--message", "bad link")
+		assert.Contains(stderr, "symlink target escapes path root")
+		sut.Rm("bad-link")
+	}
+
+	t.Log("File, directory, and symlink can transition into each other within a single revision")
+	{
+		sut.Chdir("../workspace")
+		sut.Write("transitions/target.txt", "T")
+		sut.Write("transitions/f_to_d", "fd")
+		sut.Write("transitions/d_to_f/inner.txt", "df")
+		sut.Write("transitions/f_to_l", "fl")
+		sut.Symlink("target.txt", "transitions/l_to_f")
+		sut.Write("transitions/d_to_l/inner.txt", "dl")
+		sut.Symlink("target.txt", "transitions/l_to_d")
+		sut.ClingSync("merge", "--no-progress", "--message", "set up transitions")
+
+		sut.Rm("transitions/f_to_d")
+		sut.Write("transitions/f_to_d/inside.txt", "now a dir")
+		sut.Rm("transitions/d_to_f")
+		sut.Write("transitions/d_to_f", "now a file")
+		sut.Rm("transitions/f_to_l")
+		sut.Symlink("target.txt", "transitions/f_to_l")
+		sut.Rm("transitions/l_to_f")
+		sut.Write("transitions/l_to_f", "now a file")
+		sut.Rm("transitions/d_to_l")
+		sut.Symlink("target.txt", "transitions/d_to_l")
+		sut.Rm("transitions/l_to_d")
+		sut.Write("transitions/l_to_d/inside.txt", "now a dir")
+		sut.ClingSync("merge", "--no-progress", "--message", "transition all kinds")
+
+		sut.Chdir("../workspace2")
+		sut.ClingSync("merge", "--no-progress")
+		assert.Equal(
+			td.Sort(td.Column(sut.Ls(), 4), 1),
+			td.Sort(td.Column(sut.ClingSync("ls"), 4), 1),
+			"Workspace and repository contents must match after type transitions",
+		)
+		fToL, err := os.Readlink(filepath.Join(sut.workDir, "transitions/f_to_l"))
+		assert.NoError(err)
+		assert.Equal("target.txt", fToL)
+		dToL, err := os.Readlink(filepath.Join(sut.workDir, "transitions/d_to_l"))
+		assert.NoError(err)
+		assert.Equal("target.txt", dToL)
+		assert.Equal("now a file", sut.Cat("transitions/l_to_f"))
+		assert.Equal("now a file", sut.Cat("transitions/d_to_f"))
+		assert.Equal("now a dir", sut.Cat("transitions/f_to_d/inside.txt"))
+		assert.Equal("now a dir", sut.Cat("transitions/l_to_d/inside.txt"))
+	}
+
+	t.Log("In a prefix workspace, symlinks whose target falls outside the prefix are silently skipped")
+	{
+		sut.Write("outside.txt", "x")
+		sut.Mkdir("look")
+		sut.Mkdir("look/here")
+		sut.Write("look/here/a.txt", "a")
+		sut.Symlink("../../outside.txt", "look/here/outlink")
+		sut.Symlink("a.txt", "look/here/inlink")
+		sut.ClingSync("merge", "--no-progress", "--message", "prefix-aware symlinks")
+
+		sut.ClingSyncStdin(
+			passphrase,
+			"--passphrase-from-stdin",
+			"attach",
+			"--path-prefix",
+			"look/here/",
+			"../repository",
+			"../workspace3",
+		)
+		sut.Chdir("../workspace3")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
+		sut.ClingSync("merge", "--no-progress")
+
+		inTarget, err := os.Readlink(filepath.Join(sut.workDir, "inlink"))
+		assert.NoError(err)
+		assert.Equal("a.txt", inTarget)
+
+		_, statErr := os.Lstat(filepath.Join(sut.workDir, "outlink"))
+		assert.Equal(true, os.IsNotExist(statErr), "outlink should be absent in the prefix workspace")
+	}
+}
+
 type Sut struct {
 	*lib.TestFS
 	t            *testing.T

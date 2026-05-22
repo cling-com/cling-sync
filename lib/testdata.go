@@ -353,6 +353,23 @@ func (f *TestFS) Touch(path string, mtime time.Time) {
 	f.assert.NoError(err)
 }
 
+func (f *TestFS) Symlink(target string, name string) {
+	f.t.Helper()
+	dir := filepath.Dir(name)
+	if dir != "." {
+		f.MkdirAll(dir)
+	}
+	err := f.FS.Symlink(target, name)
+	f.assert.NoError(err)
+}
+
+func (f *TestFS) ReadLink(name string) string {
+	f.t.Helper()
+	target, err := f.FS.ReadLink(name)
+	f.assert.NoError(err)
+	return target
+}
+
 func (f *TestFS) Stat(path string) fs.FileInfo {
 	f.t.Helper()
 	stat, err := f.FS.Stat(path)

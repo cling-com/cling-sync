@@ -865,6 +865,216 @@ func checkConsistency(t *testing.T, newSut func() FS) {
 		_, err = sut.Stat("lock")
 		assert.NoError(err)
 	})
+
+	t.Run("Symlink and ReadLink round-trip", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		assert.NoError(sut.Symlink("a.txt", "link"))
+
+		target, err := sut.ReadLink("link")
+		assert.NoError(err)
+		assert.Equal("a.txt", target)
+	})
+
+	t.Run("Symlink at existing path errors", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		err := sut.Symlink("other.txt", "a.txt")
+		assert.ErrorIs(err, fs.ErrExist)
+	})
+
+	t.Run("ReadLink on a non-symlink errors", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		_, err := sut.ReadLink("a.txt")
+		assert.Error(err, "")
+	})
+
+	t.Run("ReadLink on a missing path errors", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		_, err := sut.ReadLink("missing")
+		assert.ErrorIs(err, fs.ErrNotExist)
+	})
+
+	t.Run("Stat on a symlink does not follow", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		assert.NoError(sut.Symlink("a.txt", "link"))
+
+		info, err := sut.Stat("link")
+		assert.NoError(err)
+		assert.Equal(true, info.Mode()&fs.ModeSymlink != 0)
+		assert.Equal(int64(len("a.txt")), info.Size())
+	})
+
+	t.Run("Stat on a symlink with missing target still succeeds", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		assert.NoError(sut.Symlink("does-not-exist", "link"))
+		info, err := sut.Stat("link")
+		assert.NoError(err)
+		assert.Equal(true, info.Mode()&fs.ModeSymlink != 0)
+	})
+
+	t.Run("OpenRead on a symlink refuses to follow", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		assert.NoError(sut.Symlink("a.txt", "link"))
+
+		_, err := sut.OpenRead("link")
+		assert.ErrorIs(err, ErrIsSymlink)
+	})
+
+	t.Run("OpenWrite on a symlink refuses to follow", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		assert.NoError(sut.Symlink("a.txt", "link"))
+
+		_, err := sut.OpenWrite("link")
+		assert.ErrorIs(err, ErrIsSymlink)
+		assert.Equal("abcd", readFile(t, sut, "a.txt"))
+	})
+
+	t.Run("OpenWriteExcl on a symlink refuses to follow", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		assert.NoError(sut.Symlink("a.txt", "link"))
+
+		_, err := sut.OpenWriteExcl("link")
+		assert.ErrorIs(err, ErrIsSymlink)
+	})
+
+	t.Run("Chmod on a symlink refuses to follow", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		assert.NoError(sut.Chmod("a.txt", 0o644))
+		assert.NoError(sut.Symlink("a.txt", "link"))
+
+		err := sut.Chmod("link", 0o600)
+		assert.ErrorIs(err, ErrIsSymlink)
+
+		info, err := sut.Stat("a.txt")
+		assert.NoError(err)
+		assert.Equal(fs.FileMode(0o644), info.Mode().Perm())
+	})
+
+	t.Run("Chmtime on a symlink sets the link's own mtime, not the target's", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		targetMtime := time.Unix(500_000, 0)
+		assert.NoError(sut.Chmtime("a.txt", targetMtime))
+		assert.NoError(sut.Symlink("a.txt", "link"))
+
+		linkMtime := time.Unix(1_000_000, 0)
+		assert.NoError(sut.Chmtime("link", linkMtime))
+
+		linkInfo, err := sut.Stat("link")
+		assert.NoError(err)
+		assert.Equal(linkMtime.Unix(), linkInfo.ModTime().Unix())
+
+		targetInfo, err := sut.Stat("a.txt")
+		assert.NoError(err)
+		assert.Equal(targetMtime.Unix(), targetInfo.ModTime().Unix())
+	})
+
+	t.Run("Stat on a symlink reports the link's own mtime", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		assert.NoError(sut.Chmtime("a.txt", time.Unix(500_000, 0)))
+		assert.NoError(sut.Symlink("a.txt", "link"))
+		assert.NoError(sut.Chmtime("link", time.Unix(1_000_000, 0)))
+
+		linkInfo, err := sut.Stat("link")
+		assert.NoError(err)
+		assert.Equal(int64(1_000_000), linkInfo.ModTime().Unix())
+	})
+
+	t.Run("Chown on a symlink refuses to follow", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		assert.NoError(sut.Symlink("a.txt", "link"))
+
+		err := sut.Chown("link", os.Getuid(), os.Getgid()) //nolint:forbidigo
+		assert.ErrorIs(err, ErrIsSymlink)
+	})
+
+	t.Run("Remove on a symlink removes the link only", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		assert.NoError(sut.Symlink("a.txt", "link"))
+
+		assert.NoError(sut.Remove("link"))
+
+		_, err := sut.Stat("link")
+		assert.ErrorIs(err, fs.ErrNotExist)
+		assert.Equal("abcd", readFile(t, sut, "a.txt"))
+	})
+
+	t.Run("WalkDir surfaces a symlink with ModeSymlink and does not recurse", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		assert.NoError(sut.Mkdir("dir"))
+		writeFile(t, sut, "dir/file.txt", "x")
+		assert.NoError(sut.Symlink("dir", "link"))
+
+		seen := map[string]fs.FileMode{}
+		err := sut.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			seen[path] = d.Type()
+			return nil
+		})
+		assert.NoError(err)
+		linkType, ok := seen["link"]
+		assert.Equal(true, ok)
+		assert.Equal(true, linkType&fs.ModeSymlink != 0)
+		_, recursed := seen["link/file.txt"]
+		assert.Equal(false, recursed)
+	})
 }
 
 func readFile(t *testing.T, sut FS, name string) string {

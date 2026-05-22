@@ -18,6 +18,8 @@ const (
 	cacheTempDirPrefix = ".staging-tmp-"
 )
 
+var ErrSymLinkTargetEscapes = lib.Errorf("symlink target escapes path root")
+
 type StagingEntryMonitor interface {
 	OnStart(path lib.Path, dirEntry fs.DirEntry) error
 	OnEnd(path lib.Path, excluded bool, metadata *lib.PathMetadata) error
@@ -50,7 +52,7 @@ func NewStaging( //nolint:funlen
 	}
 	defer cache.Cleanup() //nolint:errcheck
 	staging := &Staging{pathFilter, pathPrefix, revisionEntryWriter, nil, tmp}
-	err = lib.WalkDirIgnore(src, ".", func(path_ string, d fs.DirEntry, err error) error {
+	err = lib.WalkDirIgnore(src, ".", func(path_ string, d fs.DirEntry, err error) (retErr error) {
 		if err != nil {
 			return err
 		}
@@ -72,43 +74,67 @@ func NewStaging( //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get file info for %s", localPath)
 		}
-		if !d.Type().IsRegular() && !d.Type().IsDir() {
-			// todo: handle symlinks
+		isSymlink := d.Type()&fs.ModeSymlink != 0
+		if !d.Type().IsRegular() && !d.Type().IsDir() && !isSymlink {
+			// This filetype is not supported - we ignore it silently.
 			return nil
 		}
 		if err := mon.OnStart(localPath, d); err != nil {
 			return lib.WrapErrorf(err, "staging monitor start failed for %s", localPath)
 		}
-		// Even though files are filtered out in Staging.Add, we still
-		// want to eagerly exclude them to avoid unnecessary work (file hash).
-		// Especially, we want to skip directories if they are excluded.
-		if pathFilter != nil && !pathFilter.Include(localPath, d.IsDir()) {
-			if err := mon.OnEnd(localPath, true, nil); err != nil {
-				return lib.WrapErrorf(err, "staging monitor end failed for %s", localPath)
+		// From here on, `OnEnd` runs unconditionally. If both the staging work
+		// and `OnEnd` error, the `OnEnd` error wins (more recent failure).
+		var excluded bool
+		var entryMD *lib.PathMetadata
+		defer func() {
+			if endErr := mon.OnEnd(localPath, excluded, entryMD); endErr != nil {
+				retErr = lib.WrapErrorf(endErr, "staging monitor end failed for %s", localPath)
 			}
+		}()
+		// Eager exclusion so we don't hash excluded files or recurse into
+		// excluded directories.
+		if pathFilter != nil && !pathFilter.Include(localPath, d.IsDir()) {
+			excluded = true
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		repoPath := pathPrefix.Join(localPath)
-		stagingEntry, err := cache.Handle(localPath, repoPath, fileInfo)
-		if err != nil {
-			// todo: We should report the error to the monitor.
-			if endErr := mon.OnEnd(localPath, false, nil); endErr != nil {
-				return lib.WrapErrorf(endErr, "staging monitor end failed for %s", localPath)
+		var entry *StagingEntry
+		if isSymlink {
+			target, err := src.ReadLink(localPath.String())
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to read symlink target for %s", localPath)
 			}
-			return lib.WrapErrorf(err, "failed to get metadata for %s", localPath)
-		}
-		if err := staging.add(stagingEntry); err != nil {
-			// todo: We should report the error to the monitor.
-			if endErr := mon.OnEnd(localPath, false, &stagingEntry.Metadata); endErr != nil {
-				return lib.WrapErrorf(endErr, "staging monitor end failed for %s", localPath)
+			if filepath.IsAbs(target) {
+				return lib.WrapErrorf(ErrSymLinkTargetEscapes, "absolute target %q at %s", target, localPath)
 			}
-			return lib.WrapErrorf(err, "failed to add path %s to staging (as %s)", localPath, repoPath)
+			joined := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(localPath.String()), target)))
+			resolved, err := lib.NewPath(joined)
+			if err != nil {
+				return lib.WrapErrorf(
+					ErrSymLinkTargetEscapes,
+					"target %q at %s escapes workspace root",
+					target,
+					localPath,
+				)
+			}
+			repoTarget := pathPrefix.Join(resolved)
+			entry, err = NewStagingEntry(repoPath, fileInfo, fileInfo.Size(), lib.Sha256{}, nil)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to build staging entry for %s", localPath)
+			}
+			entry.Metadata.SymLinkTarget = &repoTarget
+		} else {
+			entry, err = cache.Handle(localPath, repoPath, fileInfo)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to stage %s", localPath)
+			}
 		}
-		if err := mon.OnEnd(localPath, false, &stagingEntry.Metadata); err != nil {
-			return lib.WrapErrorf(err, "staging monitor end failed for %s", localPath)
+		entryMD = &entry.Metadata
+		if err := staging.add(entry); err != nil {
+			return lib.WrapErrorf(err, "failed to add %s to staging (as %s)", localPath, repoPath)
 		}
 		return nil
 	})
@@ -176,6 +202,13 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	var stg *StagingEntry
 	var rev *lib.RevisionEntry
 	buf := lib.NewBlockBuf()
+	symlinkPointsOutsideWorkspacePrefix := func(e *lib.RevisionEntry) bool {
+		if e == nil || !e.Metadata.FileMode.IsSymlink() || e.Metadata.SymLinkTarget == nil {
+			return false
+		}
+		_, inside := e.Metadata.SymLinkTarget.TrimBase(s.pathPrefix)
+		return !inside
+	}
 	for {
 		if stg == nil {
 			// Read the next staging entry.
@@ -183,8 +216,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			if errors.Is(err, io.EOF) {
 				// Write a delete for all remaining revision snapshot entries.
 				for {
-					if rev != nil { // The current one might be nil.
-						// Write a delete.
+					if rev != nil && !symlinkPointsOutsideWorkspacePrefix(rev) {
 						if err := add(rev.Path, lib.RevisionEntryKindDelete, rev.Metadata); err != nil {
 							return nil, err
 						}
@@ -249,9 +281,10 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			stg = nil
 			continue
 		} else {
-			// Write a delete.
-			if err := add(rev.Path, lib.RevisionEntryKindDelete, rev.Metadata); err != nil {
-				return nil, err
+			if !symlinkPointsOutsideWorkspacePrefix(rev) {
+				if err := add(rev.Path, lib.RevisionEntryKindDelete, rev.Metadata); err != nil {
+					return nil, err
+				}
 			}
 			rev = nil
 			continue

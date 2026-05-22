@@ -280,23 +280,6 @@ func (m *Merger) commitLocalChanges( //nolint:funlen
 				entry.Metadata.FileHash,
 			)
 		}
-		if !stat.IsDir() && md.Size != stat.Size() {
-			// Just a sanity check that we are committing the correct file size.
-			return lib.RevisionId{}, lib.Errorf(
-				"sanity check of file-size failed for %s (size: %d vs %d)",
-				localPath,
-				md.Size,
-				stat.Size(),
-			)
-		}
-		if stat.IsDir() && md.Size != 0 {
-			// Just a sanity check that we are committing the correct directory size (which is always 0).
-			return lib.RevisionId{}, lib.Errorf(
-				"sanity check of directory-size failed for %s (size: %d)",
-				localPath,
-				md.Size,
-			)
-		}
 		entry.Metadata = md
 		if err := commit.Add(entry); err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add revision entry to commit")
@@ -464,8 +447,12 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		if remoteEntry.Path == m.ws.PathPrefix {
 			continue
 		}
+		if remoteEntry.Kind != lib.RevisionEntryKindAdd && remoteEntry.Kind != lib.RevisionEntryKindUpdate {
+			return lib.Errorf("unexpected revision entry type %s for %s", remoteEntry.Kind, remoteEntry.Path)
+		}
 		localPath, _ := remoteEntry.Path.TrimBase(m.ws.PathPrefix)
-		if err := m.makeDirsWritable(localPath.String()); err != nil {
+		targetPath := localPath.String()
+		if err := m.makeDirsWritable(targetPath); err != nil {
 			return lib.WrapErrorf(err, "failed to make directories writable for %s", remoteEntry.Path)
 		}
 		stagingEntry, existsInStaging, err := staging.Get(lib.RevisionEntryPathCompareString(remoteEntry))
@@ -479,53 +466,98 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		if isLocalChange {
 			continue
 		}
-		// Make sure parent directories are writable.
-		targetPath := localPath.String()
-		if remoteEntry.Kind != lib.RevisionEntryKindAdd && remoteEntry.Kind != lib.RevisionEntryKindUpdate {
-			return lib.Errorf("unexpected revision entry type %s for %s", remoteEntry.Kind, targetPath)
+		md := remoteEntry.Metadata
+		removed, err := removeLocalIfTypeMismatch(m.ws.FS, targetPath, md.FileMode)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to clear type-mismatched %s", targetPath)
 		}
-		restoreMode := m.opts.RestorableMetadataFlag
-		if !existsInStaging {
-			// We restore mode and mtime for newly created directories.
-			restoreMode |= lib.RestorableMetadataMode | lib.RestorableMetadataMTime
+		if removed {
+			existsInStaging = false
+			stagingEntry = nil
 		}
-		// Write the file if it is different or does not exist.
-		if remoteEntry.Metadata.FileMode.IsDir() {
+		switch {
+		case md.FileMode.IsSymlink():
+			if md.SymLinkTarget == nil {
+				return lib.Errorf("symlink %s has no target", remoteEntry.Path)
+			}
+			localTargetPath, inside := md.SymLinkTarget.TrimBase(m.ws.PathPrefix)
+			if !inside {
+				// Target falls outside `PathPrefix` - silently skip (see README).
+				continue
+			}
+			sameAsStaging := existsInStaging &&
+				stagingEntry.Metadata.FileMode.IsSymlink() &&
+				stagingEntry.Metadata.SymLinkTarget != nil &&
+				*stagingEntry.Metadata.SymLinkTarget == *md.SymLinkTarget
+			if !sameAsStaging {
+				if err := m.ws.FS.MkdirAll(filepath.Dir(targetPath)); err != nil {
+					return lib.WrapErrorf(err, "failed to create parent directory for %s", targetPath)
+				}
+				if existsInStaging {
+					if err := m.ws.FS.Remove(targetPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+						return lib.WrapErrorf(err, "failed to remove existing %s", targetPath)
+					}
+				}
+				linkStr, err := filepath.Rel(filepath.Dir(localPath.String()), localTargetPath.String())
+				if err != nil {
+					return lib.WrapErrorf(err, "failed to compute symlink string for %s", targetPath)
+				}
+				if err := m.ws.FS.Symlink(filepath.ToSlash(linkStr), targetPath); err != nil {
+					return lib.WrapErrorf(err, "failed to create symlink %s", targetPath)
+				}
+			}
+		case md.FileMode.IsDir():
 			if !existsInStaging {
 				if err := m.ws.FS.Mkdir(targetPath); err != nil {
 					return lib.WrapErrorf(err, "failed to create directory %s", targetPath)
 				}
 			}
-			// Only update metadata.
-			if err := restoreFileMode(m.ws.FS, targetPath, &remoteEntry.Metadata, restoreMode); err != nil {
-				return lib.WrapErrorf(
-					err,
-					"failed to restore file mode %s for %s",
-					remoteEntry.Metadata.FileMode,
-					targetPath,
-				)
-			}
-			continue
-		}
-		// todo: we should check whether the file has been modified since merging has been started.
-		//       or if it is new
-		if !existsInStaging || remoteEntry.Metadata.FileHash != stagingEntry.Metadata.FileHash ||
-			remoteEntry.Metadata.Size != stagingEntry.Metadata.Size {
-			// Write the file.
-			if err := m.restoreFromRepository(remoteEntry, m.opts.CpMonitor, targetPath); err != nil {
-				return lib.WrapErrorf(err, "failed to restore %s", targetPath)
+		default:
+			// todo: check whether the file was modified since merging started.
+			if !existsInStaging || md.FileHash != stagingEntry.Metadata.FileHash ||
+				md.Size != stagingEntry.Metadata.Size {
+				if err := m.restoreFromRepository(remoteEntry, m.opts.CpMonitor, targetPath); err != nil {
+					return lib.WrapErrorf(err, "failed to restore %s", targetPath)
+				}
 			}
 		}
-		if err := restoreFileMode(m.ws.FS, targetPath, &remoteEntry.Metadata, restoreMode); err != nil {
-			return lib.WrapErrorf(
-				err,
-				"failed to restore file mode %s for %s",
-				remoteEntry.Metadata.FileMode,
-				targetPath,
-			)
+		restoreMode := m.opts.RestorableMetadataFlag
+		if !existsInStaging {
+			// Newly created entries also need mode and mtime restored.
+			restoreMode |= lib.RestorableMetadataMode | lib.RestorableMetadataMTime
+		}
+		if err := restoreFileMode(m.ws.FS, targetPath, &md, restoreMode); err != nil {
+			return lib.WrapErrorf(err, "failed to restore file mode %s for %s", md.FileMode, targetPath)
 		}
 	}
 	return nil
+}
+
+// If the entry at `target` is a different kind (file vs dir vs symlink)
+// than `remoteMode`, remove it so the caller can recreate it cleanly.
+// `removed` reports whether the removal happened.
+func removeLocalIfTypeMismatch(targetFS lib.FS, target string, remoteMode lib.FileMode) (removed bool, err error) {
+	info, statErr := targetFS.Stat(target)
+	if errors.Is(statErr, fs.ErrNotExist) {
+		return false, nil
+	}
+	if statErr != nil {
+		return false, lib.WrapErrorf(statErr, "failed to stat %s", target)
+	}
+	localMode := lib.NewFileMode(info.Mode())
+	if localMode.IsDir() == remoteMode.IsDir() && localMode.IsSymlink() == remoteMode.IsSymlink() {
+		return false, nil
+	}
+	if localMode.IsDir() {
+		if err := targetFS.RemoveAll(target); err != nil {
+			return false, lib.WrapErrorf(err, "failed to remove %s", target)
+		}
+	} else {
+		if err := targetFS.Remove(target); err != nil {
+			return false, lib.WrapErrorf(err, "failed to remove %s", target)
+		}
+	}
+	return true, nil
 }
 
 // Delete all files in the workspace that are not in the repository and are not local changes.
@@ -550,8 +582,7 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get file info for %s", path)
 		}
-		if !d.Type().IsRegular() && !d.Type().IsDir() {
-			// todo: handle symlinks
+		if !d.Type().IsRegular() && !d.Type().IsDir() && d.Type()&fs.ModeSymlink == 0 {
 			return nil
 		}
 		repositoryPath_, err := lib.NewPath(path)
@@ -567,8 +598,9 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from local changes cache for %s", path)
 		}
+		isSymlink := d.Type()&fs.ModeSymlink != 0
 		if existsInStaging && existsInLocalChanges {
-			if !d.IsDir() &&
+			if !d.IsDir() && !isSymlink &&
 				(stagingEntry.Metadata.MTime() != fileInfo.ModTime() || stagingEntry.Metadata.Size != fileInfo.Size()) {
 				return lib.Errorf(
 					"metadata of file %s was modified during merge (before: mtime=%s size=%d after: mtime=%s size=%d)- aborting merge",
@@ -586,7 +618,7 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 			return lib.WrapErrorf(err, "failed to get entry from repository snapshot cache for %s", path)
 		}
 		if existsInRemote {
-			if d.IsDir() {
+			if d.IsDir() || isSymlink {
 				return nil
 			}
 			if remoteEntry.Metadata.Size != fileInfo.Size() {
@@ -737,7 +769,7 @@ func (m *Merger) restoreFromRepository(entry *lib.RevisionEntry, mon CpMonitor, 
 
 // Add the file contents to the repository and return the file metadata.
 func AddFileToRepository(
-	fs lib.FS,
+	srcFS lib.FS,
 	path lib.Path,
 	fileInfo fs.FileInfo,
 	repository *lib.Repository,
@@ -747,12 +779,17 @@ func AddFileToRepository(
 	if fileInfo.IsDir() {
 		return lib.NewPathMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil), nil
 	}
+	if fileInfo.Mode()&fs.ModeSymlink != 0 {
+		md := lib.NewPathMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil)
+		md.SymLinkTarget = entry.Metadata.SymLinkTarget
+		return md, nil
+	}
 	// Fast path: If the entry already has BlockIds and the size of the file did
 	// not change, only calculate the hash.
 	// If the hash is the same, we can skip the whole block calculation.
 	if entry != nil && len(entry.Metadata.BlockIds) > 0 &&
 		entry.Metadata.Size == fileInfo.Size() {
-		md, err := computeFileHash(fs, path, fileInfo)
+		md, err := computeFileHash(srcFS, path, fileInfo)
 		if err != nil {
 			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to create file metadata")
 		}
@@ -761,10 +798,9 @@ func AddFileToRepository(
 			return md, nil
 		}
 	}
-	// todo: what about symlinks
 	blockIds := []lib.BlockId{}
 	fileHash := sha256.New()
-	f, err := fs.OpenRead(path.String())
+	f, err := srcFS.OpenRead(path.String())
 	if err != nil {
 		return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
 	}

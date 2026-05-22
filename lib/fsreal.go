@@ -10,7 +10,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type RealFS struct {
@@ -22,11 +25,34 @@ func NewRealFS(basePath string) *RealFS {
 }
 
 func (f *RealFS) OpenWrite(name string) (io.WriteCloser, error) {
-	return os.OpenFile(filepath.Join(f.BasePath, name), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	file, err := os.OpenFile(
+		filepath.Join(f.BasePath, name),
+		os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW,
+		0o600,
+	)
+	if err != nil {
+		return nil, translateErrIsSymlink("open", name, err)
+	}
+	return file, nil
 }
 
 func (f *RealFS) OpenWriteExcl(name string) (io.WriteCloser, error) {
-	return os.OpenFile(filepath.Join(f.BasePath, name), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	// macOS reports `EEXIST` before `ELOOP` when both `O_EXCL` and a symlink
+	// would trigger. Check ourselves first so both platforms surface
+	// `ErrIsSymlink`.
+	info, err := os.Lstat(filepath.Join(f.BasePath, name))
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: ErrIsSymlink}
+	}
+	file, err := os.OpenFile(
+		filepath.Join(f.BasePath, name),
+		os.O_CREATE|os.O_WRONLY|os.O_EXCL|syscall.O_NOFOLLOW,
+		0o600,
+	)
+	if err != nil {
+		return nil, translateErrIsSymlink("open", name, err)
+	}
+	return file, nil
 }
 
 func (f *RealFS) FSync(file io.WriteCloser) error {
@@ -51,23 +77,45 @@ func (f *RealFS) FSyncDir(path string) error {
 }
 
 func (f *RealFS) OpenRead(name string) (io.ReadCloser, error) {
-	return os.Open(filepath.Join(f.BasePath, name))
+	file, err := os.OpenFile(filepath.Join(f.BasePath, name), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, translateErrIsSymlink("open", name, err)
+	}
+	return file, nil
 }
 
 func (f *RealFS) Chmod(name string, mode fs.FileMode) error {
+	if err := f.refuseSymlink("chmod", name); err != nil {
+		return err
+	}
 	return os.Chmod(filepath.Join(f.BasePath, name), mode)
 }
 
 func (f *RealFS) Chmtime(name string, mtime time.Time) error {
-	return os.Chtimes(filepath.Join(f.BasePath, name), time.Time{}, mtime)
+	ts := []unix.Timespec{
+		unix.NsecToTimespec(mtime.UnixNano()),
+		unix.NsecToTimespec(mtime.UnixNano()),
+	}
+	return unix.UtimesNanoAt(unix.AT_FDCWD, filepath.Join(f.BasePath, name), ts, unix.AT_SYMLINK_NOFOLLOW)
 }
 
 func (f *RealFS) Chown(name string, uid int, gid int) error {
+	if err := f.refuseSymlink("chown", name); err != nil {
+		return err
+	}
 	return os.Chown(filepath.Join(f.BasePath, name), uid, gid)
 }
 
 func (f *RealFS) Stat(name string) (fs.FileInfo, error) {
-	return os.Stat(filepath.Join(f.BasePath, name))
+	return os.Lstat(filepath.Join(f.BasePath, name))
+}
+
+func (f *RealFS) Symlink(target string, name string) error {
+	return os.Symlink(target, filepath.Join(f.BasePath, name))
+}
+
+func (f *RealFS) ReadLink(name string) (string, error) {
+	return os.Readlink(filepath.Join(f.BasePath, name))
 }
 
 func (f *RealFS) ReadDir(name string) ([]fs.DirEntry, error) {
@@ -135,4 +183,22 @@ func (f *RealFS) Lock(ctx context.Context, path string) (unlock func() error, er
 		return nil, err
 	}
 	return lock.Unlock, nil
+}
+
+func translateErrIsSymlink(op, name string, err error) error {
+	if errors.Is(err, syscall.ELOOP) {
+		return &fs.PathError{Op: op, Path: name, Err: ErrIsSymlink}
+	}
+	return err
+}
+
+func (f *RealFS) refuseSymlink(op, name string) error {
+	info, err := os.Lstat(filepath.Join(f.BasePath, name))
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return &fs.PathError{Op: op, Path: name, Err: ErrIsSymlink}
+	}
+	return nil
 }

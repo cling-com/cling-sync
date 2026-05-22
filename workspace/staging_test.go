@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"errors"
+	"io"
 	"io/fs"
 	"testing"
 
@@ -169,6 +171,114 @@ func TestStaging(t *testing.T) {
 	})
 }
 
+func TestStagingSymlinks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("symlink in same dir", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("a.txt", "a")
+		w.Symlink("a.txt", "link")
+
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
+		assert.NoError(err)
+		finalized, err := staging.Finalize()
+		assert.NoError(err)
+
+		entries := readAllStagingEntries(t, finalized)
+		assert.Equal(2, len(entries))
+		assert.Equal("a.txt", entries[0].RepoPath.String())
+		assert.Equal("link", entries[1].RepoPath.String())
+		assert.Equal(true, entries[1].Metadata.FileMode.IsSymlink())
+		if entries[1].Metadata.SymLinkTarget == nil {
+			t.Fatal("SymLinkTarget should be set")
+		}
+		assert.Equal("a.txt", entries[1].Metadata.SymLinkTarget.String())
+	})
+
+	t.Run("symlink to sibling dir", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("dir1/a.txt", "a")
+		w.Symlink("../dir1/a.txt", "dir2/link")
+
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
+		assert.NoError(err)
+		finalized, err := staging.Finalize()
+		assert.NoError(err)
+		entries := readAllStagingEntries(t, finalized)
+		linkEntry := findEntry(entries, "dir2/link")
+		if linkEntry == nil {
+			t.Fatal("expected staging entry for dir2/link")
+		}
+		assert.Equal(true, linkEntry.Metadata.FileMode.IsSymlink())
+		assert.Equal("dir1/a.txt", linkEntry.Metadata.SymLinkTarget.String())
+	})
+
+	t.Run("symlink with path prefix rebases target", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+		w.Write("a.txt", "a")
+		w.Symlink("a.txt", "link")
+
+		staging, err := NewStaging(w.Workspace.FS, td.Path("look/here/"), nil, false, w.TempFS, wstd.StagingMonitor())
+		assert.NoError(err)
+		finalized, err := staging.Finalize()
+		assert.NoError(err)
+		entries := readAllStagingEntries(t, finalized)
+		linkEntry := findEntry(entries, "look/here/link")
+		if linkEntry == nil {
+			t.Fatal("expected staging entry for look/here/link")
+		}
+		assert.Equal("look/here/a.txt", linkEntry.Metadata.SymLinkTarget.String())
+	})
+
+	t.Run("absolute target rejected", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		// The cleanup walker chmods every entry. On macOS that follows the
+		// link and stalls on sensitive paths. Use a clearly nonexistent
+		// absolute target so the chmod fails fast with ENOENT.
+		w.Symlink("/nonexistent_absolute_target", "bad")
+
+		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
+		assert.Equal(true, errors.Is(err, ErrSymLinkTargetEscapes))
+	})
+
+	t.Run("absolute target from a subdirectory rejected", func(t *testing.T) {
+		// `filepath.Join` absorbs leading `/` when joined with a non-"."
+		// directory, so `dir1/link → /etc/foo` would otherwise become a
+		// valid-looking `dir1/etc/foo` Path and silently mis-stored.
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Symlink("/nonexistent_absolute_target", "dir1/bad")
+
+		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
+		assert.Equal(true, errors.Is(err, ErrSymLinkTargetEscapes))
+	})
+
+	t.Run("escaping target rejected", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Symlink("../../outside", "dir1/bad")
+
+		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
+		assert.Equal(true, errors.Is(err, ErrSymLinkTargetEscapes))
+	})
+}
+
 type cancelStagingMonitor struct{}
 
 func (m *cancelStagingMonitor) OnStart(path lib.Path, dirEntry fs.DirEntry) error {
@@ -283,4 +393,31 @@ func TestStagingCache(t *testing.T) {
 			{"a.txt", 0o600, td.SHA256("bbb")},
 		}, wstd.StagingEntryInfos(finalized))
 	})
+}
+
+func readAllStagingEntries(t *testing.T, temp *lib.Temp[*StagingEntry]) []*StagingEntry {
+	t.Helper()
+	r := temp.Reader(nil)
+	buf := lib.NewBlockBuf()
+	out := []*StagingEntry{}
+	for {
+		e, err := r.Read(buf)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read staging entry: %v", err)
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+func findEntry(entries []*StagingEntry, path string) *StagingEntry {
+	for _, e := range entries {
+		if e.RepoPath.String() == path {
+			return e
+		}
+	}
+	return nil
 }

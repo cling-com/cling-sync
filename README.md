@@ -15,9 +15,10 @@ names. Every block on disk is indistinguishable from random.
 3. [Command reference](#command-reference)
 4. [Hosting a repository over HTTP](#hosting-a-repository-over-http)
 5. [Ignore files](#ignore-files)
-6. [How it works](#how-it-works)
-7. [Threat model](#threat-model)
-8. [Development](#development)
+6. [Symlinks](#symlinks)
+7. [How it works](#how-it-works)
+8. [Threat model](#threat-model)
+9. [Development](#development)
 
 ## Concepts
 
@@ -220,6 +221,25 @@ cling-sync respects `.gitignore` and `.clingignore`. The syntax is the
 > tracked files and then running `merge` marks those paths as deleted
 > in the next revision. Nothing is actually removed: the files in the
 > workspace are untouched, and earlier revisions still contain them.
+
+## Symlinks
+
+Symbolic links are tracked, but only when their target resolves to a
+path inside the workspace. The stored target is the workspace-relative
+path, prefixed by the workspace's `--path-prefix` (so the repository
+sees the same repo-relative path it sees for regular files).
+
+Constraints:
+
+- A symlink whose target is absolute or escapes the workspace root is
+  rejected at commit time (`symlink target escapes path root`).
+- The link target is restored, and the link's own `mtime` is restored
+  via `utimensat(AT_SYMLINK_NOFOLLOW)` so the target isn't touched.
+  Mode and ownership of the link are not restored.
+- In a `--path-prefix` workspace, a symlink whose stored target falls
+  outside the prefix is silently skipped on restore. The repository
+  still holds the link. Another workspace that covers both ends will
+  see and materialise it.
 
 ## How it works
 

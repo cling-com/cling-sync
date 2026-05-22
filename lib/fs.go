@@ -19,6 +19,8 @@ import (
 
 const PathSeparator = string(os.PathSeparator)
 
+var ErrIsSymlink = errors.New("path is a symlink")
+
 // A file system abstraction that only provides what is actually needed.
 //
 // About file modes:
@@ -37,6 +39,8 @@ type FS interface {
 	Chmtime(name string, mtime time.Time) error
 	Chown(name string, uid int, gid int) error
 	Stat(name string) (fs.FileInfo, error)
+	Symlink(target string, name string) error
+	ReadLink(name string) (string, error)
 	ReadDir(name string) ([]fs.DirEntry, error)
 	Mkdir(name string) error
 	MkdirAll(path string) error
@@ -103,6 +107,7 @@ type MemoryFileInfo struct {
 	modTimeSec  int64
 	modTimeNSec int32
 	content     bytes.Buffer
+	linkTarget  string
 }
 
 func (f *MemoryFileInfo) Name() string {
@@ -110,6 +115,9 @@ func (f *MemoryFileInfo) Name() string {
 }
 
 func (f *MemoryFileInfo) Size() int64 {
+	if f.mode&fs.ModeSymlink != 0 {
+		return int64(len(f.linkTarget))
+	}
 	return int64(f.content.Len())
 }
 
@@ -170,13 +178,19 @@ func NewMemoryFS(maxMemory int64) *MemoryFS {
 func (f *MemoryFS) OpenWrite(name string) (io.WriteCloser, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if file, ok := f.files[name]; ok && file.mode&fs.ModeSymlink != 0 {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: ErrIsSymlink}
+	}
 	return f.openWriteLocked(name)
 }
 
 func (f *MemoryFS) OpenWriteExcl(name string) (io.WriteCloser, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.files[name]; ok {
+	if file, ok := f.files[name]; ok {
+		if file.mode&fs.ModeSymlink != 0 {
+			return nil, &fs.PathError{Op: "open", Path: name, Err: ErrIsSymlink}
+		}
 		return nil, fs.ErrExist
 	}
 	return f.openWriteLocked(name)
@@ -197,11 +211,12 @@ func (f *MemoryFS) OpenRead(name string) (io.ReadCloser, error) {
 	if !ok {
 		return nil, fs.ErrNotExist
 	}
+	if file.mode&fs.ModeSymlink != 0 {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: ErrIsSymlink}
+	}
 	if file.mode.IsDir() {
 		return io.NopCloser(errorReader{&fs.PathError{Op: "read", Path: name, Err: syscall.EISDIR}}), nil
 	}
-	// Copy so the returned reader is a stable snapshot — concurrent writes
-	// to the file must not perturb in-flight reads.
 	src := file.content.Bytes()
 	data := make([]byte, len(src))
 	copy(data, src)
@@ -215,12 +230,16 @@ func (f *MemoryFS) Chmod(name string, mode fs.FileMode) error {
 	if !ok {
 		return fs.ErrNotExist
 	}
-	// Only update the permission bits.
+	if file.mode&fs.ModeSymlink != 0 {
+		return &fs.PathError{Op: "chmod", Path: name, Err: ErrIsSymlink}
+	}
 	file.mode &= ^fs.ModePerm
 	file.mode |= mode & fs.ModePerm
 	return nil
 }
 
+// `Chmtime` operates on the path's final component without following.
+// Setting a symlink's own mtime is allowed (matches `lutimes` semantics).
 func (f *MemoryFS) Chmtime(name string, mtime time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -240,6 +259,9 @@ func (f *MemoryFS) Chown(name string, uid int, gid int) error {
 	if !ok {
 		return fs.ErrNotExist
 	}
+	if file.mode&fs.ModeSymlink != 0 {
+		return &fs.PathError{Op: "chown", Path: name, Err: ErrIsSymlink}
+	}
 	file.uid = uint32(uid) //nolint:gosec
 	file.gid = uint32(gid) //nolint:gosec
 	return nil
@@ -256,6 +278,30 @@ func (f *MemoryFS) Stat(name string) (fs.FileInfo, error) {
 	// not race with the caller's reads.
 	snapshot := *file
 	return &snapshot, nil
+}
+
+func (f *MemoryFS) Symlink(target string, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.files[name]; ok {
+		return fs.ErrExist
+	}
+	file := f.create(name, 0o777|fs.ModeSymlink)
+	file.linkTarget = target
+	return nil
+}
+
+func (f *MemoryFS) ReadLink(name string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	file, ok := f.files[name]
+	if !ok {
+		return "", fs.ErrNotExist
+	}
+	if file.mode&fs.ModeSymlink == 0 {
+		return "", fs.ErrInvalid
+	}
+	return file.linkTarget, nil
 }
 
 func (f *MemoryFS) ReadDir(path string) ([]fs.DirEntry, error) {
@@ -537,6 +583,14 @@ func (f *subMemoryFS) Stat(name string) (fs.FileInfo, error) {
 	return f.parent.Stat(filepath.Join(f.path, name))
 }
 
+func (f *subMemoryFS) Symlink(target string, name string) error {
+	return f.parent.Symlink(target, filepath.Join(f.path, name))
+}
+
+func (f *subMemoryFS) ReadLink(name string) (string, error) {
+	return f.parent.ReadLink(filepath.Join(f.path, name))
+}
+
 func (f *subMemoryFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	return f.parent.ReadDir(filepath.Join(f.path, name))
 }
@@ -707,14 +761,13 @@ func AtomicWriteFile(fs FS, name string, perm fs.FileMode, data ...[]byte) error
 
 func (f *MemoryFS) create(path string, mode fs.FileMode) *MemoryFileInfo {
 	mtime := time.Now()
-	file := &MemoryFileInfo{
-		path,
-		mode,
-		1000,
-		1001,
-		mtime.Unix(),
-		int32(mtime.Nanosecond()), //nolint:gosec
-		bytes.Buffer{},
+	file := &MemoryFileInfo{ //nolint:exhaustruct
+		name:        path,
+		mode:        mode,
+		gid:         1000,
+		uid:         1001,
+		modTimeSec:  mtime.Unix(),
+		modTimeNSec: int32(mtime.Nanosecond()), //nolint:gosec
 	}
 	f.files[path] = file
 	return file

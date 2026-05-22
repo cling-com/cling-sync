@@ -63,6 +63,7 @@ func CheckHealth(repository *Repository, tempFS FS, opts HealthCheckOptions) err
 	return nil
 }
 
+//nolint:funlen
 func walkRevisions(repository *Repository, monitor HealthCheckMonitor, seen *TempWriter[BlockId]) error {
 	revisionId, err := repository.Head()
 	if err != nil {
@@ -103,6 +104,14 @@ func walkRevisions(repository *Repository, monitor HealthCheckMonitor, seen *Tem
 			if lastEntry != nil && RevisionEntryPathCompare(lastEntry, entry) >= 0 {
 				return Errorf("paths of revision %s are not strictly sorted at position %d: %s >= %s",
 					revisionId, entryCount, lastEntry.Path, entry.Path)
+			}
+			if entry.Metadata.FileMode.IsSymlink() && entry.Metadata.SymLinkTarget == nil {
+				return Errorf("entry %s in revision %s is a symlink but has no SymLinkTarget",
+					entry.Path, revisionId)
+			}
+			if !entry.Metadata.FileMode.IsSymlink() && entry.Metadata.SymLinkTarget != nil {
+				return Errorf("entry %s in revision %s has SymLinkTarget but is not a symlink",
+					entry.Path, revisionId)
 			}
 			monitor.OnRevisionEntry(entry)
 			if seen != nil {

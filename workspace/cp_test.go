@@ -99,6 +99,61 @@ func TestCp(t *testing.T) {
 		}, out.Ls("."))
 	})
 
+	t.Run("Overwrite of mismatched kinds (file, dir, symlink)", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("target.txt", "T")
+		w.Write("becomes_file", "f")
+		w.Write("becomes_dir/inner.txt", "d")
+		w.Symlink("target.txt", "becomes_symlink")
+		revId, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		out := td.NewTestFS(t, td.NewFS(t))
+		out.Write("becomes_file/oldcontent.txt", "old")
+		out.Write("becomes_dir", "old file content")
+		out.Write("becomes_symlink/oldinside.txt", "old")
+
+		opts := wstd.CpOptions(revId)
+		opts.Monitor = wstd.CpMonitorOverwrite()
+		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
+		assert.NoError(err)
+
+		fileInfo, err := out.FS.Stat("becomes_file")
+		assert.NoError(err)
+		assert.Equal(false, fileInfo.IsDir())
+		assert.Equal("f", out.Cat("becomes_file"))
+
+		dirInfo, err := out.FS.Stat("becomes_dir")
+		assert.NoError(err)
+		assert.Equal(true, dirInfo.IsDir())
+		assert.Equal("d", out.Cat("becomes_dir/inner.txt"))
+
+		linkTarget, err := out.FS.ReadLink("becomes_symlink")
+		assert.NoError(err)
+		assert.Equal("target.txt", linkTarget)
+	})
+
+	t.Run("Mismatched kind with abort policy errors out", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("file.txt", "F")
+		revId, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		out := td.NewTestFS(t, td.NewFS(t))
+		out.Write("file.txt/inside.txt", "old dir")
+
+		err = Cp(r.Repository, out.FS, wstd.CpOptions(revId), td.NewFS(t))
+		assert.Error(err, "different kind")
+	})
+
 	t.Run("Cancel", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
