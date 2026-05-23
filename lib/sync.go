@@ -7,9 +7,8 @@ import (
 )
 
 type RepositorySyncMonitor interface {
-	OnRevisionStart(revisionId RevisionId)
+	OnBeforeCopy(srcBlocks, dstBlocks int)
 	OnCopyBlock(blockId BlockId, existed bool, length int)
-	OnRevisionEntry(entry *RevisionEntry)
 	OnBeforeUpdateDstHead(newHead RevisionId)
 }
 
@@ -17,12 +16,12 @@ type RepositorySyncOptions struct {
 	Monitor RepositorySyncMonitor
 }
 
-// Copy blocks from src to dst for revisions that are newer in src.
-// src and dst must have *exactly* the same repository config.
+// Sync new blocks from src to dst, then advance dst's head to src's.
+// Both storages must share the exact same repository config.
 func SyncRepository( //nolint:funlen
-	ctx context.Context, src *Repository, dst Storage, opts RepositorySyncOptions,
+	ctx context.Context, src, dst Storage, tempFS FS, opts RepositorySyncOptions,
 ) error {
-	srcToml, err := src.storage.Open()
+	srcToml, err := src.Open()
 	if err != nil {
 		return WrapErrorf(err, "failed to read src repository config")
 	}
@@ -33,105 +32,100 @@ func SyncRepository( //nolint:funlen
 	if !srcToml.Eq(dstToml) {
 		return Errorf("src and dst repository must share the exact same configuration")
 	}
-	srcRevisionId, err := src.Head()
+	// Read srcHead before listing src block ids: the listing is then
+	// guaranteed to be a superset of everything reachable from srcHead.
+	// The other order risks pointing dst at a head whose blocks were not
+	// yet committed when we listed.
+	srcHead, err := ReadRef(src, "head")
 	if err != nil {
-		return WrapErrorf(err, "failed to get source head revision")
+		return WrapErrorf(err, "failed to read src head")
 	}
-	dstRevisionId, err := ReadRef(dst, "head")
+	dstHead, err := ReadRef(dst, "head")
 	if err != nil {
-		return WrapErrorf(err, "failed to get destination head revision")
+		return WrapErrorf(err, "failed to read dst head")
 	}
-	if srcRevisionId == dstRevisionId {
+	if srcHead == dstHead {
 		return nil
 	}
-	// todo: src and dst must share the same repository config.
-	// Make sure the current HEAD of the destination repository is in the list
-	// of revisions of the source repository and find the base.
-	revisionsToSync := map[RevisionId]*Revision{}
-	baseRefId := srcRevisionId
-	buf := NewBlockBuf()
-	for {
-		revision, err := src.ReadRevision(baseRefId, buf)
-		if err != nil {
-			return WrapErrorf(err, "failed to read revision %s", baseRefId)
+	if srcHead.IsRoot() {
+		return Errorf("src has no committed revisions")
+	}
+	srcFS, err := tempFS.MkSub("src")
+	if err != nil {
+		return WrapErrorf(err, "failed to create temp dir for src block ids")
+	}
+	srcCount := 0
+	srcSeenHead := false
+	srcTemp, err := ReadSortedBlockIds(src, srcFS, func(id BlockId) {
+		srcCount++
+		if id == BlockId(srcHead) {
+			srcSeenHead = true
 		}
-		revisionsToSync[baseRefId] = &revision
-		baseRefId = revision.ParentRevisionId
-		if revision.ParentRevisionId == dstRevisionId {
+	})
+	if err != nil {
+		return WrapErrorf(err, "failed to snapshot src block ids")
+	}
+	defer srcTemp.Remove() //nolint:errcheck
+	if !srcSeenHead {
+		return Errorf("src head %s is not present in src storage", srcHead)
+	}
+	dstFS, err := tempFS.MkSub("dst")
+	if err != nil {
+		return WrapErrorf(err, "failed to create temp dir for dst block ids")
+	}
+	dstCount := 0
+	dstTemp, err := ReadSortedBlockIds(dst, dstFS, func(BlockId) { dstCount++ })
+	if err != nil {
+		return WrapErrorf(err, "failed to snapshot dst block ids")
+	}
+	defer dstTemp.Remove() //nolint:errcheck
+	dstCache, err := NewTempCache(dstTemp, func(id BlockId) string { return string(id[:]) }, 4)
+	if err != nil {
+		return WrapErrorf(err, "failed to open dst block id cache")
+	}
+	opts.Monitor.OnBeforeCopy(srcCount, dstCount)
+	reader := srcTemp.Reader(nil)
+	buf := NewBlockBuf()
+	blockBuf := NewBlockBuf()
+	for {
+		id, err := reader.Read(buf)
+		if errors.Is(err, io.EOF) {
 			break
 		}
-		if revision.ParentRevisionId.IsRoot() {
-			return WrapErrorf(err, "destination and source don't have a common revision")
-		}
-	}
-	blocksSeen := make(map[BlockId]bool)
-	blockBuf := NewBlockBuf()
-	copyBlock := func(blockId BlockId) error {
-		if _, ok := blocksSeen[blockId]; ok {
-			return nil
-		}
-		data, err := src.storage.ReadBlock(blockId, blockBuf)
 		if err != nil {
-			return WrapErrorf(err, "failed to read block %s", blockId)
+			return WrapErrorf(err, "failed to read src block id")
 		}
-		existed, err := dst.WriteBlock(blockId, data)
+		_, present, err := dstCache.Get(string(id[:]))
 		if err != nil {
-			return WrapErrorf(err, "failed to write block %s", blockId)
+			return WrapErrorf(err, "failed to look up block %s in dst", id)
 		}
-		opts.Monitor.OnCopyBlock(blockId, existed, len(data))
-		blocksSeen[blockId] = true
-		return nil
+		if present {
+			continue
+		}
+		data, err := src.ReadBlock(id, blockBuf)
+		if err != nil {
+			return WrapErrorf(err, "failed to read block %s from src", id)
+		}
+		existed, err := dst.WriteBlock(id, data)
+		if err != nil {
+			return WrapErrorf(err, "failed to write block %s to dst", id)
+		}
+		opts.Monitor.OnCopyBlock(id, existed, len(data))
 	}
-	for revisionId, revision := range revisionsToSync {
-		opts.Monitor.OnRevisionStart(revisionId)
-		reader := NewRevisionReader(src, revision)
-		entryCount := 0
-		for {
-			entry, err := reader.Read(buf)
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			if err != nil {
-				return WrapErrorf(err, "failed to read revision entry #%d of revision %s", entryCount, revisionId)
-			}
-			entryCount += 1
-			opts.Monitor.OnRevisionEntry(entry)
-			for _, blockId := range entry.Metadata.BlockIds {
-				if err := copyBlock(blockId); err != nil {
-					return WrapErrorf(
-						err,
-						"failed to copy block %s of path %s of revision %s",
-						blockId,
-						entry.Path,
-						revisionId,
-					)
-				}
-			}
-		}
-		if err := copyBlock(BlockId(revisionId)); err != nil {
-			return err
-		}
-		for _, blockId := range revision.BlockIds {
-			if err := copyBlock(blockId); err != nil {
-				return err
-			}
-		}
-	}
-	// Advance head revision on dst but only if dst did not change.
-	unlockDst, err := dst.Lock(ctx, UpdateHeadRevisionLockName)
+	unlock, err := dst.Lock(ctx, UpdateHeadRevisionLockName)
 	if err != nil {
-		return WrapErrorf(err, "failed to create lock in dst")
+		return WrapErrorf(err, "failed to lock dst head")
 	}
-	defer unlockDst() //nolint:errcheck
-	latestDstRevisionId, err := ReadRef(dst, "head")
+	defer unlock() //nolint:errcheck
+	latestDstHead, err := ReadRef(dst, "head")
 	if err != nil {
-		return WrapErrorf(err, "failed to get destination head revision")
+		return WrapErrorf(err, "failed to re-read dst head")
 	}
-	if latestDstRevisionId != dstRevisionId {
+	if latestDstHead != dstHead {
 		return Errorf("dst head revision changed during sync")
 	}
-	opts.Monitor.OnBeforeUpdateDstHead(srcRevisionId)
-	if err := WriteRef(dst, "head", srcRevisionId); err != nil {
+	opts.Monitor.OnBeforeUpdateDstHead(srcHead)
+	if err := WriteRef(dst, "head", srcHead); err != nil {
 		return WrapErrorf(err, "failed to write dst head reference")
 	}
 	return nil

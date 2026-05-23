@@ -47,7 +47,8 @@ type cliCpMonitor struct {
 
 type cliSyncRepoMonitor struct {
 	*ws.DefaultSyncRepoMonitor
-	emitPlain bool
+	targetName string
+	emitPlain  bool
 }
 
 func NewCpMonitor(mode ws.DefaultMonitorMode, cpOnExists ws.CpOnExists, ignoreErrors bool) *cliCpMonitor {
@@ -80,8 +81,8 @@ func NewHeathCheckMonitor(mode ws.DefaultMonitorMode) *cliHealthCheckMonitor {
 	return monitor
 }
 
-func NewSyncRepoMonitor(mode ws.DefaultMonitorMode) *cliSyncRepoMonitor {
-	monitor := &cliSyncRepoMonitor{DefaultSyncRepoMonitor: nil, emitPlain: false}
+func NewSyncRepoMonitor(targetName string, mode ws.DefaultMonitorMode) *cliSyncRepoMonitor {
+	monitor := &cliSyncRepoMonitor{DefaultSyncRepoMonitor: nil, targetName: targetName, emitPlain: false}
 	monitor.DefaultSyncRepoMonitor = ws.NewDefaultSyncRepoMonitor(mode, monitor.emit)
 	return monitor
 }
@@ -145,10 +146,26 @@ func (m *cliHealthCheckMonitor) close() {
 	clearLineIfProgress(m.Mode)
 }
 
+func (m *cliSyncRepoMonitor) OnBeforeCopy(srcBlocks, dstBlocks int) {
+	m.emitPlain = true
+	defer func() { m.emitPlain = false }()
+	m.DefaultSyncRepoMonitor.OnBeforeCopy(srcBlocks, dstBlocks)
+}
+
 func (m *cliSyncRepoMonitor) OnBeforeUpdateDstHead(newHead lib.RevisionId) {
 	m.emitPlain = true
 	defer func() { m.emitPlain = false }()
 	m.DefaultSyncRepoMonitor.OnBeforeUpdateDstHead(newHead)
+}
+
+func (m *cliSyncRepoMonitor) done(err error) {
+	m.emitPlain = true
+	defer func() { m.emitPlain = false }()
+	if err != nil {
+		m.emit(fmt.Sprintf("Failed to sync to %s: %s", m.targetName, err))
+		return
+	}
+	m.emit(fmt.Sprintf("Synced %d blocks to %s", m.Blocks, m.targetName))
 }
 
 func (m *cliSyncRepoMonitor) emit(text string) {
@@ -159,10 +176,6 @@ func (m *cliSyncRepoMonitor) emit(text string) {
 	}
 	clearLineIfProgress(m.Mode)
 	fmt.Printf("%s\n", text)
-}
-
-func (m *cliSyncRepoMonitor) close() {
-	clearLineIfProgress(m.Mode)
 }
 
 func clearLineIfProgress(mode ws.DefaultMonitorMode) {

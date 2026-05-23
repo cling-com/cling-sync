@@ -182,11 +182,28 @@ with:
 
 Remove the saved passphrase and the matching keychain entry.
 
-### `sync-repo init <dir>` / `sync-repo run <repo>`
+### `sync-repo <init|add|list|delete|run>`
 
-Initialise a second repository as a sync target, then copy new blocks
-and revisions from this workspace's repository to the target. Used to
-keep mirror copies.
+Manage and run mirror copies of this workspace's repository. The list
+of targets is stored in the workspace under
+`.cling/workspace/conf/sync-targets`. Names must be ASCII alphanumeric
+or `-`.
+
+- `sync-repo init <name> <dir>`: create a new local repository at
+  `dir` with this workspace's repository config and register it as
+  `name`.
+- `sync-repo add <name> <uri>`: register an existing repository
+  (local path or URL) as `name`. The target is opened and its
+  configuration is required to match the source, so mismatched or
+  unreachable URIs are rejected at registration time.
+- `sync-repo list`: list registered targets.
+- `sync-repo delete <name>`: unregister a target. The target storage
+  is not removed.
+- `sync-repo run [name]`: sync to every registered target, or to a
+  single named target. Failures are reported per target and
+  re-summarised at the end. One bad target does not stop subsequent
+  ones. No passphrase needed because the operation works purely at
+  the storage layer.
 
 ### `serve --address <addr> <repository-path>`
 
@@ -468,6 +485,12 @@ including the passphrase as it is typed. cling-sync's cryptographic
 guarantees do not extend to this adversary. See
 [Saved passphrase](#saved-passphrase) and
 [Process memory](#process-memory) for the specifics.
+
+Running [`sync-repo`](#sync-repo-initaddlistdeleterun) to a host you
+don't control places that host in the storage-only-adversary set. The
+target receives a full copy of `repository.txt`, so anyone with
+access to it can mount an offline Argon2id passphrase crack at their
+leisure. Choose a passphrase strong enough to withstand that.
 
 ### What a storage-only adversary cannot do
 

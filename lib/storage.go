@@ -17,6 +17,7 @@ type ControlFileSection string
 const (
 	ControlFileSectionRefs     ControlFileSection = "refs"
 	ControlFileSectionSecurity ControlFileSection = "security"
+	ControlFileSectionConf     ControlFileSection = "conf"
 )
 
 type StoragePurpose string
@@ -109,6 +110,34 @@ func (blockIdChunkMarshaller) UnmarshallAll(r *ProtobufReader) ([]BlockId, error
 
 func (blockIdChunkMarshaller) EntrySize(_ BlockId) int {
 	return TagLen(1, 2) + VarintLen(BlockIdSize) + BlockIdSize
+}
+
+// NewBlockIdTempWriter returns a sorted, de-duplicating TempWriter for
+// BlockIds backed by `fs`.
+func NewBlockIdTempWriter(fs FS) *TempWriter[BlockId] {
+	return NewTempWriterWithIgnoreDuplicates[BlockId](
+		BlockIdCompare, blockIdChunkMarshaller{}, fs, DefaultTempChunkSize,
+	)
+}
+
+// ReadSortedBlockIds drains `storage.ReadBlockIds` into a sorted Temp.
+// `inspect`, if non-nil, sees every id before it is added to the writer.
+func ReadSortedBlockIds(storage Storage, fs FS, inspect func(BlockId)) (*Temp[BlockId], error) {
+	writer := NewBlockIdTempWriter(fs)
+	err := storage.ReadBlockIds(func(id BlockId) error {
+		if inspect != nil {
+			inspect(id)
+		}
+		return writer.Add(id)
+	})
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to read block ids")
+	}
+	temp, err := writer.Finalize()
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to sort block ids")
+	}
+	return temp, nil
 }
 
 var (

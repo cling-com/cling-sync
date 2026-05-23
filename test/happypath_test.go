@@ -284,11 +284,11 @@ func TestSyncRepoHappyPath(t *testing.T) {
 		sut.ClingSync("merge", "--no-progress", "--message", "second commit")
 	}
 
-	t.Log("Initialize sync target repository")
-	sut.ClingSync("sync-repo", "init", "../sync-target")
+	t.Log("Initialize and register sync target repository")
+	sut.ClingSync("sync-repo", "init", "backup", "../sync-target")
 
 	t.Log("Run repository sync")
-	sut.ClingSync("sync-repo", "run", "../sync-target")
+	sut.ClingSync("sync-repo", "run")
 
 	srcStorage, err := lib.NewFileStorage(lib.NewRealFS(sut.Path("../repository")), lib.StoragePurposeRepository)
 	assert.NoError(err)
@@ -310,10 +310,35 @@ func TestSyncRepoHappyPath(t *testing.T) {
 		sut.ClingSync("merge", "--no-progress", "--message", "third commit")
 	}
 	t.Log("Run repository sync")
-	sut.ClingSync("sync-repo", "run", "../sync-target")
+	sut.ClingSync("sync-repo", "run")
 	assert.Equal(sut.RepositoryHead(), headFromRepository(t, dstRepo))
 	assertSameRepositoryHistory(t, srcRepo, dstRepo)
 	assertSameRepositoryFS(t, sut.Path("../repository"), sut.Path("../sync-target"))
+
+	t.Log("Register a second sync target")
+	sut.ClingSync("sync-repo", "init", "backup2", "../sync-target-2")
+
+	dst2Storage, err := lib.NewFileStorage(lib.NewRealFS(sut.Path("../sync-target-2")), lib.StoragePurposeRepository)
+	assert.NoError(err)
+	dst2Repo, err := lib.OpenRepository(dst2Storage, []byte(passphrase))
+	assert.NoError(err)
+
+	t.Log("Add a commit, then sync only backup2 by name")
+	firstHeadBeforeNamedRun := headFromRepository(t, dstRepo)
+	sut.Write("a.txt", "aaaa")
+	sut.ClingSync("merge", "--no-progress", "--message", "fourth commit")
+	sut.ClingSync("sync-repo", "run", "backup2")
+
+	assert.Equal(firstHeadBeforeNamedRun, headFromRepository(t, dstRepo),
+		"backup must not move when running by name 'backup2'")
+	assert.Equal(sut.RepositoryHead(), headFromRepository(t, dst2Repo))
+	assertSameRepositoryHistory(t, srcRepo, dst2Repo)
+
+	t.Log("Sync without a name should advance the remaining target too")
+	sut.ClingSync("sync-repo", "run")
+	assert.Equal(sut.RepositoryHead(), headFromRepository(t, dstRepo))
+	assertSameRepositoryFS(t, sut.Path("../repository"), sut.Path("../sync-target"))
+	assertSameRepositoryFS(t, sut.Path("../repository"), sut.Path("../sync-target-2"))
 }
 
 func TestChmodChtimeChown(t *testing.T) {

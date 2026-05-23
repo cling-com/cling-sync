@@ -32,12 +32,7 @@ func CheckHealth(repository *Repository, tempFS FS, opts HealthCheckOptions) err
 		if err != nil {
 			return WrapErrorf(err, "failed to create temp directory for seen block ids")
 		}
-		seenWriter = NewTempWriterWithIgnoreDuplicates[BlockId](
-			BlockIdCompare,
-			blockIdChunkMarshaller{},
-			seenFS,
-			DefaultTempChunkSize,
-		)
+		seenWriter = NewBlockIdTempWriter(seenFS)
 	}
 	if err := walkRevisions(repository, opts.Monitor, seenWriter); err != nil {
 		return err
@@ -130,26 +125,13 @@ func walkRevisions(repository *Repository, monitor HealthCheckMonitor, seen *Tem
 }
 
 func checkOrphanedBlocks(repository *Repository, tempFS FS, monitor HealthCheckMonitor, seen *Temp[BlockId]) error {
-	// Read all block ids.
 	storedFS, err := tempFS.MkSub("stored")
 	if err != nil {
 		return WrapErrorf(err, "failed to create temp directory for stored block ids")
 	}
-	storedWriter := NewTempWriterWithIgnoreDuplicates[BlockId](
-		BlockIdCompare,
-		blockIdChunkMarshaller{},
-		storedFS,
-		DefaultTempChunkSize,
-	)
-	err = repository.storage.ReadBlockIds(func(id BlockId) error {
-		return storedWriter.Add(id)
-	})
+	stored, err := ReadSortedBlockIds(repository.storage, storedFS, nil)
 	if err != nil {
-		return WrapErrorf(err, "failed to read storage block ids")
-	}
-	stored, err := storedWriter.Finalize()
-	if err != nil {
-		return WrapErrorf(err, "failed to sort stored block ids")
+		return WrapErrorf(err, "failed to snapshot storage block ids")
 	}
 	defer stored.Remove() //nolint:errcheck
 

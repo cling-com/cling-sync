@@ -935,9 +935,9 @@ func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen,g
 	}
 	var repository *lib.Repository
 	if args.Repository != "" {
-		storage, err := openStorage(args.Repository)
+		storage, err := ws.OpenStorage(args.Repository)
 		if err != nil {
-			return err
+			return lib.WrapErrorf(err, "failed to open repository storage")
 		}
 		repository, err = openRepositoryWithPassphrase(storage, passphraseFromStdin)
 		if err != nil {
@@ -982,7 +982,7 @@ func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen,g
 	return nil
 }
 
-func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
+func SyncRepoCmd(argv []string) error { //nolint:funlen
 	workspace, err := openWorkspace()
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
@@ -998,15 +998,21 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show detailed progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s sync-repo [command]\n\n", appName)
-		fmt.Fprint(os.Stderr, "Sync this repository to another one.\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s sync-repo <command> [args]\n\n", appName)
+		fmt.Fprint(os.Stderr, "Manage and run mirror copies of this repository.\n\n")
 		fmt.Fprint(os.Stderr, "Commands:\n")
-		fmt.Fprint(os.Stderr, "  init [dir]\n")
-		fmt.Fprint(os.Stderr, "        Initialize a new repository at `dir` that can then be used to sync\n")
-		fmt.Fprint(os.Stderr, "        this repository to.\n")
-		fmt.Fprint(os.Stderr, "  run   [repository]\n")
-		fmt.Fprintf(os.Stderr, "       Run the synchronization. All new data of this repository will be\n")
-		fmt.Fprintf(os.Stderr, "       copied to the target `repository`.\n")
+		fmt.Fprint(os.Stderr, "  init <name> <dir>\n")
+		fmt.Fprint(os.Stderr, "        Create a new local repository at `dir` and register it as `name`.\n")
+		fmt.Fprint(os.Stderr, "  add <name> <uri>\n")
+		fmt.Fprint(os.Stderr, "        Register an existing repository (local path or URL) as `name`.\n")
+		fmt.Fprint(os.Stderr, "  list\n")
+		fmt.Fprint(os.Stderr, "        List all registered sync targets.\n")
+		fmt.Fprint(os.Stderr, "  delete <name>\n")
+		fmt.Fprint(os.Stderr, "        Unregister a sync target. The target storage is not removed.\n")
+		fmt.Fprint(os.Stderr, "  run [name]\n")
+		fmt.Fprint(os.Stderr, "        Sync to every registered target, or to a single named target.\n")
+		fmt.Fprint(os.Stderr, "        Failures are reported but do not stop subsequent targets.\n")
+		fmt.Fprint(os.Stderr, "\nNames must be ASCII alphanumeric including '-'.\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -1021,13 +1027,20 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		flags.Usage()
 		return lib.Errorf("missing command")
 	}
+	posArgs := flags.Args()[1:]
 	switch flags.Arg(0) {
 	case "init":
-		if len(flags.Args()) < 2 {
-			return lib.Errorf("missing target directory")
+		if len(posArgs) != 2 {
+			return lib.Errorf("usage: sync-repo init <name> <dir>")
 		}
-		if len(flags.Args()) > 2 {
-			return lib.Errorf("too many positional arguments")
+		name := posArgs[0]
+		if err := ws.ValidateSyncTargetName(name); err != nil {
+			return lib.WrapErrorf(err, "invalid sync target name")
+		}
+		if _, found, err := ws.GetSyncTarget(workspace, name); err != nil {
+			return lib.WrapErrorf(err, "failed to check sync targets")
+		} else if found {
+			return lib.Errorf("sync target %q already exists", name)
 		}
 		src, err := openRepositoryStorage(workspace)
 		if err != nil {
@@ -1037,15 +1050,13 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to open source storage")
 		}
-		targetRepositoryPath, err := filepath.Abs(flags.Arg(1))
+		targetRepositoryPath, err := filepath.Abs(posArgs[1])
 		if err != nil {
-			return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
+			return lib.WrapErrorf(err, "failed to get absolute path for %s", posArgs[1])
 		}
-		_, err = os.Stat(targetRepositoryPath)
-		if err == nil {
+		if _, err := os.Stat(targetRepositoryPath); err == nil {
 			return lib.Errorf("target directory already exists")
-		}
-		if !errors.Is(err, os.ErrNotExist) {
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return lib.WrapErrorf(err, "failed to stat %s", targetRepositoryPath)
 		}
 		if err := os.MkdirAll(targetRepositoryPath, 0o700); err != nil {
@@ -1055,43 +1066,99 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to create storage")
 		}
-		rootRevisionId := lib.RevisionId{}
-		if !rootRevisionId.IsRoot() {
-			return lib.Errorf("root revision ID is not zero")
-		}
 		if err := storage.Init(toml, lib.RepositoryConfigHeaderComment); err != nil {
 			return lib.WrapErrorf(err, "failed to initialize target repository")
 		}
-		if err := lib.WriteRef(storage, "head", rootRevisionId); err != nil {
+		if err := lib.WriteRef(storage, "head", lib.RevisionId{}); err != nil {
 			return lib.WrapErrorf(err, "failed to write head reference")
 		}
+		if err := ws.AddSyncTarget(workspace, name, targetRepositoryPath); err != nil {
+			return lib.WrapErrorf(err, "target was initialized at %s but could not be registered", targetRepositoryPath)
+		}
+		fmt.Printf("Initialized and registered sync target %q at %s\n", name, targetRepositoryPath)
+		return nil
+	case "add":
+		if len(posArgs) != 2 {
+			return lib.Errorf("usage: sync-repo add <name> <uri>")
+		}
+		name := posArgs[0]
+		uri := posArgs[1]
+		if !clingHTTP.IsHTTPStorageUIR(uri) {
+			abs, err := filepath.Abs(uri)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to get absolute path for %s", uri)
+			}
+			uri = abs
+		}
+		if err := ws.AddSyncTarget(workspace, name, uri); err != nil {
+			return lib.WrapErrorf(err, "failed to add sync target")
+		}
+		fmt.Printf("Registered sync target %q -> %s\n", name, uri)
+		return nil
+	case "list":
+		if len(posArgs) != 0 {
+			return lib.Errorf("usage: sync-repo list")
+		}
+		targets, err := ws.LoadSyncTargets(workspace)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to load sync targets")
+		}
+		if len(targets) == 0 {
+			fmt.Println("No sync targets registered.")
+			return nil
+		}
+		nameWidth := 0
+		for _, t := range targets {
+			if len(t.Name) > nameWidth {
+				nameWidth = len(t.Name)
+			}
+		}
+		for _, t := range targets {
+			fmt.Printf("%-*s  %s\n", nameWidth, t.Name, t.URI)
+		}
+		return nil
+	case "delete":
+		if len(posArgs) != 1 {
+			return lib.Errorf("usage: sync-repo delete <name>")
+		}
+		if err := ws.DeleteSyncTarget(workspace, posArgs[0]); err != nil {
+			return lib.WrapErrorf(err, "failed to delete sync target")
+		}
+		fmt.Printf("Unregistered sync target %q\n", posArgs[0])
+		return nil
 	case "run":
-		if len(flags.Args()) < 2 {
-			return lib.Errorf("missing target repository")
+		var names []string
+		switch len(posArgs) {
+		case 0:
+			targets, err := ws.LoadSyncTargets(workspace)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to load sync targets")
+			}
+			if len(targets) == 0 {
+				return lib.Errorf("no sync targets registered; use `sync-repo init` or `sync-repo add` first")
+			}
+			names = make([]string, len(targets))
+			for i, t := range targets {
+				names[i] = t.Name
+			}
+		case 1:
+			names = []string{posArgs[0]}
+		default:
+			return lib.Errorf("usage: sync-repo run [name]")
 		}
-		if len(flags.Args()) > 2 {
-			return lib.Errorf("too many positional arguments")
+		mode := CLIMonitorMode(args.Verbose, args.NoProgress)
+		for _, name := range names {
+			mon := NewSyncRepoMonitor(name, mode)
+			err := ws.RunSync(context.Background(), workspace, name, mon)
+			mon.done(err)
+			if err != nil {
+				return err //nolint:wrapcheck
+			}
 		}
-		src, err := openRepository(workspace, passphraseFromStdin)
-		if err != nil {
-			return err
-		}
-		dst, err := openStorage(flags.Arg(1))
-		if err != nil {
-			return lib.WrapErrorf(err, "failed to open target storage")
-		}
-		mon := NewSyncRepoMonitor(CLIMonitorMode(args.Verbose, args.NoProgress))
-		opts := lib.RepositorySyncOptions{mon}
-		if err := lib.SyncRepository(context.Background(), src, dst, opts); err != nil {
-			mon.close()
-			return lib.WrapErrorf(err, "failed to sync")
-		}
-		mon.close()
-		fmt.Println("Done.")
+		return nil
 	default:
 		return lib.Errorf("unknown command: %s", flags.Arg(0))
 	}
-	return nil
 }
 
 func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
@@ -1381,19 +1448,9 @@ func readPassphrase(passphraseFromStdin bool) ([]byte, error) {
 }
 
 func openRepositoryStorage(workspace *ws.Workspace) (lib.Storage, error) { //nolint:ireturn
-	return openStorage(string(workspace.RemoteRepository))
-}
-
-func openStorage(repository string) (lib.Storage, error) { //nolint:ireturn
-	if clingHTTP.IsHTTPStorageUIR(repository) {
-		return clingHTTP.NewHTTPStorageClient(
-			repository,
-			clingHTTP.NewDefaultHTTPClient(http.DefaultClient),
-		), nil
-	}
-	storage, err := lib.NewFileStorage(lib.NewRealFS(repository), lib.StoragePurposeRepository)
+	storage, err := ws.OpenStorage(string(workspace.RemoteRepository))
 	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to open storage")
+		return nil, lib.WrapErrorf(err, "failed to open repository storage")
 	}
 	return storage, nil
 }
@@ -1489,7 +1546,7 @@ func main() { //nolint:funlen
 	case "status":
 		err = StatusCmd(argv, args.PassphraseFromStdin)
 	case "sync-repo":
-		err = SyncRepoCmd(argv, args.PassphraseFromStdin)
+		err = SyncRepoCmd(argv)
 	case "":
 		flag.Usage()
 		os.Exit(0)

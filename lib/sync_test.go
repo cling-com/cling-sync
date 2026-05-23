@@ -20,7 +20,7 @@ func TestSyncRepository(t *testing.T) {
 		monitor := &TestSyncMonitor{}
 
 		entry1, blockId1 := testEntry(t, src, "a.txt", "abc")
-		rev1Id, err := testCommit(t, src.Repository, entry1)
+		_, err := testCommit(t, src.Repository, entry1)
 		assert.NoError(err)
 
 		entry2, blockId2 := testEntry(t, src, "b.txt", "de")
@@ -28,7 +28,10 @@ func TestSyncRepository(t *testing.T) {
 		rev2Id, err := testCommit(t, src.Repository, entry2, entry3)
 		assert.NoError(err)
 
-		err = SyncRepository(context.Background(), src.Repository, dst.Storage, RepositorySyncOptions{Monitor: monitor})
+		err = SyncRepository(
+			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			RepositorySyncOptions{Monitor: monitor},
+		)
 		assert.NoError(err)
 
 		dstHead, err := ReadRef(dst.Storage, "head")
@@ -37,11 +40,7 @@ func TestSyncRepository(t *testing.T) {
 		assertSameHistory(t, src, dst)
 		assertSameFS(t, src.FS, dst.FS)
 
-		assert.Call(NewMockCall("OnRevisionStart", rev1Id), monitor.Calls)
-		assert.Call(NewMockCall("OnRevisionStart", rev2Id), monitor.Calls)
-		assert.Call(NewMockCall("OnRevisionEntry", entry1), monitor.Calls)
-		assert.Call(NewMockCall("OnRevisionEntry", entry2), monitor.Calls)
-		assert.Call(NewMockCall("OnRevisionEntry", entry3), monitor.Calls)
+		assert.Call(NewMockCall("OnBeforeCopy", 7, 0), monitor.Calls)
 		assert.Call(NewMockCall("OnCopyBlock", blockId1, false, assert.Any), monitor.Calls)
 		assert.Call(NewMockCall("OnCopyBlock", blockId2, false, assert.Any), monitor.Calls)
 		assert.Call(NewMockCall("OnCopyBlock", blockId3, false, assert.Any), monitor.Calls)
@@ -61,45 +60,58 @@ func TestSyncRepository(t *testing.T) {
 		assert.NoError(
 			SyncRepository(
 				context.Background(),
-				src.Repository,
+				src.Storage,
 				dst.Storage,
+				td.NewFS(t),
 				RepositorySyncOptions{Monitor: &TestSyncMonitor{}},
 			),
 		)
 
 		monitor := &TestSyncMonitor{}
-		err = SyncRepository(context.Background(), src.Repository, dst.Storage, RepositorySyncOptions{Monitor: monitor})
+		err = SyncRepository(
+			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			RepositorySyncOptions{Monitor: monitor},
+		)
 		assert.NoError(err)
 		assert.Calls([]MockCall{}, monitor.Calls)
 	})
 
-	t.Run("Syncs only newer revisions", func(t *testing.T) {
+	t.Run("Copies only missing blocks", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		src := td.NewTestRepository(t, td.NewFS(t))
 		dst := cloneRepository(t, src)
 
 		entry1, _ := testEntry(t, src, "a.txt", "abc")
-		rev1Id, err := testCommit(t, src.Repository, entry1)
+		_, err := testCommit(t, src.Repository, entry1)
 		assert.NoError(err)
+		assert.NoError(
+			SyncRepository(
+				context.Background(),
+				src.Storage,
+				dst.Storage,
+				td.NewFS(t),
+				RepositorySyncOptions{Monitor: &TestSyncMonitor{}},
+			),
+		)
 		entry2, blockId2 := testEntry(t, src, "b.txt", "def")
 		rev2Id, err := testCommit(t, src.Repository, entry2)
 		assert.NoError(err)
 
-		assert.NoError(WriteRef(dst.Storage, "head", rev1Id))
-
 		monitor := &TestSyncMonitor{}
-		err = SyncRepository(context.Background(), src.Repository, dst.Storage, RepositorySyncOptions{Monitor: monitor})
+		err = SyncRepository(
+			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			RepositorySyncOptions{Monitor: monitor},
+		)
 		assert.NoError(err)
 
 		dstHead, err := ReadRef(dst.Storage, "head")
 		assert.NoError(err)
 		assert.Equal(rev2Id, dstHead)
 
-		assert.Call(NewMockCall("OnRevisionStart", rev2Id), monitor.Calls)
-		assert.Call(NewMockCall("OnRevisionEntry", entry2), monitor.Calls)
 		assert.Call(NewMockCall("OnCopyBlock", blockId2, false, assert.Any), monitor.Calls)
 		assert.Call(NewMockCall("OnBeforeUpdateDstHead", rev2Id), monitor.Calls)
+		// Two new blocks were committed (data + revision). Only those should copy.
 		assert.Equal(3, monitor.CountCalls("OnCopyBlock"))
 	})
 
@@ -127,27 +139,31 @@ func TestSyncRepository(t *testing.T) {
 		assert.NoError(err)
 
 		monitor := &TestSyncMonitor{}
-		err = SyncRepository(context.Background(), src.Repository, dst.Storage, RepositorySyncOptions{Monitor: monitor})
+		err = SyncRepository(
+			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			RepositorySyncOptions{Monitor: monitor},
+		)
 		assert.NoError(err)
 
 		assert.Equal(3, monitor.CountCalls("OnCopyBlock"))
 		assert.Equal(1, monitor.CountBlockCopies(blockId))
 	})
 
-	t.Run("Fails when destination head is not in source history", func(t *testing.T) {
+	t.Run("Fails when src head is missing from src storage", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		src := td.NewTestRepository(t, td.NewFS(t))
 		dst := cloneRepository(t, src)
 
-		entry, _ := testEntry(t, src, "a.txt", "abc")
-		_, err := testCommit(t, src.Repository, entry)
-		assert.NoError(err)
-		assert.NoError(WriteRef(dst.Storage, "head", td.RevisionId("other")))
+		assert.NoError(WriteRef(src.Storage, "head", td.RevisionId("ghost")))
 
 		monitor := &TestSyncMonitor{}
-		err = SyncRepository(context.Background(), src.Repository, dst.Storage, RepositorySyncOptions{Monitor: monitor})
-		assert.Error(err, "don't have a common revision")
+		err := SyncRepository(
+			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			RepositorySyncOptions{Monitor: monitor},
+		)
+		assert.Error(err, "not present in src storage")
+		assert.Calls([]MockCall{}, monitor.Calls)
 	})
 
 	t.Run("Fails for incompatible repositories", func(t *testing.T) {
@@ -161,7 +177,10 @@ func TestSyncRepository(t *testing.T) {
 		assert.NoError(err)
 
 		monitor := &TestSyncMonitor{}
-		err = SyncRepository(context.Background(), src.Repository, dst.Storage, RepositorySyncOptions{Monitor: monitor})
+		err = SyncRepository(
+			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			RepositorySyncOptions{Monitor: monitor},
+		)
 		assert.Error(err, "config")
 		assert.Calls([]MockCall{}, monitor.Calls)
 	})
@@ -289,16 +308,12 @@ func (m *TestSyncMonitor) CountBlockCopies(blockId BlockId) int {
 	return count
 }
 
-func (m *TestSyncMonitor) OnRevisionStart(revisionId RevisionId) {
-	m.Calls = append(m.Calls, NewMockCall("OnRevisionStart", revisionId))
+func (m *TestSyncMonitor) OnBeforeCopy(srcBlocks, dstBlocks int) {
+	m.Calls = append(m.Calls, NewMockCall("OnBeforeCopy", srcBlocks, dstBlocks))
 }
 
 func (m *TestSyncMonitor) OnCopyBlock(blockId BlockId, existed bool, length int) {
 	m.Calls = append(m.Calls, NewMockCall("OnCopyBlock", blockId, existed, length))
-}
-
-func (m *TestSyncMonitor) OnRevisionEntry(entry *RevisionEntry) {
-	m.Calls = append(m.Calls, NewMockCall("OnRevisionEntry", entry))
 }
 
 func (m *TestSyncMonitor) OnBeforeUpdateDstHead(newHead RevisionId) {

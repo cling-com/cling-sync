@@ -561,49 +561,35 @@ func (m *DefaultHealthCheckMonitor) emitProgress() {
 
 type DefaultSyncRepoMonitor struct {
 	defaultMonitorBase
-	StartTime     time.Time
-	Revisions     int
-	Paths         int
-	Blocks        int
-	Bytes         int64
-	RevisionEntry *lib.RevisionEntry
+	StartTime time.Time
+	SrcBlocks int
+	DstBlocks int
+	Blocks    int
+	Bytes     int64
 }
 
 func NewDefaultSyncRepoMonitor(mode DefaultMonitorMode, emit MonitorEmit) *DefaultSyncRepoMonitor {
 	return &DefaultSyncRepoMonitor{
 		defaultMonitorBase: newDefaultMonitorBase(mode, nil, emit),
 		StartTime:          time.Time{},
-		Revisions:          0,
-		Paths:              0,
+		SrcBlocks:          0,
+		DstBlocks:          0,
 		Blocks:             0,
 		Bytes:              0,
-		RevisionEntry:      nil,
 	}
+}
+
+func (m *DefaultSyncRepoMonitor) OnBeforeCopy(srcBlocks, dstBlocks int) {
+	m.StartTime = time.Now()
+	m.SrcBlocks = srcBlocks
+	m.DstBlocks = dstBlocks
+	m.Blocks = 0
+	m.Bytes = 0
+	m.emit(fmt.Sprintf("Source has %d blocks, target has %d", srcBlocks, dstBlocks))
 }
 
 func (m *DefaultSyncRepoMonitor) OnBeforeUpdateDstHead(newHead lib.RevisionId) {
 	m.emit(fmt.Sprintf("Updating target repository head to %s", newHead))
-}
-
-func (m *DefaultSyncRepoMonitor) OnRevisionStart(revisionID lib.RevisionId) {
-	m.RevisionEntry = nil
-	if m.StartTime.IsZero() {
-		m.StartTime = time.Now()
-	}
-	m.Revisions++
-	m.emitProgress()
-	if m.Mode == DefaultMonitorModeVerbose {
-		m.emit(fmt.Sprintf("revision %s", revisionID))
-	}
-}
-
-func (m *DefaultSyncRepoMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
-	m.RevisionEntry = entry
-	m.Paths++
-	m.emitProgress()
-	if m.Mode == DefaultMonitorModeVerbose {
-		m.emit(fmt.Sprintf("  path     %s (%s)", entry.Path, entry.Kind))
-	}
 }
 
 func (m *DefaultSyncRepoMonitor) OnCopyBlock(blockID lib.BlockId, existed bool, length int) {
@@ -612,14 +598,9 @@ func (m *DefaultSyncRepoMonitor) OnCopyBlock(blockID lib.BlockId, existed bool, 
 		m.Bytes += int64(length)
 	}
 	m.emitProgress()
-	if m.Mode != DefaultMonitorModeVerbose {
-		return
+	if m.Mode == DefaultMonitorModeVerbose {
+		m.emit("  block " + blockID.String())
 	}
-	prefix := ""
-	if m.RevisionEntry != nil {
-		prefix = "  "
-	}
-	m.emit(prefix + "  block  " + blockID.String())
 }
 
 func (m *DefaultSyncRepoMonitor) emitProgress() {
@@ -632,10 +613,9 @@ func (m *DefaultSyncRepoMonitor) emitProgress() {
 	}
 	m.emit(
 		fmt.Sprintf(
-			"%d revisions, %d path entries, %d unique blocks, %s at %s/s",
-			m.Revisions,
-			m.Paths,
+			"%d/%d blocks copied, %s at %s/s",
 			m.Blocks,
+			m.SrcBlocks,
 			FormatBytes(m.Bytes),
 			FormatBytes(int64(float64(m.Bytes)/elapsed)),
 		),

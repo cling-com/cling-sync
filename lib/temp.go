@@ -1,4 +1,4 @@
-// A sorted, chunked, encrypted temporary storage of entries.
+// A sorted, chunked, on-disk temporary storage of entries.
 package lib
 
 import (
