@@ -32,15 +32,8 @@ func TestWasmHTTPClient(t *testing.T) {
 		}
 		_, _ = w.Write([]byte("regular response"))
 	})
-	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		flusher, _ := w.(http.Flusher)
-		for _, chunk := range []string{"stream ", "response ", "body"} {
-			_, _ = w.Write([]byte(chunk))
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
+	mux.HandleFunc("/echo-header", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get("X-Echo")))
 	})
 	mux.HandleFunc("/slow", func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -66,5 +59,5 @@ func TestWasmHTTPClient(t *testing.T) {
 		}
 	})
 
-	RunWasmTests(t, "./js.go", "./js_check.go")
+	RunWasmTests(t, []string{"./js.go", "./js_check.go"})
 }

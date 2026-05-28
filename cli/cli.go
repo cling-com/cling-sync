@@ -2,7 +2,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -91,13 +93,30 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		}
 	}
 	repositoryURI := flags.Arg(0)
+	if err := clingHTTP.RejectBareHTTPURI(repositoryURI); err != nil {
+		return err //nolint:wrapcheck
+	}
 	var storage lib.Storage
-	if clingHTTP.IsHTTPStorageUIR(repositoryURI) {
-		storage = clingHTTP.NewHTTPStorageClient(
-			repositoryURI,
-			clingHTTP.NewDefaultHTTPClient(http.DefaultClient),
-		)
-	} else {
+	switch {
+	case clingHTTP.IsS3StorageURI(repositoryURI):
+		passphrase, err := readPassphrase(passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+		encryptedURI, err := resolveS3URI(repositoryURI, passphrase, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+		cfg, _, err := clingHTTP.DecodeS3URI(encryptedURI, passphrase)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to decode S3 URI")
+		}
+		storage = clingHTTP.NewS3StorageClient(cfg, nil)
+		if _, err := lib.OpenRepository(storage, passphrase); err != nil {
+			return lib.WrapErrorf(err, "failed to open repository")
+		}
+		repositoryURI = encryptedURI
+	default:
 		repositoryURI, err = filepath.Abs(repositoryURI)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get absolute path for %s", repositoryURI)
@@ -106,10 +125,9 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to connect to repository storage")
 		}
-	}
-	_, err = openRepositoryWithPassphrase(storage, passphraseFromStdin)
-	if err != nil {
-		return err
+		if _, err := openRepositoryWithPassphrase(storage, passphraseFromStdin); err != nil {
+			return err
+		}
 	}
 	// We know the repository exists, so let's create the workspace.
 	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-workspace")
@@ -205,35 +223,56 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 			return lib.Errorf("passphrases do not match")
 		}
 	}
-	repositoryPath, err := filepath.Abs(flags.Arg(0))
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
+	rawTarget := flags.Arg(0)
+	if err := clingHTTP.RejectBareHTTPURI(rawTarget); err != nil {
+		return err //nolint:wrapcheck
 	}
-	stat, err := os.Stat(repositoryPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.MkdirAll(repositoryPath, 0o700); err != nil {
-				return lib.WrapErrorf(err, "failed to create directory %s", repositoryPath)
-			}
-		} else {
-			return lib.WrapErrorf(err, "failed to stat %s", repositoryPath)
+	var (
+		repositoryURI string
+		storage       lib.Storage
+	)
+	if clingHTTP.IsS3StorageURI(rawTarget) {
+		encryptedURI, err := resolveS3URI(rawTarget, passphrase, passphraseFromStdin)
+		if err != nil {
+			return err
 		}
-	} else if !stat.IsDir() {
-		return lib.Errorf("%s is not a directory", repositoryPath)
+		cfg, _, err := clingHTTP.DecodeS3URI(encryptedURI, passphrase)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to decode S3 URI")
+		}
+		storage = clingHTTP.NewS3StorageClient(cfg, nil)
+		repositoryURI = encryptedURI
+	} else {
+		repositoryPath, err := filepath.Abs(rawTarget)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to get absolute path for %s", rawTarget)
+		}
+		stat, err := os.Stat(repositoryPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				if err := os.MkdirAll(repositoryPath, 0o700); err != nil {
+					return lib.WrapErrorf(err, "failed to create directory %s", repositoryPath)
+				}
+			} else {
+				return lib.WrapErrorf(err, "failed to stat %s", repositoryPath)
+			}
+		} else if !stat.IsDir() {
+			return lib.Errorf("%s is not a directory", repositoryPath)
+		}
+		files, err := os.ReadDir(repositoryPath)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to read directory %s", repositoryPath)
+		}
+		if len(files) > 0 {
+			return lib.Errorf("directory %s is not empty", repositoryPath)
+		}
+		storage, err = lib.NewFileStorage(lib.NewRealFS(repositoryPath), lib.StoragePurposeRepository)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to create storage")
+		}
+		repositoryURI = repositoryPath
 	}
-	files, err := os.ReadDir(repositoryPath)
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to read directory %s", repositoryPath)
-	}
-	if len(files) > 0 {
-		return lib.Errorf("directory %s is not empty", repositoryPath)
-	}
-	storage, err := lib.NewFileStorage(lib.NewRealFS(repositoryPath), lib.StoragePurposeRepository)
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to create storage")
-	}
-	_, err = lib.InitNewRepository(storage, passphrase)
-	if err != nil {
+	if _, err := lib.InitNewRepository(storage, passphrase); err != nil {
 		return lib.WrapErrorf(err, "failed to initialize repository")
 	}
 	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-workspace")
@@ -243,7 +282,7 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	workspace, err := ws.NewWorkspace(
 		lib.NewRealFS("."),
 		lib.NewRealFS(tmpDir),
-		ws.RemoteRepository(repositoryPath),
+		ws.RemoteRepository(repositoryURI),
 		lib.Path{},
 	)
 	if err != nil {
@@ -268,7 +307,6 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Overwrite    bool
 		Chown        bool
 		Exclude      lib.ExtendedGlobPatterns
-		Include      lib.ExtendedGlobPatterns
 	}{}
 	flags := flag.NewFlagSet("cp", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
@@ -308,9 +346,6 @@ func CpCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	}
 	if len(flags.Args()) != 2 {
 		return lib.Errorf("two positional arguments are required: <pattern> <target>")
-	}
-	if len(args.Exclude) == 0 && len(args.Include) > 0 {
-		return lib.Errorf("include patterns can only be used with exclude patterns")
 	}
 	repository, err := openRepository(workspace, passphraseFromStdin)
 	if err != nil {
@@ -594,7 +629,7 @@ func StatusCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		Chtime     bool
 		FastScan   bool
 	}{}
-	flags := flag.NewFlagSet("ls", flag.ExitOnError)
+	flags := flag.NewFlagSet("status", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Only show the number of added, updated, and deleted files")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
@@ -790,21 +825,11 @@ func LsCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		TimestampFormat:   args.TimestampFormat,
 		HumanReadableSize: args.Human,
 	}
-	dirFormat := *format
-	dirFormat.FullPath = true
 	for i, file := range files {
-		if args.Short {
-			if file.Metadata.FileMode.IsDir() {
-				if i > 0 {
-					fmt.Println()
-				}
-				fmt.Println(file.Format(&dirFormat))
-				continue
-			}
-			fmt.Println(file.Format(format))
-		} else {
-			fmt.Println(file.Format(format))
+		if args.Short && file.Metadata.FileMode.IsDir() && i > 0 {
+			fmt.Println()
 		}
+		fmt.Println(file.Format(format))
 	}
 	return nil
 }
@@ -935,13 +960,30 @@ func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen,g
 	}
 	var repository *lib.Repository
 	if args.Repository != "" {
-		storage, err := ws.OpenStorage(args.Repository)
+		if err := clingHTTP.RejectBareHTTPURI(args.Repository); err != nil {
+			return err //nolint:wrapcheck
+		}
+		var passphrase []byte
+		if clingHTTP.IsS3StorageURI(args.Repository) {
+			passphrase, err = readPassphrase(passphraseFromStdin)
+			if err != nil {
+				return err
+			}
+		}
+		storage, err := ws.OpenStorage(args.Repository, passphrase)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to open repository storage")
 		}
-		repository, err = openRepositoryWithPassphrase(storage, passphraseFromStdin)
-		if err != nil {
-			return err
+		if passphrase != nil {
+			repository, err = lib.OpenRepository(storage, passphrase)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to open repository")
+			}
+		} else {
+			repository, err = openRepositoryWithPassphrase(storage, passphraseFromStdin)
+			if err != nil {
+				return err
+			}
 		}
 	} else {
 		repository, err = openRepository(workspace, passphraseFromStdin)
@@ -982,7 +1024,7 @@ func CheckCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen,g
 	return nil
 }
 
-func SyncRepoCmd(argv []string) error { //nolint:funlen
+func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen,gocognit
 	workspace, err := openWorkspace()
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open workspace")
@@ -1031,7 +1073,7 @@ func SyncRepoCmd(argv []string) error { //nolint:funlen
 	switch flags.Arg(0) {
 	case "init":
 		if len(posArgs) != 2 {
-			return lib.Errorf("usage: sync-repo init <name> <dir>")
+			return lib.Errorf("usage: sync-repo init <name> <dir-or-s3-uri>")
 		}
 		name := posArgs[0]
 		if err := ws.ValidateSyncTargetName(name); err != nil {
@@ -1042,7 +1084,11 @@ func SyncRepoCmd(argv []string) error { //nolint:funlen
 		} else if found {
 			return lib.Errorf("sync target %q already exists", name)
 		}
-		src, err := openRepositoryStorage(workspace)
+		passphrase, err := readWorkspaceRepositoryPassphrase(workspace, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+		src, err := openRepositoryStorage(workspace, passphrase)
 		if err != nil {
 			return err
 		}
@@ -1050,9 +1096,35 @@ func SyncRepoCmd(argv []string) error { //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to open source storage")
 		}
-		targetRepositoryPath, err := filepath.Abs(posArgs[1])
+		rawTarget := posArgs[1]
+		if err := clingHTTP.RejectBareHTTPURI(rawTarget); err != nil {
+			return err //nolint:wrapcheck
+		}
+		if clingHTTP.IsS3StorageURI(rawTarget) {
+			encryptedURI, err := resolveS3URI(rawTarget, passphrase, passphraseFromStdin)
+			if err != nil {
+				return err
+			}
+			cfg, _, err := clingHTTP.DecodeS3URI(encryptedURI, passphrase)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to decode S3 target URI")
+			}
+			storage := clingHTTP.NewS3StorageClient(cfg, nil)
+			if err := storage.Init(toml, lib.RepositoryConfigHeaderComment); err != nil {
+				return lib.WrapErrorf(err, "failed to initialize S3 target repository")
+			}
+			if err := lib.WriteRef(storage, "head", lib.RevisionId{}); err != nil {
+				return lib.WrapErrorf(err, "failed to write head reference")
+			}
+			if err := ws.AddSyncTarget(workspace, name, encryptedURI, passphrase); err != nil {
+				return lib.WrapErrorf(err, "target was initialized but could not be registered")
+			}
+			fmt.Printf("Initialized and registered sync target %q at %s\n", name, encryptedURI)
+			return nil
+		}
+		targetRepositoryPath, err := filepath.Abs(rawTarget)
 		if err != nil {
-			return lib.WrapErrorf(err, "failed to get absolute path for %s", posArgs[1])
+			return lib.WrapErrorf(err, "failed to get absolute path for %s", rawTarget)
 		}
 		if _, err := os.Stat(targetRepositoryPath); err == nil {
 			return lib.Errorf("target directory already exists")
@@ -1072,7 +1144,7 @@ func SyncRepoCmd(argv []string) error { //nolint:funlen
 		if err := lib.WriteRef(storage, "head", lib.RevisionId{}); err != nil {
 			return lib.WrapErrorf(err, "failed to write head reference")
 		}
-		if err := ws.AddSyncTarget(workspace, name, targetRepositoryPath); err != nil {
+		if err := ws.AddSyncTarget(workspace, name, targetRepositoryPath, passphrase); err != nil {
 			return lib.WrapErrorf(err, "target was initialized at %s but could not be registered", targetRepositoryPath)
 		}
 		fmt.Printf("Initialized and registered sync target %q at %s\n", name, targetRepositoryPath)
@@ -1083,14 +1155,36 @@ func SyncRepoCmd(argv []string) error { //nolint:funlen
 		}
 		name := posArgs[0]
 		uri := posArgs[1]
-		if !clingHTTP.IsHTTPStorageUIR(uri) {
+		if err := clingHTTP.RejectBareHTTPURI(uri); err != nil {
+			return err //nolint:wrapcheck
+		}
+		// The workspace's own URI may be S3 (encrypted), in which case we need
+		// its passphrase to decrypt and read the source config. We also need
+		// it to encrypt a raw s3+ target URI before storage.
+		needPassphrase := clingHTTP.IsS3StorageURI(string(workspace.RemoteRepository)) ||
+			clingHTTP.IsS3StorageURI(uri)
+		var passphrase []byte
+		if needPassphrase {
+			var err error
+			passphrase, err = readWorkspaceRepositoryPassphrase(workspace, passphraseFromStdin)
+			if err != nil {
+				return err
+			}
+		}
+		switch {
+		case clingHTTP.IsS3StorageURI(uri):
+			uri, err = resolveS3URI(uri, passphrase, passphraseFromStdin)
+			if err != nil {
+				return err
+			}
+		default:
 			abs, err := filepath.Abs(uri)
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to get absolute path for %s", uri)
 			}
 			uri = abs
 		}
-		if err := ws.AddSyncTarget(workspace, name, uri); err != nil {
+		if err := ws.AddSyncTarget(workspace, name, uri, passphrase); err != nil {
 			return lib.WrapErrorf(err, "failed to add sync target")
 		}
 		fmt.Printf("Registered sync target %q -> %s\n", name, uri)
@@ -1146,10 +1240,33 @@ func SyncRepoCmd(argv []string) error { //nolint:funlen
 		default:
 			return lib.Errorf("usage: sync-repo run [name]")
 		}
+		// Determine if any source or target URI is S3, in which case we need
+		// the workspace passphrase to decrypt it.
+		needPassphrase := clingHTTP.IsS3StorageURI(string(workspace.RemoteRepository))
+		if !needPassphrase {
+			targets, err := ws.LoadSyncTargets(workspace)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to load sync targets")
+			}
+			for _, t := range targets {
+				if clingHTTP.IsS3StorageURI(t.URI) {
+					needPassphrase = true
+					break
+				}
+			}
+		}
+		var passphrase []byte
+		if needPassphrase {
+			var err error
+			passphrase, err = readWorkspaceRepositoryPassphrase(workspace, passphraseFromStdin)
+			if err != nil {
+				return err
+			}
+		}
 		mode := CLIMonitorMode(args.Verbose, args.NoProgress)
 		for _, name := range names {
 			mon := NewSyncRepoMonitor(name, mode)
-			err := ws.RunSync(context.Background(), workspace, name, mon)
+			err := ws.RunSync(context.Background(), workspace, name, mon, passphrase)
 			mon.done(err)
 			if err != nil {
 				return err //nolint:wrapcheck
@@ -1161,13 +1278,23 @@ func SyncRepoCmd(argv []string) error { //nolint:funlen
 	}
 }
 
-func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
-	workspace, err := openWorkspace()
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to open workspace")
+func resolveS3URI(rawTarget string, passphrase []byte, passphraseFromStdin bool) (string, error) {
+	if clingHTTP.S3URIHasEmbeddedCredentials(rawTarget) {
+		return rawTarget, nil
 	}
-	defer workspace.Close() //nolint:errcheck
-	args := struct {        //nolint:exhaustruct
+	creds, err := readS3Credentials(passphraseFromStdin)
+	if err != nil {
+		return "", err
+	}
+	encryptedURI, err := clingHTTP.EncodeS3URI(rawTarget, creds, passphrase)
+	if err != nil {
+		return "", lib.WrapErrorf(err, "failed to encode S3 URI")
+	}
+	return encryptedURI, nil
+}
+
+func SecurityCmd(argv []string, passphraseFromStdin bool) error {
+	args := struct { //nolint:exhaustruct
 		Help bool
 	}{}
 	flags := flag.NewFlagSet("security", flag.ExitOnError)
@@ -1187,6 +1314,16 @@ func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 			"        Delete the passphrase previously saved using `%s security save-passphrase`.\n",
 			appName,
 		)
+		fmt.Fprint(os.Stderr, "  encrypt-s3-url [--credentials-file <path>] <endpoint>\n")
+		fmt.Fprint(os.Stderr, "        Print a self-contained cling-sync S3 URI for <endpoint> with the S3\n")
+		fmt.Fprint(os.Stderr, "        access credentials encrypted under the repository passphrase. Useful\n")
+		fmt.Fprint(os.Stderr, "        for attaching the same repository from another of your machines\n")
+		fmt.Fprint(os.Stderr, "        without re-entering the S3 credentials. Opens the repository at\n")
+		fmt.Fprint(os.Stderr, "        <endpoint> with the given credentials and passphrase first.\n")
+		fmt.Fprint(os.Stderr, "\n")
+		fmt.Fprint(os.Stderr, "        Credentials come from --credentials-file (lines\n")
+		fmt.Fprint(os.Stderr, "        `CLING_S3_KEY_ID=...` and `CLING_S3_ACCESS_KEY=...`) or from the\n")
+		fmt.Fprint(os.Stderr, "        CLING_S3_* / AWS_* env vars.\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -1200,67 +1337,28 @@ func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 	if len(flags.Args()) == 0 {
 		return lib.Errorf("missing command")
 	}
-	switch flags.Arg(0) {
-	case "save-passphrase":
-		if len(flags.Args()) != 1 {
-			return lib.Errorf("too many positional arguments")
-		}
-		repositoryStorage, err := openRepositoryStorage(workspace)
-		if err != nil {
-			return err
-		}
-		passphrase, err := readPassphrase(passphraseFromStdin)
-		if err != nil {
-			return err
-		}
-		// Validate the passphrase against the repository before saving it.
-		if _, err := lib.OpenRepository(repositoryStorage, passphrase); err != nil {
-			return lib.WrapErrorf(err, "failed to validate passphrase against repository")
-		}
-		// Two-layer defense: the keychain holds a random local key, and the
-		// workspace holds the AEAD-encrypted passphrase. Neither alone unlocks
-		// the repository. The keychain entry is keyed by remote repository so
-		// multiple workspaces of the same repo share the same encryption key.
-		var encKey lib.RawKey
-		existing, err := keychain.GetKeychainEntry(
-			context.Background(),
-			"com.cling.sync",
-			string(workspace.RemoteRepository),
-		)
-		switch {
-		case err == nil:
-			decoded, err := hex.DecodeString(existing)
-			if err != nil {
-				return lib.WrapErrorf(err, "failed to decode existing keychain entry")
-			}
-			encKey = lib.RawKey(decoded)
-		case errors.Is(err, keychain.ErrKeychainEntryNotFound):
-			encKey, err = lib.NewRawKey()
-			if err != nil {
-				return lib.WrapErrorf(err, "failed to generate local encryption key")
-			}
-			if err := keychain.AddKeychainEntry(
-				context.Background(),
-				"com.cling.sync",
-				string(workspace.RemoteRepository),
-				hex.EncodeToString(encKey[:]),
-			); err != nil {
-				return lib.WrapErrorf(err, "failed to save local encryption key to keychain")
-			}
-		default:
-			return lib.WrapErrorf(err, "failed to read local encryption key from keychain")
-		}
-		encKeyCipher, err := lib.NewCipher(encKey)
-		if err != nil {
-			return lib.WrapErrorf(err, "failed to create cipher")
-		}
-		if err := workspace.WriteSavedPassphrase(passphrase, encKeyCipher); err != nil {
-			return lib.WrapErrorf(err, "failed to write saved passphrase")
-		}
-	case "delete-passphrase":
-		if len(flags.Args()) != 1 {
-			return lib.Errorf("too many positional arguments")
-		}
+	if flags.Arg(0) == "encrypt-s3-url" {
+		return securityEncryptS3URLCmd(flags.Args()[1:], passphraseFromStdin)
+	}
+
+	op := flags.Arg(0)
+	if op != "save-passphrase" && op != "delete-passphrase" {
+		return lib.Errorf("unknown command: %s", op)
+	}
+	return securityPassphraseCmd(op, flags.Args()[1:], passphraseFromStdin)
+}
+
+//nolint:funlen
+func securityPassphraseCmd(op string, positional []string, passphraseFromStdin bool) error {
+	if len(positional) != 0 {
+		return lib.Errorf("too many positional arguments")
+	}
+	workspace, err := openWorkspace()
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open workspace")
+	}
+	defer workspace.Close() //nolint:errcheck
+	if op == "delete-passphrase" {
 		if err := workspace.DeleteSavedPassphrase(); err != nil {
 			return lib.WrapErrorf(err, "failed to delete saved passphrase")
 		}
@@ -1272,31 +1370,159 @@ func SecurityCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 			return lib.WrapErrorf(err, "failed to delete local encryption key from keychain")
 		}
 		fmt.Println("Saved passphrase deleted")
+		return nil
+	}
+	passphrase, err := readPassphrase(passphraseFromStdin)
+	if err != nil {
+		return err
+	}
+	repositoryStorage, err := openRepositoryStorage(workspace, passphrase)
+	if err != nil {
+		return err
+	}
+	if _, err := lib.OpenRepository(repositoryStorage, passphrase); err != nil {
+		return lib.WrapErrorf(err, "failed to validate passphrase against repository")
+	}
+	// Two layers: keychain holds a random local key, workspace holds the
+	// AEAD-encrypted passphrase. Neither alone unlocks the repo.
+	var encKey lib.RawKey
+	existing, err := keychain.GetKeychainEntry(
+		context.Background(),
+		"com.cling.sync",
+		string(workspace.RemoteRepository),
+	)
+	switch {
+	case err == nil:
+		decoded, err := hex.DecodeString(existing)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to decode existing keychain entry")
+		}
+		encKey = lib.RawKey(decoded)
+	case errors.Is(err, keychain.ErrKeychainEntryNotFound):
+		encKey, err = lib.NewRawKey()
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to generate local encryption key")
+		}
+		if err := keychain.AddKeychainEntry(
+			context.Background(),
+			"com.cling.sync",
+			string(workspace.RemoteRepository),
+			hex.EncodeToString(encKey[:]),
+		); err != nil {
+			return lib.WrapErrorf(err, "failed to save local encryption key to keychain")
+		}
 	default:
-		return lib.Errorf("unknown command: %s", flags.Arg(0))
+		return lib.WrapErrorf(err, "failed to read local encryption key from keychain")
+	}
+	encKeyCipher, err := lib.NewCipher(encKey)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to create cipher")
+	}
+	if err := workspace.WriteSavedPassphrase(passphrase, encKeyCipher); err != nil {
+		return lib.WrapErrorf(err, "failed to write saved passphrase")
 	}
 	return nil
 }
 
-func ServeCmd(argv []string) error {
+func securityEncryptS3URLCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
+	args := struct { //nolint:exhaustruct
+		CredentialsFile string
+	}{}
+	flags := flag.NewFlagSet("security encrypt-s3-url", flag.ExitOnError)
+	flags.StringVar(&args.CredentialsFile, "credentials-file", "",
+		"File with `CLING_S3_KEY_ID=...` and `CLING_S3_ACCESS_KEY=...` lines (TOML or .env style).")
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if flags.NArg() != 1 {
+		return lib.Errorf("encrypt-s3-url requires exactly one positional argument: <endpoint>")
+	}
+	endpoint := flags.Arg(0)
+	if !clingHTTP.IsS3StorageURI(endpoint) {
+		return lib.Errorf("endpoint must start with `s3+http://` or `s3+https://`, got %q", endpoint)
+	}
+	var creds clingHTTP.S3Credentials
+	if args.CredentialsFile != "" {
+		data, err := os.ReadFile(args.CredentialsFile)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to read --credentials-file")
+		}
+		var id, secret string
+		for line := range strings.SplitSeq(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			var dst *string
+			switch {
+			case strings.HasPrefix(line, "CLING_S3_KEY_ID"):
+				dst = &id
+			case strings.HasPrefix(line, "CLING_S3_ACCESS_KEY"):
+				dst = &secret
+			default:
+				continue
+			}
+			_, v, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			*dst = strings.Trim(strings.TrimSpace(v), `"`)
+		}
+		if id == "" || secret == "" {
+			return lib.Errorf("--credentials-file is missing CLING_S3_KEY_ID or CLING_S3_ACCESS_KEY")
+		}
+		creds = clingHTTP.S3Credentials{AccessKeyID: id, SecretAccessKey: []byte(secret)}
+	} else {
+		envCreds, ok, err := readEnvS3Credentials()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return lib.Errorf(
+				"set --credentials-file, or CLING_S3_KEY_ID + CLING_S3_ACCESS_KEY (or AWS_*)",
+			)
+		}
+		creds = envCreds
+	}
+	passphrase, err := readPassphrase(passphraseFromStdin)
+	if err != nil {
+		return err
+	}
+	cfg, err := clingHTTP.ParseS3Endpoint(endpoint, creds)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to parse endpoint")
+	}
+	if _, err := lib.OpenRepository(clingHTTP.NewS3StorageClient(cfg, nil), passphrase); err != nil {
+		return lib.WrapErrorf(err, "failed to open repository at %s", endpoint)
+	}
+	uri, err := clingHTTP.EncodeS3URI(endpoint, creds, passphrase)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to encode S3 URI")
+	}
+	fmt.Println(uri)
+	return nil
+}
+
+func ServeCmd(argv []string) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
 		Address      string
 		LogRequests  bool
 		CORSAllowAll bool
 		ReadTimeout  time.Duration
 		WriteTimeout time.Duration
+		Region       string
 		Help         bool
 	}{}
 	flags := flag.NewFlagSet("serve", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.LogRequests, "log-requests", false, "Log all requests")
-	flags.BoolVar(&args.CORSAllowAll, "cors-allow-all", false, "Allow all origins to access the repository (dangerous)")
+	flags.BoolVar(&args.CORSAllowAll, "cors-allow-all", false, "Allow all origins")
 	flags.StringVar(&args.Address, "address", "0.0.0.0:4242", "Address to listen on")
 	flags.DurationVar(&args.ReadTimeout, "read-timeout", 10*time.Second, "Timeout for reading a response")
 	flags.DurationVar(&args.WriteTimeout, "write-timeout", 10*time.Second, "Timeout for writing a response")
+	flags.StringVar(&args.Region, "region", "us-east-1", "Region for SigV4 verification")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s serve <repository-path>\n\n", appName)
-		fmt.Fprint(os.Stderr, "Serve a repository over HTTP.\n")
+		fmt.Fprint(os.Stderr, "Serve an existing local repository as an S3-compatible bucket.\n")
+		fmt.Fprint(os.Stderr, "Credentials live in the repository's `conf/serve` control file and\n")
+		fmt.Fprint(os.Stderr, "are auto-generated on first run.\n")
 		fmt.Fprint(os.Stderr, "\nArguments:\n")
 		fmt.Fprint(os.Stderr, "  repository-path\n")
 		fmt.Fprint(os.Stderr, "        Path to the local repository to serve\n")
@@ -1321,10 +1547,55 @@ func ServeCmd(argv []string) error {
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open storage")
 	}
-	storageServer := clingHTTP.NewHTTPStorageServer(storage, args.Address)
+	if _, err := storage.Open(); err != nil {
+		return lib.WrapErrorf(err, "failed to open repository")
+	}
+	confPath := filepath.Join(repositoryPath, ".cling", "repository", "conf", "serve")
+	var ak, sk string
+	created := false
+	data, err := storage.ReadControlFile(lib.ControlFileSectionConf, "serve")
+	switch {
+	case err == nil:
+		toml, err := lib.ReadToml(bytes.NewReader(data))
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to parse conf/serve")
+		}
+		ak = toml["serve"]["CLING_S3_KEY_ID"]
+		sk = toml["serve"]["CLING_S3_ACCESS_KEY"]
+		if ak == "" || sk == "" {
+			return lib.Errorf("conf/serve is missing CLING_S3_KEY_ID or CLING_S3_ACCESS_KEY under [serve]")
+		}
+	case errors.Is(err, lib.ErrControlFileNotFound):
+		const keyIDAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		idRand, err := lib.Rand(16)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to generate key id")
+		}
+		id := []byte("CLIA")
+		for _, b := range idRand {
+			id = append(id, keyIDAlphabet[int(b)%len(keyIDAlphabet)])
+		}
+		ak = string(id)
+		secretBytes, err := lib.Rand(30)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to generate access key")
+		}
+		sk = base64.RawStdEncoding.EncodeToString(secretBytes)
+		toml := lib.Toml{"serve": {"CLING_S3_KEY_ID": ak, "CLING_S3_ACCESS_KEY": sk}}
+		var buf bytes.Buffer
+		if err := lib.WriteToml(&buf, "", toml); err != nil {
+			return lib.WrapErrorf(err, "failed to encode conf/serve")
+		}
+		if err := storage.WriteControlFile(lib.ControlFileSectionConf, "serve", buf.Bytes()); err != nil {
+			return lib.WrapErrorf(err, "failed to write conf/serve")
+		}
+		created = true
+	default:
+		return lib.WrapErrorf(err, "failed to read conf/serve")
+	}
 	mux := http.NewServeMux()
+	clingHTTP.NewS3StorageServer(storage, args.Region, ak, sk).RegisterRoutes(mux)
 	var handler http.Handler = mux
-	storageServer.RegisterRoutes(mux)
 	if args.LogRequests {
 		handler = clingHTTP.RequestLogMiddleware(handler)
 	}
@@ -1337,7 +1608,16 @@ func ServeCmd(argv []string) error {
 		ReadTimeout:  args.ReadTimeout,
 		WriteTimeout: args.WriteTimeout,
 	}
-	fmt.Printf("Serving %s at http://%s\n", repositoryPath, args.Address)
+	if created {
+		fmt.Printf("First run - new credentials created at %s\n", confPath)
+	} else {
+		fmt.Printf("Read credentials from %s\n", confPath)
+	}
+	fmt.Printf(
+		"Get an authenticated URL with:\n  %s security encrypt-s3-url --credentials-file %s s3+http://%s\n",
+		appName, confPath, args.Address,
+	)
+	fmt.Printf("Serving %s at s3+http://%s\n", repositoryPath, args.Address)
 	if err := server.ListenAndServe(); err != nil {
 		return lib.WrapErrorf(err, "failed to serve repository")
 	}
@@ -1373,11 +1653,12 @@ func openWorkspace() (*ws.Workspace, error) {
 	return ws.OpenWorkspace(lib.NewRealFS(path), lib.NewRealFS(tmpDir)) //nolint:wrapcheck
 }
 
-func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Repository, error) {
-	storage, err := openRepositoryStorage(workspace)
-	if err != nil {
-		return nil, err
-	}
+// readWorkspaceRepositoryPassphrase returns the repository passphrase for the
+// given workspace. If a saved-passphrase keychain entry exists, that path is
+// used; otherwise the user is prompted (or stdin is consumed). Either way the
+// returned passphrase is what the repository, and the S3 URI userinfo, were
+// encrypted with.
+func readWorkspaceRepositoryPassphrase(workspace *ws.Workspace, passphraseFromStdin bool) ([]byte, error) {
 	if workspace.HasSavedPassphrase() {
 		encKeyStr, err := keychain.GetKeychainEntry(
 			context.Background(),
@@ -1399,13 +1680,25 @@ func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Rep
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read saved passphrase")
 		}
-		repository, err := lib.OpenRepository(storage, passphrase)
-		if err != nil {
-			return nil, lib.WrapErrorf(err, "failed to open repository with saved passphrase")
-		}
-		return repository, nil
+		return passphrase, nil
 	}
-	return openRepositoryWithPassphrase(storage, passphraseFromStdin)
+	return readPassphrase(passphraseFromStdin)
+}
+
+func openRepository(workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Repository, error) {
+	passphrase, err := readWorkspaceRepositoryPassphrase(workspace, passphraseFromStdin)
+	if err != nil {
+		return nil, err
+	}
+	storage, err := openRepositoryStorage(workspace, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	repository, err := lib.OpenRepository(storage, passphrase)
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to open repository")
+	}
+	return repository, nil
 }
 
 func openRepositoryWithPassphrase(storage lib.Storage, passphraseFromStdin bool) (*lib.Repository, error) {
@@ -1418,6 +1711,85 @@ func openRepositoryWithPassphrase(storage lib.Storage, passphraseFromStdin bool)
 		return nil, lib.WrapErrorf(err, "failed to open repository")
 	}
 	return repository, nil
+}
+
+const s3KeyMinLen = 16
+
+// readEnvS3Credentials returns the env-resolved S3 credentials. `ok` is true
+// iff one of the two env pairs is fully set. Mixing across pairs or setting
+// only one var of a pair is rejected.
+func readEnvS3Credentials() (clingHTTP.S3Credentials, bool, error) {
+	clingID, clingSecret := os.Getenv("CLING_S3_KEY_ID"), os.Getenv("CLING_S3_ACCESS_KEY")
+	awsID, awsSecret := os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")
+	if (clingID != "") != (clingSecret != "") {
+		return clingHTTP.S3Credentials{}, false, lib.Errorf(
+			"CLING_S3_KEY_ID and CLING_S3_ACCESS_KEY must both be set",
+		)
+	}
+	if clingID != "" {
+		if len(clingID) < s3KeyMinLen || len(clingSecret) < s3KeyMinLen {
+			return clingHTTP.S3Credentials{}, false, lib.Errorf(
+				"CLING_S3_KEY_ID and CLING_S3_ACCESS_KEY must each be at least %d bytes", s3KeyMinLen,
+			)
+		}
+		return clingHTTP.S3Credentials{AccessKeyID: clingID, SecretAccessKey: []byte(clingSecret)}, true, nil
+	}
+	if (awsID != "") != (awsSecret != "") {
+		return clingHTTP.S3Credentials{}, false, lib.Errorf(
+			"AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must both be set",
+		)
+	}
+	if awsID != "" {
+		return clingHTTP.S3Credentials{AccessKeyID: awsID, SecretAccessKey: []byte(awsSecret)}, true, nil
+	}
+	return clingHTTP.S3Credentials{AccessKeyID: "", SecretAccessKey: nil}, false, nil
+}
+
+// readS3Credentials returns the access-key + secret-key for an S3 endpoint.
+// Resolution order:
+//
+//  1. `CLING_S3_KEY_ID` + `CLING_S3_ACCESS_KEY` (cling-sync `serve` peer).
+//  2. `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (real S3 provider).
+//  3. TTY prompt (only if stdin is a terminal and `passphraseFromStdin` is
+//     false. When stdin is already consumed by the passphrase, we won't try
+//     to read creds from it).
+//
+// Otherwise returns an error telling the user to set the env vars.
+func readS3Credentials(passphraseFromStdin bool) (clingHTTP.S3Credentials, error) {
+	if creds, ok, err := readEnvS3Credentials(); err != nil || ok {
+		return creds, err
+	}
+	if passphraseFromStdin {
+		return clingHTTP.S3Credentials{}, lib.Errorf(
+			"with --passphrase-from-stdin set CLING_S3_KEY_ID and CLING_S3_ACCESS_KEY " +
+				"(or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY)",
+		)
+	}
+	if !IsTerm(os.Stdin) {
+		return clingHTTP.S3Credentials{}, lib.Errorf(
+			"set CLING_S3_KEY_ID and CLING_S3_ACCESS_KEY " +
+				"(or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY), or run interactively",
+		)
+	}
+	if _, err := fmt.Fprint(os.Stderr, "S3 access key id: "); err != nil {
+		return clingHTTP.S3Credentials{}, err //nolint:wrapcheck
+	}
+	var akInput string
+	if _, err := fmt.Fscanln(os.Stdin, &akInput); err != nil {
+		return clingHTTP.S3Credentials{}, lib.WrapErrorf(err, "failed to read access key id")
+	}
+	if _, err := fmt.Fprint(os.Stderr, "S3 secret access key: "); err != nil {
+		return clingHTTP.S3Credentials{}, err //nolint:wrapcheck
+	}
+	skBytes, err := term.ReadPassword(int(os.Stdin.Fd())) //nolint:gosec
+	if err != nil {
+		return clingHTTP.S3Credentials{}, lib.WrapErrorf(err, "failed to read secret access key")
+	}
+	fmt.Fprintln(os.Stderr)
+	return clingHTTP.S3Credentials{
+		AccessKeyID:     strings.TrimSpace(akInput),
+		SecretAccessKey: skBytes,
+	}, nil
 }
 
 func readPassphrase(passphraseFromStdin bool) ([]byte, error) {
@@ -1447,8 +1819,8 @@ func readPassphrase(passphraseFromStdin bool) ([]byte, error) {
 	return passphrase, nil
 }
 
-func openRepositoryStorage(workspace *ws.Workspace) (lib.Storage, error) { //nolint:ireturn
-	storage, err := ws.OpenStorage(string(workspace.RemoteRepository))
+func openRepositoryStorage(workspace *ws.Workspace, passphrase []byte) (lib.Storage, error) { //nolint:ireturn
+	storage, err := ws.OpenStorage(string(workspace.RemoteRepository), passphrase)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open repository storage")
 	}
@@ -1485,6 +1857,12 @@ func main() { //nolint:funlen
 	}{}
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s <command> [command arguments]\n\n", appName)
+		fmt.Fprint(os.Stderr, "Remote repositories: only S3-compatible backends are currently supported.\n")
+		fmt.Fprintf(
+			os.Stderr,
+			"Use `s3+<http-url>` URIs to point at one, and `%s serve` to host one.\n\n",
+			appName,
+		)
 		fmt.Fprint(os.Stderr, "Commands:\n")
 		fmt.Fprint(os.Stderr, "  attach       Attach a local directory to a repository\n")
 		fmt.Fprint(os.Stderr, "  check        Check the health of the repository\n")
@@ -1494,8 +1872,8 @@ func main() { //nolint:funlen
 		fmt.Fprint(os.Stderr, "  log          Show revision log\n")
 		fmt.Fprint(os.Stderr, "  merge        Merge changes from the repository and the workspace\n")
 		fmt.Fprint(os.Stderr, "  reset        Reset the workspace to a specific revision\n")
-		fmt.Fprint(os.Stderr, "  security	  See and configure security settings\n")
-		fmt.Fprint(os.Stderr, "  serve        Serve a repository over HTTP\n")
+		fmt.Fprint(os.Stderr, "  security     Configure security settings (saved passphrase, encrypted S3 URIs)\n")
+		fmt.Fprint(os.Stderr, "  serve        Serve a local repository as an S3-compatible bucket\n")
 		fmt.Fprint(os.Stderr, "  status       Show repository status\n")
 		fmt.Fprint(os.Stderr, "  sync-repo    Sync repository to another repository")
 		fmt.Fprint(os.Stderr, "\nGlobal flags:\n")
@@ -1546,7 +1924,7 @@ func main() { //nolint:funlen
 	case "status":
 		err = StatusCmd(argv, args.PassphraseFromStdin)
 	case "sync-repo":
-		err = SyncRepoCmd(argv)
+		err = SyncRepoCmd(argv, args.PassphraseFromStdin)
 	case "":
 		flag.Usage()
 		os.Exit(0)

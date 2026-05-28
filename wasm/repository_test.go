@@ -12,18 +12,38 @@ import (
 
 var td = lib.TestData{} //nolint:gochecknoglobals
 
+const (
+	wasmTestAccessKey = "test-access-key"
+	wasmTestSecret    = "test-secret-key"
+	wasmTestRegion    = "us-east-1"
+	wasmTestAddress   = "127.0.0.1:9123"
+)
+
 func TestWasm(t *testing.T) {
 	t.Parallel()
-
-	// Create a test repository and serve it over HTTP.
 	fs := td.NewRealFS(t)
 	r := td.NewTestRepository(t, fs)
-	storageServer := clingHTTP.NewHTTPStorageServer(r.Storage, "127.0.0.1:9123")
-	mux := http.NewServeMux()
-	storageServer.RegisterRoutes(mux)
-	server := &http.Server{Addr: "127.0.0.1:9123", Handler: mux} //nolint:exhaustruct
-	defer server.Close()                                         //nolint:errcheck
-	go server.ListenAndServe()                                   //nolint:errcheck
 
-	RunWasmTests(t, "./repository.go", "./repository_check.go", "./js.go")
+	mux := http.NewServeMux()
+	clingHTTP.NewS3StorageServer(r.Storage, wasmTestRegion, wasmTestAccessKey, wasmTestSecret).
+		RegisterRoutes(mux)
+	server := &http.Server{Addr: wasmTestAddress, Handler: mux} //nolint:exhaustruct
+	defer server.Close()                                        //nolint:errcheck
+	go server.ListenAndServe()                                  //nolint:errcheck
+
+	// `wasm/testdata.go` sets the passphrase the test repository uses; the
+	// wasm side decodes the encrypted URI with the same passphrase.
+	encryptedURI, err := clingHTTP.EncodeS3URI(
+		"s3+http://"+wasmTestAddress,
+		clingHTTP.S3Credentials{AccessKeyID: wasmTestAccessKey, SecretAccessKey: []byte(wasmTestSecret)},
+		[]byte("testpassphrase"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	RunWasmTests(
+		t,
+		[]string{"./repository.go", "./repository_check.go", "./js.go"},
+		"WASM_S3_URL="+encryptedURI,
+	)
 }

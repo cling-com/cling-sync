@@ -101,7 +101,7 @@ func (w *Workspace) Head() (lib.RevisionId, error) {
 
 var ErrSavedPassphraseNotFound = lib.Errorf("saved passphrase not found")
 
-const savedPassphraseFileName = "passphrase.enc"
+const savedPassphraseFileName = "encrypted-passphrase"
 
 // WriteSavedPassphrase AEAD-encrypts `passphrase` with `cipher` and stores
 // the ciphertext as a workspace control file. The encryption key (which

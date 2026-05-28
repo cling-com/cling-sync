@@ -3,20 +3,23 @@
 package workspace
 
 import (
-	"net/http"
-
 	clingHTTP "github.com/flunderpero/cling-sync/http"
 	"github.com/flunderpero/cling-sync/lib"
 )
 
-// OpenStorage opens a repository storage by URI. `uri` is either an HTTP(S)
-// URL pointing at a `cling-sync serve` instance or a local filesystem path.
-func OpenStorage(uri string) (lib.Storage, error) {
-	if clingHTTP.IsHTTPStorageUIR(uri) {
-		return clingHTTP.NewHTTPStorageClient(
-			uri,
-			clingHTTP.NewDefaultHTTPClient(http.DefaultClient),
-		), nil
+// OpenStorage opens a repository storage by URI. `s3+<http-url>` URIs need
+// the repository passphrase to decrypt the embedded credentials. Local paths
+// ignore the passphrase.
+func OpenStorage(uri string, passphrase []byte) (lib.Storage, error) {
+	if clingHTTP.IsS3StorageURI(uri) {
+		if passphrase == nil {
+			return nil, lib.Errorf("S3 storage URI requires a passphrase")
+		}
+		cfg, _, err := clingHTTP.DecodeS3URI(uri, passphrase)
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to decode S3 URI")
+		}
+		return clingHTTP.NewS3StorageClient(cfg, nil), nil
 	}
 	storage, err := lib.NewFileStorage(lib.NewRealFS(uri), lib.StoragePurposeRepository)
 	if err != nil {

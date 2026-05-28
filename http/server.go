@@ -59,9 +59,11 @@ func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, HEAD, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set(
+			"Access-Control-Allow-Headers",
+			"Authorization, Content-Type, If-None-Match, X-Amz-Content-Sha256, X-Amz-Date",
+		)
 		if r.Method == http.MethodOptions {
-			// This is a CORS preflight request, we don't need to do anything.
 			w.WriteHeader(http.StatusOK)
 			return
 		}

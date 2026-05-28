@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type ControlFileSection string
@@ -145,7 +146,24 @@ var (
 	ErrStorageAlreadyExists = Errorf("storage already exists")
 	ErrBlockNotFound        = Errorf("block not found")
 	ErrControlFileNotFound  = Errorf("control file not found")
+	ErrLockNotFound         = Errorf("lock not found")
 )
+
+// LockExistsError is returned by `Storage.Lock` when the lock is already
+// held. Fields describe the current holder so a user can decide whether to
+// wait or force-release.
+type LockExistsError struct {
+	Name      string
+	Owner     string
+	Host      string
+	Pid       int
+	CreatedAt time.Time
+}
+
+func (e *LockExistsError) Error() string {
+	return fmt.Sprintf("lock %q held by %s pid %d (owner %s, created %s)",
+		e.Name, e.Host, e.Pid, e.Owner, e.CreatedAt.Format(time.RFC3339))
+}
 
 type Storage interface {
 	Init(config Toml, headerComment string) error
@@ -171,8 +189,14 @@ type Storage interface {
 	// Return `ErrControlFileNotFound` if the control file does not exist.
 	DeleteControlFile(section ControlFileSection, name string) error
 
-	// Create a lock file in `.cling/<purpose>/locks/<name>`.
+	// Create a lock file in `.cling/<purpose>/locks/<name>`. Returns
+	// `*LockExistsError` if the lock is already held by another acquirer.
 	Lock(ctx context.Context, name string) (func() error, error)
+
+	// Forcefully drop a lock regardless of ownership. The caller is responsible
+	// for being sure the previous holder is dead. Returns `ErrLockNotFound` if
+	// there is nothing to release.
+	ForceUnlock(name string) error
 }
 
 type FileStorage struct {
@@ -406,8 +430,8 @@ func (s *FileStorage) DeleteControlFile(section ControlFileSection, name string)
 }
 
 func (s *FileStorage) Lock(ctx context.Context, name string) (func() error, error) {
-	if filepath.Base(name) != name {
-		return nil, Errorf("invalid file name %s", name)
+	if err := ValidateStorageLockName(name); err != nil {
+		return nil, err
 	}
 	path := filepath.Join(".cling", string(s.Purpose), "locks", name)
 	if err := s.FS.MkdirAll(filepath.Dir(path)); err != nil {
@@ -418,6 +442,23 @@ func (s *FileStorage) Lock(ctx context.Context, name string) (func() error, erro
 		return nil, WrapErrorf(err, "failed to create lock file %s", path)
 	}
 	return unlock, nil
+}
+
+// ForceUnlock removes the lock file. Any process still holding the orphaned
+// flock keeps the kernel-level lock on its open fd until it exits, but a new
+// acquirer opens a fresh file (different inode) and gets its own flock cleanly.
+func (s *FileStorage) ForceUnlock(name string) error {
+	if err := ValidateStorageLockName(name); err != nil {
+		return err
+	}
+	path := filepath.Join(".cling", string(s.Purpose), "locks", name)
+	if err := s.FS.Remove(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return WrapErrorf(ErrLockNotFound, "lock %s does not exist", name)
+		}
+		return WrapErrorf(err, "failed to remove lock file %s", path)
+	}
+	return nil
 }
 
 // Read up to `MaxBlockSize` bytes from `src` into the buffer and return
@@ -432,8 +473,8 @@ func (b BlockBuf) Read(src io.Reader) ([]byte, error) {
 		}
 		return nil, WrapErrorf(err, "failed to read block data")
 	}
-	// The buffer filled exactly. Check whether `src` has more bytes — if so,
-	// the input exceeds `MaxBlockSize` and must be rejected.
+	// The buffer filled exactly. If `src` has more bytes, the input exceeds
+	// `MaxBlockSize` and must be rejected.
 	var probe [1]byte
 	if _, err := io.ReadFull(src, probe[:]); err == nil {
 		return nil, Errorf("input exceeds maximum block size %d", MaxBlockSize)
@@ -449,13 +490,40 @@ func (s *FileStorage) blockPath(blockId BlockId) string {
 }
 
 func (s *FileStorage) controlFilePath(section ControlFileSection, name string) (string, error) {
-	name = filepath.Clean(name)
-	if strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, "..") || len(name) == 0 {
-		return "", Errorf("invalid file name %s", name)
+	if err := ValidateControlFileName(name); err != nil {
+		return "", err
 	}
 	return filepath.Join(".cling", string(s.Purpose), string(section), name), nil
 }
 
 func (s *FileStorage) configFilePath() string {
 	return filepath.Join(".cling", fmt.Sprintf("%s.txt", s.Purpose))
+}
+
+func ValidateControlFileName(name string) error {
+	if name == "" || len(name) > 64 {
+		return Errorf("invalid control file name %q", name)
+	}
+	for i := range len(name) {
+		c := name[i]
+		ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-'
+		if !ok {
+			return Errorf("invalid control file name %q", name)
+		}
+	}
+	return nil
+}
+
+func ValidateStorageLockName(name string) error {
+	if name == "" || len(name) > 64 {
+		return Errorf("invalid lock name %q", name)
+	}
+	for i := range len(name) {
+		c := name[i]
+		ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-'
+		if !ok {
+			return Errorf("invalid lock name %q", name)
+		}
+	}
+	return nil
 }

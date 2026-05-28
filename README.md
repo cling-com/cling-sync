@@ -13,7 +13,7 @@ names. Every block on disk is indistinguishable from random.
 1. [Concepts](#concepts)
 2. [Quick start](#quick-start)
 3. [Command reference](#command-reference)
-4. [Hosting a repository over HTTP](#hosting-a-repository-over-http)
+4. [Remote repositories](#remote-repositories)
 5. [Ignore files](#ignore-files)
 6. [Symlinks](#symlinks)
 7. [How it works](#how-it-works)
@@ -59,12 +59,13 @@ correct passphrase. Print it, store it offline, or keep a copy on a
 second machine. The file is not secret on its own. The passphrase is
 still required to derive the user key.
 
-To attach to an existing repository, use `attach`. The repository can
-be a local path or a remote URL served by
-[`cling-sync serve`](#hosting-a-repository-over-http):
+To attach to an existing repository, use `attach`. The repository is
+either a local path or an S3 URI (any URI starting with `s3+http://`
+or `s3+https://`). See [Remote repositories](#remote-repositories)
+for the S3 setup.
 
     cling-sync attach /path/to/repo /path/to/local/directory
-    cling-sync attach http://repo.example:4242 /path/to/local/directory
+    cling-sync attach s3+https://my-bucket.s3.region.example.com /path/to/local/directory
 
 Edit files. Commit them as a new revision and pull anything new from the
 repository:
@@ -97,13 +98,20 @@ config to `./.cling/workspace.txt`.
 If you only want to create the repository without binding the current
 directory, run `init` from an unrelated directory.
 
+To create the repository on an S3 bucket, pass an `s3+https://` URI.
+See [Remote repositories](#remote-repositories).
+
+    cling-sync init s3+https://my-bucket.s3.region.example.com
+
 ### `attach <repository> <directory>`
 
 Attach to an existing repository. Binds the workspace at `<directory>`
 to the given repository. The `<repository>` argument is either a local
-filesystem path or a remote URL served by
-[`cling-sync serve`](#hosting-a-repository-over-http). Writes the
-workspace config to `<directory>/.cling/workspace.txt`.
+filesystem path or an `s3+https://` (or `s3+http://`) URI. See
+[Remote repositories](#remote-repositories) for the full S3 setup.
+Writes the workspace config to `<directory>/.cling/workspace.txt`.
+
+    cling-sync attach s3+https://my-bucket.s3.region.example.com /path/to/workspace
 
 The `--path-prefix <p>` flag attaches to a subtree of the repository.
 All operations except `cp` are then limited to that subtree.
@@ -164,10 +172,10 @@ decrypts the file data inside each revision.
 ### `security save-passphrase`
 
 Store the passphrase in the workspace at
-`.cling/workspace/security/passphrase.enc`. The file is AEAD-encrypted
-with a random local key held in the OS keychain. Convenience only. See
-[Threat model](#threat-model) for what this scheme does and does not
-protect against.
+`.cling/workspace/security/encrypted-passphrase`. The file is
+AEAD-encrypted with a random local key held in the OS keychain.
+Convenience only. See [Threat model](#threat-model) for what this
+scheme does and does not protect against.
 
 On macOS, you may need:
 
@@ -182,6 +190,16 @@ with:
 
 Remove the saved passphrase and the matching keychain entry.
 
+### `security encrypt-s3-url [--credentials-file <path>] <endpoint>`
+
+Print a self-contained cling-sync S3 URI for `<endpoint>` with the S3
+access credentials encrypted under the repository passphrase. Useful
+for attaching the same repository from another of your machines
+without re-entering the S3 credentials. Opens the repository at
+`<endpoint>` with the given credentials and passphrase first, so a
+typo in any of them fails fast instead of producing a dead URI. See
+[Encrypted S3 URIs](#encrypted-s3-uris) for the format.
+
 ### `sync-repo <init|add|list|delete|run>`
 
 Manage and run mirror copies of this workspace's repository. The list
@@ -189,13 +207,14 @@ of targets is stored in the workspace under
 `.cling/workspace/conf/sync-targets`. Names must be ASCII alphanumeric
 or `-`.
 
-- `sync-repo init <name> <dir>`: create a new local repository at
-  `dir` with this workspace's repository config and register it as
-  `name`.
-- `sync-repo add <name> <uri>`: register an existing repository
-  (local path or URL) as `name`. The target is opened and its
-  configuration is required to match the source, so mismatched or
-  unreachable URIs are rejected at registration time.
+- `sync-repo init <name> <dir-or-uri>`: create a new repository with
+  this workspace's repository config and register it as `name`. The
+  argument is either a local path or an `s3+https://` URI.
+- `sync-repo add <name> <uri>`: register an existing repository as
+  `name`. The URI is either a local path or an `s3+https://` URI. The
+  target is opened and its configuration is required to match the
+  source, so mismatched or unreachable URIs are rejected at
+  registration time.
 - `sync-repo list`: list registered targets.
 - `sync-repo delete <name>`: unregister a target. The target storage
   is not removed.
@@ -207,26 +226,101 @@ or `-`.
 
 ### `serve --address <addr> <repository-path>`
 
-Serve a repository over HTTP. See
-[Hosting a repository over HTTP](#hosting-a-repository-over-http).
+Expose a local repository as an S3 endpoint. See
+[Running your own S3 server](#running-your-own-s3-server).
 
-## Hosting a repository over HTTP
+## Remote repositories
 
-    cling-sync serve --address 127.0.0.1:4242 /path/to/repo
+cling-sync only supports S3 as a remote. There is no native protocol.
 
-Then attach from elsewhere:
+The reason is reach. S3 with AWS SigV4 is the de facto interface for
+blob storage. Every major provider speaks it: AWS, Cloudflare R2,
+Backblaze B2, Scaleway, Wasabi, MinIO, Garage, SeaweedFS, and many
+more. SigV4 signs every request, and the server signs its responses,
+so the client detects any tampering on the wire. cling-sync already
+encrypts data client-side. The S3 layer adds authentication of the
+transport. Anything S3 can hold, cling-sync can use.
 
-    cling-sync attach http://127.0.0.1:4242 /path/to/workspace
+We test against [Scaleway Object Storage](https://www.scaleway.com/en/object-storage/)
+and the built-in [`cling-sync serve`](#running-your-own-s3-server).
+AWS S3 is expected to work out of the box. Anything supporting SigV4
+and conditional `PUT` with `If-None-Match: *` should work.
 
-The HTTP layer is intentionally minimal. There is no authentication, no
-TLS, and no authorisation. Put a reverse proxy with TLS and access
-control in front. [Caddy](https://caddyserver.com/) is one option.
+The IAM policy on the bucket must grant `s3:ListBucket`,
+`s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject`.
+
+### Attaching to a bucket
+
+The bucket URL must use the `s3+https://` scheme (or `s3+http://` for
+local servers without TLS). The `s3+` prefix is what flags the URL as
+an S3 endpoint. A bare `http://` or `https://` URL is rejected.
+
+    cling-sync init   s3+https://my-bucket.s3.region.example.com
+    cling-sync attach s3+https://my-bucket.s3.region.example.com /path/to/workspace
+
+The path part of the URL is an optional key prefix:
+
+    cling-sync attach s3+https://my-bucket.s3.region.example.com/some/prefix /path/to/workspace
+
+The first time the CLI sees the bucket, it needs the S3 access key
+id and secret. It takes them from the first source that is set:
+
+1. `CLING_S3_KEY_ID` and `CLING_S3_ACCESS_KEY`.
+2. `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+3. A TTY prompt, unless `--passphrase-from-stdin` is also set.
+
+The CLI encrypts the credentials with the repository passphrase and
+stores them in the workspace. Plaintext credentials never touch disk.
+
+### Encrypted S3 URIs
+
+The form stored in the workspace embeds the encrypted credentials in
+the userinfo of the URL:
+
+    s3+https://<argon2id-phc>:<ciphertext>@my-bucket.s3.region.example.com/prefix
+
+The `argon2id-phc` field is the Argon2id parameters and the random
+salt in [PHC string format](https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md)
+(`$argon2id$v=19$m=...,t=...,p=...$<salt>`), base64url-encoded so it
+fits the userinfo. The `ciphertext` is the access key id and secret,
+AEAD-encrypted. The encryption key is what Argon2id produces from the
+repository passphrase plus the salt and parameters in `argon2id-phc`.
+The decoder reproduces the same key from the same passphrase. AEAD
+additional data binds the ciphertext to `scheme://host/path`, so the
+URI cannot be cut and pasted onto a different endpoint.
+
+You can produce one of these URIs explicitly:
+
+    cling-sync security encrypt-s3-url s3+https://my-bucket.s3.region.example.com/prefix
+
+The output is a single self-contained string. Paste it into the
+`attach` command on another of your machines to bind a new workspace
+to the same bucket without re-entering the S3 credentials. The
+repository passphrase is still required to decrypt it. See the
+[threat model](#encrypted-s3-uri) for what the URI does and does not
+protect.
+
+### Running your own S3 server
+
+`cling-sync serve` exposes a local repository as an S3 endpoint.
+
+    cling-sync init /path/to/repo
+    cling-sync serve --address 127.0.0.1:9000 /path/to/repo
+
+On first run, `serve` generates random S3 credentials and writes them
+into the repository at `.cling/repository/conf/serve`. The same file
+is read on later runs, so the credentials persist. The startup output
+prints the ready-to-run `cling-sync security encrypt-s3-url
+--credentials-file ...` command for turning those credentials into
+an [encrypted S3 URI](#encrypted-s3-uris).
+
+The server speaks pure S3. SigV4, virtual-hosted-style addressing,
+XML errors. It serves exactly one repository. Put a TLS-terminating
+reverse proxy in front for anything beyond localhost.
 
 The server only ever sees AEAD-encrypted blocks. It cannot read their
 contents, cannot tamper with them undetected, and cannot forge new
-ones. It can refuse to serve, delete, or roll back. See
-[Threat model](#threat-model) for the full list of what a malicious
-server can and cannot do.
+ones.
 
 ## Ignore files
 
@@ -335,7 +429,7 @@ The workspace directory looks like this.
 
     <ws>/.cling/workspace.txt             workspace config (remote URI, path prefix)
     <ws>/.cling/workspace/refs/head       last revision merged into this workspace
-    <ws>/.cling/workspace/security/passphrase.enc   optional, see save-passphrase
+    <ws>/.cling/workspace/security/encrypted-passphrase   optional, see save-passphrase
 
 Files outside `.cling` are the user's files in their normal, unencrypted
 form.
@@ -425,7 +519,7 @@ in this revision, together with the path's full metadata: file mode,
 modification time, size, content hash, the ordered list of block ids
 that hold the file data, an optional symlink target, optional uid, gid,
 and birthtime. Paths that did not change in a revision do not appear
-in it; they are inherited from the parent.
+in it. They are inherited from the parent.
 
 The current revision is named in `.cling/repository/refs/head`. To
 follow the history, a client reads `head`, fetches the named revision
@@ -438,8 +532,6 @@ Paths in revisions are repository-relative. The following are rejected:
 - a trailing `/`
 - Windows volume prefixes
 - length greater than 4096 bytes
-
-Symlinks are not supported yet.
 
 ### On-disk wire format
 
@@ -490,7 +582,7 @@ Running [`sync-repo`](#sync-repo-initaddlistdeleterun) to a host you
 don't control places that host in the storage-only-adversary set. The
 target receives a full copy of `repository.txt`, so anyone with
 access to it can mount an offline Argon2id passphrase crack at their
-leisure. Choose a passphrase strong enough to withstand that.
+leisure. See [Choosing a passphrase](#choosing-a-passphrase).
 
 ### What a storage-only adversary cannot do
 
@@ -560,6 +652,58 @@ What remains visible or exploitable:
   it is present. The contents stay protected by AEAD. This is an
   accepted limitation of any content-defined chunking system.
 - None of these defenses help once the KEK is compromised.
+
+### Choosing a passphrase
+
+Both `repository.txt` and every encrypted S3 URI carry the Argon2id
+parameters and salt. Anyone who obtains either file can mount an
+offline guessing attack at their own pace. Argon2id makes each
+guess costly, but only a strong passphrase keeps the cost
+prohibitive.
+
+The current authoritative guidance is
+[NIST SP 800-63B-4](https://csrc.nist.gov/pubs/sp/800/63/b/4/final)
+§3.1.1 "Passwords" (September 2024): prefer length over composition.
+A long passphrase drawn from a wordlist (Diceware-style, six or more
+words) is stronger and more memorable than a short string of mixed
+character classes. Composition rules of the form "at least one
+uppercase, one digit, one special character" are explicitly removed.
+
+### Encrypted S3 URI
+
+A URI produced by `cling-sync security encrypt-s3-url`, or written by
+the CLI when a workspace is first attached to an S3 bucket, holds the
+S3 access key id and secret encrypted under the repository passphrase.
+The passphrase is required to decode it. The URI itself is not a
+secret in the strong sense.
+
+What an attacker who intercepts the URI cannot do without the
+repository passphrase:
+
+- **Recover the S3 access key id or secret.** The credentials are
+  AEAD-protected. Tampering fails the AEAD check on decode.
+- **Replay the URI against a different endpoint.** The AEAD additional
+  data is `scheme://host/path`. Changing the host or the path before
+  the userinfo invalidates the AEAD on decode.
+
+What that same attacker can still do:
+
+- **See the server's address.** The `host[:port]` is in plaintext in
+  the URI. So is the path prefix. Anything that leaks the URI reveals
+  which bucket and prefix you back up to.
+- **Mount an offline attack on the repository passphrase.** Same
+  exposure as for a leaked `repository.txt`. See
+  [Choosing a passphrase](#choosing-a-passphrase) for what makes that
+  attack expensive.
+
+To revoke a leaked URI, invalidate either factor it carries:
+
+- **Rotate the S3 access key on the bucket.** Every URI that wrapped
+  the old credentials stops working at once. Every workspace that
+  held one must then be re-attached.
+- **Change the repository passphrase.** A new passphrase derives a
+  different key, so every URI encrypted under the old one becomes
+  unreadable.
 
 ### Saved passphrase
 

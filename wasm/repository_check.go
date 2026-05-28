@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"syscall/js"
 )
 
 func init() {
@@ -12,8 +13,12 @@ func init() {
 
 func TestHappyPath(t *WasmT) {
 	api := BuildRepositoryAPI()
-	// Note: The passphrase is set in `testdata.go`.
-	repository, err := Await(api.Call("open", "http://localhost:9123", "testpassphrase"))
+	url := js.Global().Get("process").Get("env").Get("WASM_S3_URL").String()
+	if url == "" {
+		t.Fatal("WASM_S3_URL env var not set")
+	}
+	// Note: passphrase is set in `testdata.go`.
+	repository, err := Await(api.Call("open", url, "testpassphrase"))
 	if err != nil {
 		t.Fatal(err)
 	}

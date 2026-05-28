@@ -94,7 +94,9 @@ func GetSyncTarget(w *Workspace, name string) (uri string, found bool, err error
 // AddSyncTarget registers a new target. Returns an error if `name` is
 // invalid, already present, or if the target's repository config does not
 // match the workspace's source repository (the sync precondition).
-func AddSyncTarget(w *Workspace, name, uri string) error {
+// `passphrase` is forwarded to `OpenStorage` so it can decrypt S3 URIs (both
+// `w`'s source URI and the target `uri`). Non-S3 URIs ignore it.
+func AddSyncTarget(w *Workspace, name, uri string, passphrase []byte) error {
 	if err := ValidateSyncTargetName(name); err != nil {
 		return err
 	}
@@ -103,7 +105,7 @@ func AddSyncTarget(w *Workspace, name, uri string) error {
 	} else if found {
 		return lib.Errorf("sync target %q already exists", name)
 	}
-	src, err := OpenStorage(string(w.RemoteRepository))
+	src, err := OpenStorage(string(w.RemoteRepository), passphrase)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open source storage")
 	}
@@ -111,7 +113,7 @@ func AddSyncTarget(w *Workspace, name, uri string) error {
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to read source repository config")
 	}
-	dst, err := OpenStorage(uri)
+	dst, err := OpenStorage(uri, passphrase)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open target storage at %s", uri)
 	}
@@ -172,7 +174,7 @@ func writeSyncTargets(w *Workspace, targets []SyncTarget) error {
 // RunSync syncs the workspace's repository to the registered target named
 // `name`. The caller drives multi-target iteration and aggregation.
 func RunSync(
-	ctx context.Context, w *Workspace, name string, monitor lib.RepositorySyncMonitor,
+	ctx context.Context, w *Workspace, name string, monitor lib.RepositorySyncMonitor, passphrase []byte,
 ) error {
 	uri, found, err := GetSyncTarget(w, name)
 	if err != nil {
@@ -181,11 +183,11 @@ func RunSync(
 	if !found {
 		return lib.Errorf("no sync target named %q", name)
 	}
-	src, err := OpenStorage(string(w.RemoteRepository))
+	src, err := OpenStorage(string(w.RemoteRepository), passphrase)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open source storage")
 	}
-	dst, err := OpenStorage(uri)
+	dst, err := OpenStorage(uri, passphrase)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open target storage")
 	}

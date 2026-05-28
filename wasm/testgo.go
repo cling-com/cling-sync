@@ -22,16 +22,18 @@ import (
 
 // Build and run the Wasm tests.
 // `srcFiles` is a list of files to compile and is passed to `go build`.
-func RunWasmTests(tb testing.TB, srcFiles ...string) {
+// `extraEnv` is forwarded to the Node.js process so the wasm test can read it
+// via `process.env.<NAME>`.
+func RunWasmTests(tb testing.TB, srcFiles []string, extraEnv ...string) {
 	tb.Helper()
 	if err := skipIfNodeJSNotInstalled(tb.Context()); err != nil {
 		tb.Skip(err.Error())
 	}
 	wasmPath := compile(tb, srcFiles)
-	runNodeJS(tb, wasmPath)
+	runNodeJS(tb, wasmPath, extraEnv)
 }
 
-func runNodeJS(tb testing.TB, wasmPath string) { //nolint:funlen
+func runNodeJS(tb testing.TB, wasmPath string, extraEnv []string) { //nolint:funlen
 	tb.Helper()
 	nodeJSScript := `
 		(async () => {
@@ -61,7 +63,10 @@ func runNodeJS(tb testing.TB, wasmPath string) { //nolint:funlen
 
 	// Run the Node.js script from stdin and stream its output.
 	cmd := exec.CommandContext(tb.Context(), "node", "-")
-	cmd.Env = []string{"GOROOT=" + runtime.GOROOT(), "WASM_BINARY=" + wasmPath} //nolint:staticcheck
+	cmd.Env = append([]string{
+		"GOROOT=" + runtime.GOROOT(), //nolint:staticcheck
+		"WASM_BINARY=" + wasmPath,
+	}, extraEnv...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		tb.Fatalf("Failed to create stdin pipe: %v", err)

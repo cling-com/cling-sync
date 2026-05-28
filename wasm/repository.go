@@ -45,11 +45,15 @@ type RepositoryAPI struct{}
 //	Promise<int> (RepositoryHandle)
 func (r RepositoryAPI) Open(this js.Value, args []js.Value) any {
 	url := args[0].String()
-	passphrase := args[1].String()
+	passphrase := []byte(args[1].String())
 	return Async(func(resolve func(js.Value), reject func(js.Value)) {
-		httpClient := &WasmHTTPClient{}
-		storage := clingHTTP.NewHTTPStorageClient(url, httpClient)
-		repository, err := lib.OpenRepository(storage, []byte(passphrase))
+		cfg, _, err := clingHTTP.DecodeS3URI(url, passphrase)
+		if err != nil {
+			reject(js.ValueOf(err.Error()))
+			return
+		}
+		storage := clingHTTP.NewS3StorageClient(cfg, &WasmHTTPClient{})
+		repository, err := lib.OpenRepository(storage, passphrase)
 		if err != nil {
 			reject(js.ValueOf(err.Error()))
 			return

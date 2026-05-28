@@ -37,18 +37,29 @@ type Sha256Hmac Sha256
 
 type RawKey [RawKeySize]byte
 
-func NewRawKey() (RawKey, error) {
-	key := make([]byte, RawKeySize)
-	if _, err := io.ReadFull(rand.Reader, key); err != nil {
-		return RawKey{}, WrapErrorf(err, "failed to generate random key")
+// Rand returns n cryptographically random bytes from the system CSPRNG.
+func Rand(n int) ([]byte, error) {
+	b := make([]byte, n)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return nil, WrapErrorf(err, "failed to read %d random bytes", n)
 	}
-	return RawKey(key), nil
+	return b, nil
 }
 
+func NewRawKey() (RawKey, error) {
+	b, err := Rand(RawKeySize)
+	if err != nil {
+		return RawKey{}, err
+	}
+	return RawKey(b), nil
+}
+
+// RandStr returns a string of n hex characters of entropy (n/2 random bytes
+// hex-encoded).
 func RandStr(n int) (string, error) {
-	b := make([]byte, n/2+1)
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		return "", WrapErrorf(err, "failed to generate random string")
+	b, err := Rand(n/2 + 1)
+	if err != nil {
+		return "", err
 	}
 	return hex.EncodeToString(b)[:n], nil
 }

@@ -19,6 +19,7 @@ linters:
   default: "all"
   disable:
     - cyclop
+    - dogsled
     - embeddedstructfieldcheck
     - err113
     - gocognit

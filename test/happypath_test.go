@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -737,59 +738,6 @@ func TestClingIgnoreAndGitIgnore(t *testing.T) {
 	}
 }
 
-func TestRepositoryOverHTTP(t *testing.T) {
-	t.Parallel()
-	sut := NewSut(t)
-	assert := sut.assert
-
-	t.Log("Serve repository over HTTP")
-	{
-		t.Log(gray("    > cling-sync serve --log-requests --address 127.0.0.1:9123 ../repository"))
-		cmd := sut.cmd("serve", "--log-requests", "--address", "127.0.0.1:9123", "../repository")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		err := cmd.Start()
-		assert.NoError(err, "failed to start cling-sync serve")
-		defer func() {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-		}()
-		t0 := time.Now()
-		for time.Since(t0) < 10*time.Second {
-			conn, err := net.DialTimeout("tcp", "127.0.0.1:9123", 100*time.Millisecond)
-			if err == nil {
-				_ = conn.Close()
-				break
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
-
-	t.Log("Attach repository over HTTP and merge (merge, ls)")
-	{
-		workspace1Ls := sut.Ls()
-		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", "http://localhost:9123", "../workspace2")
-		sut.Chdir("../workspace2")
-		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
-		sut.ClingSync("merge", "--no-progress")
-		workspace2Ls := sut.Ls()
-		assert.Equal(workspace1Ls, workspace2Ls)
-	}
-
-	t.Log("Commit local changes (merge)")
-	{
-		sut.Write("new.txt", "new")
-		sut.ClingSync("merge", "--no-progress", "--message", "commit local changes")
-		log := sut.ClingSync("log", "--short", "--status")
-		assert.Equal(td.Dedent(fmt.Sprintf(`
-            %s %s commit local changes
-
-                A new.txt
-			`, sut.RepositoryHead(), sut.RepositoryHeadDate())),
-			log)
-	}
-}
-
 func TestSymlinks(t *testing.T) {
 	t.Parallel()
 	sut := NewSut(t)
@@ -923,18 +871,262 @@ func TestSymlinks(t *testing.T) {
 	}
 }
 
+// TestS3Local serves a fresh local repository as an S3 bucket via
+// `cling-sync serve` and runs the happy-path scenario against it.
+func TestS3Local(t *testing.T) {
+	t.Setenv("CLING_S3_KEY_ID", "test-cling-s3-key-id")
+	t.Setenv("CLING_S3_ACCESS_KEY", "test-cling-s3-access-key")
+
+	sourceAddr := "127.0.0.1:9125"
+	backupAddr := "127.0.0.1:9126"
+	// Source has a fresh TOML. Backup must share it so sync-repo add's
+	// config-match check passes.
+	sourceDir := initServeRepo(t)
+	backupDir := initServeRepoFromSource(t, sourceDir)
+	startClingSyncServer(t, sourceAddr, sourceDir)
+	startClingSyncServer(t, backupAddr, backupDir)
+
+	finalHead := runS3HappyPath(t, "s3+http://"+sourceAddr, "s3+http://"+backupAddr, true)
+
+	// Verify the source server's storage actually holds the data (catches a
+	// test setup that accidentally bypasses S3 and writes to a local repo).
+	sourceHead, err := os.ReadFile(filepath.Join(sourceDir, ".cling", "repository", "refs", "head"))
+	if err != nil {
+		t.Fatalf("failed to read refs/head from source server dir: %v", err)
+	}
+	if string(sourceHead) != finalHead {
+		t.Fatalf("source refs/head mismatch: server has %q, run returned %q", string(sourceHead), finalHead)
+	}
+	// Verify the sync-repo target server received the synced data.
+	backupHead, err := os.ReadFile(filepath.Join(backupDir, ".cling", "repository", "refs", "head"))
+	if err != nil {
+		t.Fatalf("failed to read refs/head from backup server dir: %v", err)
+	}
+	if string(backupHead) != finalHead {
+		t.Fatalf("backup refs/head mismatch: server has %q, run returned %q", string(backupHead), finalHead)
+	}
+}
+
+// initServeRepo inits a brand-new repository via `cling-sync init` and
+// pre-writes conf/serve with the test credentials. Returns the repo dir.
+func initServeRepo(t *testing.T) string {
+	t.Helper()
+	srvDir := t.TempDir()
+	sideDir := t.TempDir()
+	cmd := exec.Command(clingSyncBin, "--passphrase-from-stdin", "init", srvDir)
+	cmd.Dir = sideDir
+	cmd.Stdin = strings.NewReader(passphrase)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "CLING_SYNC_MOCK_KEYCHAIN_FILE="+filepath.Join(t.TempDir(), "kc.json"))
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to init repo at %s: %v", srvDir, err)
+	}
+	writeServeConfFile(t, srvDir)
+	return srvDir
+}
+
+// initServeRepoFromSource inits a repo at a fresh directory using the same
+// TOML config as `sourceDir`, so the two repos share crypto config (required
+// by `sync-repo add`).
+func initServeRepoFromSource(t *testing.T, sourceDir string) string {
+	t.Helper()
+	srvDir := t.TempDir()
+	srcStorage, err := lib.NewFileStorage(lib.NewRealFS(sourceDir), lib.StoragePurposeRepository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toml, err := srcStorage.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgtStorage, err := lib.NewFileStorage(lib.NewRealFS(srvDir), lib.StoragePurposeRepository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tgtStorage.Init(toml, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := lib.WriteRef(tgtStorage, "head", lib.RevisionId{}); err != nil {
+		t.Fatal(err)
+	}
+	writeServeConfFile(t, srvDir)
+	return srvDir
+}
+
+func writeServeConfFile(t *testing.T, srvDir string) {
+	t.Helper()
+	confDir := filepath.Join(srvDir, ".cling", "repository", "conf")
+	if err := os.MkdirAll(confDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	conf := fmt.Sprintf("[serve]\nCLING_S3_ACCESS_KEY = %q\nCLING_S3_KEY_ID = %q\n",
+		os.Getenv("CLING_S3_ACCESS_KEY"), os.Getenv("CLING_S3_KEY_ID"))
+	if err := os.WriteFile(filepath.Join(confDir, "serve"), []byte(conf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// startClingSyncServer spawns `cling-sync serve` against an already-inited
+// repository and waits for the listener to accept connections.
+func startClingSyncServer(t *testing.T, addr, srvDir string) {
+	t.Helper()
+	srv := exec.Command(clingSyncBin, "serve", "--address", addr, srvDir)
+	srv.Stdout = os.Stdout
+	srv.Stderr = os.Stderr
+	srv.Env = append(os.Environ(), "CLING_SYNC_MOCK_KEYCHAIN_FILE="+filepath.Join(t.TempDir(), "kc.json"))
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start cling-sync serve on %s: %v", addr, err)
+	}
+	t.Cleanup(func() {
+		_ = srv.Process.Kill()
+		_ = srv.Wait()
+	})
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("cling-sync serve on %s never became reachable", addr)
+}
+
+// TestS3Scaleway runs the same scenario against a real Scaleway-style S3
+// bucket configured in `.env`. Skipped if any of TEST_S3_URL,
+// TEST_S3_ACCESS_KEY, TEST_S3_SECRET_KEY is unset.
+func TestS3Scaleway(t *testing.T) {
+	loadDotenv(t)
+	bucketURL := os.Getenv("TEST_S3_URL")
+	ak := os.Getenv("TEST_S3_ACCESS_KEY")
+	sk := os.Getenv("TEST_S3_SECRET_KEY")
+	if bucketURL == "" || ak == "" || sk == "" {
+		t.Skip("S3 Scaleway test needs TEST_S3_URL, TEST_S3_ACCESS_KEY, TEST_S3_SECRET_KEY")
+	}
+	t.Setenv("AWS_ACCESS_KEY_ID", ak)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", sk)
+	runSuffix := strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
+	base := "s3+" + strings.TrimRight(bucketURL, "/") + "/cling-test/" + runSuffix
+	runS3HappyPath(t, base+"-source", base+"-backup", false)
+}
+
+func runS3HappyPath(t *testing.T, uri, backupURI string, preInited bool) string { //nolint:thelper
+	sut := NewS3Sut(t, uri, preInited)
+	assert := sut.assert
+
+	t.Log("Add some files and merge (log, ls, merge, status)")
+	{
+		sut.Write("a.txt", "a")
+		sut.Write("b.txt", "b")
+		sut.Mkdir("dir1")
+		sut.Write("dir1/d.txt", "d")
+		sut.ClingSync("merge", "--no-progress", "--message", "first commit on s3")
+		assert.Equal(1, td.Wc("-l", sut.ClingSync("log", "--short")))
+		assert.Equal("No changes", sut.ClingSync("status"))
+		assert.Equal(
+			td.Sort(sut.Ls(), 4),
+			td.Sort(sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction"), 4),
+			"files of head should match the workspace",
+		)
+	}
+	rev1 := sut.RepositoryHead()
+
+	t.Log("Add a second commit (merge, log)")
+	{
+		sut.Write("a.txt", "aa")
+		sut.Write("c.txt", "c")
+		sut.ClingSync("merge", "--no-progress", "--message", "second commit on s3")
+		assert.Equal(2, td.Wc("-l", sut.ClingSync("log", "--short")))
+	}
+	finalHead := sut.RepositoryHead()
+
+	t.Log("Copy a file from an older revision (cp)")
+	{
+		sut.ClingSync("cp", "--no-progress", "--overwrite", "--revision", rev1, "a.txt", ".")
+		assert.Equal("a", sut.Cat("a.txt"))
+		// Restore so the workspace matches HEAD again.
+		sut.Write("a.txt", "aa")
+	}
+
+	t.Log("Attach via encrypted URL (security encrypt-s3-url, attach, security save-passphrase, merge)")
+	{
+		encryptedURL := sut.ClingSyncStdin(
+			passphrase, "--passphrase-from-stdin", "security", "encrypt-s3-url", uri,
+		)
+		assert.Equal(true, strings.HasPrefix(encryptedURL, "s3+"), "encrypt-s3-url output should be an s3+ URI")
+		assert.Equal(false, encryptedURL == uri, "encrypt-s3-url output should differ from the bare URI")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", encryptedURL, "../workspace2")
+		sut.Chdir("../workspace2")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
+		sut.ClingSync("merge", "--no-progress")
+		assert.Equal("aa", sut.Cat("a.txt"))
+		assert.Equal("b", sut.Cat("b.txt"))
+		assert.Equal("c", sut.Cat("c.txt"))
+		assert.Equal("d", sut.Cat("dir1/d.txt"))
+		assert.Equal(finalHead, sut.RepositoryHead(), "second workspace's HEAD should match")
+	}
+
+	t.Log("Register and run S3 backup target (sync-repo init/add, sync-repo run, attach)")
+	{
+		if preInited {
+			// Backup repo was pre-created with the source's TOML.
+			sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin",
+				"sync-repo", "add", "s3-backup", backupURI)
+		} else {
+			// Create the backup repo on the fly with the source's TOML.
+			sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin",
+				"sync-repo", "init", "s3-backup", backupURI)
+		}
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "sync-repo", "run", "s3-backup")
+
+		// Verify the synced revisions are visible via a fresh attach.
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", backupURI, "../workspace-backup")
+		sut.Chdir("../workspace-backup")
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
+		assert.Equal(finalHead, sut.RepositoryHead(), "backup workspace's HEAD should match source")
+	}
+
+	t.Log("Check repository health (check)")
+	{
+		check := sut.ClingSync("check", "--no-progress")
+		assert.Contains(check, "Repository is healthy")
+		assert.Contains(check, "2 revisions")
+	}
+	return finalHead
+}
+
+// loadDotenv loads `KEY=value` lines from `.env` at the project root into
+// the test process environment. Missing file is silent.
+func loadDotenv(t *testing.T) {
+	t.Helper()
+	_, file, _, _ := runtime.Caller(0)
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", ".env"))
+	if err != nil {
+		return
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		t.Setenv(strings.TrimSpace(k), strings.TrimSpace(v))
+	}
+}
+
 type Sut struct {
 	*lib.TestFS
 	t            *testing.T
 	assert       lib.Assert
 	workDir      string // absolute path the Sut's helpers and `cling-sync` invocations run in
-	keychainFile string // per-test mock-keychain file; isolates `save-passphrase` from sibling tests
+	keychainFile string // per-test mock-keychain file. Isolates `save-passphrase` from sibling tests.
 }
 
-func NewSut(t *testing.T) *Sut {
+func newSut(t *testing.T) *Sut {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	// `t.TempDir` would auto-clean the directory at test end; we deliberately
+	// `t.TempDir` would auto-clean the directory at test end. We deliberately
 	// keep it around so failures can be inspected.
 	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling_sync_integration_*") //nolint:usetesting
 	assert.NoError(err, "failed to create temporary directory")
@@ -946,9 +1138,32 @@ func NewSut(t *testing.T) *Sut {
 
 	fs := lib.NewRealFS(workspaceDir)
 	sut := &Sut{td.NewTestFS(t, fs), t, assert, workspaceDir, filepath.Join(tmpDir, "keychain.json")}
+	return sut
+}
+
+func NewSut(t *testing.T) *Sut {
+	t.Helper()
+	sut := newSut(t)
 	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "init", "../repository")
 	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
+	return sut
+}
 
+// NewS3Sut attaches a fresh workspace to the given S3 URI. If `preInited`
+// is true the URI already holds a repository (e.g. a local
+// `cling-sync serve` whose repo was created beforehand) and the workspace
+// is attached. Otherwise a fresh repo is created at the URI. The bare URI
+// is passed through to `attach`/`init`, which encrypt and store it as
+// part of their normal flow.
+func NewS3Sut(t *testing.T, uri string, preInited bool) *Sut {
+	t.Helper()
+	sut := newSut(t)
+	if preInited {
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", uri, ".")
+	} else {
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "init", uri)
+	}
+	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 	return sut
 }
 

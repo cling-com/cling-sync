@@ -47,8 +47,8 @@ func TestSyncTargetStore(t *testing.T) {
 		alpha := cloneRepositoryAt(t, src)
 		beta := cloneRepositoryAt(t, src)
 
-		assert.NoError(AddSyncTarget(w, "alpha", alpha))
-		assert.NoError(AddSyncTarget(w, "beta", beta))
+		assert.NoError(AddSyncTarget(w, "alpha", alpha, nil))
+		assert.NoError(AddSyncTarget(w, "beta", beta, nil))
 
 		targets, err := LoadSyncTargets(w)
 		assert.NoError(err)
@@ -80,7 +80,7 @@ func TestSyncTargetStore(t *testing.T) {
 		w, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
 		assert.NoError(err)
 		alpha := cloneRepositoryAt(t, src)
-		assert.Error(AddSyncTarget(w, "with space", alpha), "alphanumeric")
+		assert.Error(AddSyncTarget(w, "with space", alpha, nil), "alphanumeric")
 	})
 
 	t.Run("Add rejects duplicate name", func(t *testing.T) {
@@ -92,8 +92,8 @@ func TestSyncTargetStore(t *testing.T) {
 		assert.NoError(err)
 		alpha := cloneRepositoryAt(t, src)
 		alpha2 := cloneRepositoryAt(t, src)
-		assert.NoError(AddSyncTarget(w, "alpha", alpha))
-		assert.Error(AddSyncTarget(w, "alpha", alpha2), "already exists")
+		assert.NoError(AddSyncTarget(w, "alpha", alpha, nil))
+		assert.Error(AddSyncTarget(w, "alpha", alpha2, nil), "already exists")
 	})
 
 	t.Run("Add rejects mismatched repository config", func(t *testing.T) {
@@ -103,14 +103,14 @@ func TestSyncTargetStore(t *testing.T) {
 		// A repository with its own unrelated config.
 		otherPath := t.TempDir()
 		td.NewTestRepository(t, lib.NewRealFS(otherPath))
-		assert.Error(AddSyncTarget(w, "other", otherPath), "same configuration")
+		assert.Error(AddSyncTarget(w, "other", otherPath, nil), "same configuration")
 	})
 
 	t.Run("Add rejects unreachable URI", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		w := newSyncTestWorkspace(t)
-		assert.Error(AddSyncTarget(w, "ghost", "/nonexistent-cling-sync-target"), "storage not found")
+		assert.Error(AddSyncTarget(w, "ghost", "/nonexistent-cling-sync-target", nil), "storage not found")
 	})
 
 	t.Run("Delete rejects unknown name", func(t *testing.T) {
@@ -132,7 +132,7 @@ func TestRunSync(t *testing.T) {
 		w, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
 		assert.NoError(err)
 		dstPath := cloneRepositoryAt(t, src)
-		assert.NoError(AddSyncTarget(w, "one", dstPath))
+		assert.NoError(AddSyncTarget(w, "one", dstPath, nil))
 
 		entry := td.RevisionEntry("a.txt", lib.RevisionEntryKindAdd)
 		blockId, _, err := src.WriteBlock([]byte("hello"))
@@ -147,7 +147,7 @@ func TestRunSync(t *testing.T) {
 		assert.NoError(err)
 
 		mon := &countingMonitor{}
-		assert.NoError(RunSync(context.Background(), w, "one", mon))
+		assert.NoError(RunSync(context.Background(), w, "one", mon, nil))
 
 		dstStorage, err := lib.NewFileStorage(lib.NewRealFS(dstPath), lib.StoragePurposeRepository)
 		assert.NoError(err)
@@ -162,7 +162,7 @@ func TestRunSync(t *testing.T) {
 		assert := lib.NewAssert(t)
 		w := newSyncTestWorkspace(t)
 		mon := &countingMonitor{}
-		err := RunSync(context.Background(), w, "ghost", mon)
+		err := RunSync(context.Background(), w, "ghost", mon, nil)
 		assert.Error(err, `no sync target named "ghost"`)
 	})
 
@@ -174,11 +174,11 @@ func TestRunSync(t *testing.T) {
 		w, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
 		assert.NoError(err)
 		dstPath := cloneRepositoryAt(t, src)
-		assert.NoError(AddSyncTarget(w, "one", dstPath))
+		assert.NoError(AddSyncTarget(w, "one", dstPath, nil))
 		assert.NoError(os.RemoveAll(dstPath)) //nolint:forbidigo
 
 		mon := &countingMonitor{}
-		err = RunSync(context.Background(), w, "one", mon)
+		err = RunSync(context.Background(), w, "one", mon, nil)
 		assert.Error(err, "storage not found")
 	})
 }
