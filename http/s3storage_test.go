@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +33,8 @@ const (
 )
 
 var td = lib.TestData{} //nolint:gochecknoglobals
+
+var s3PrefixSeq atomic.Uint64 //nolint:gochecknoglobals
 
 // TestS3StorageLocal exercises the S3 client + server combo using a local
 // httptest server backed by a fresh empty FileStorage per subtest.
@@ -69,7 +72,8 @@ func TestS3StorageScaleway(t *testing.T) {
 	region := regionFromHost(u.Host)
 	bucketURL = strings.TrimRight(bucketURL, "/")
 	checkS3Storage(t, func(t *testing.T) (S3StorageConfig, HTTPClient) { //nolint:thelper
-		prefix := "cling-test/" + strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
+		prefix := fmt.Sprintf("cling-test/%s-%d",
+			time.Now().UTC().Format("2006-01-02T15-04-05.000000000"), s3PrefixSeq.Add(1))
 		return S3StorageConfig{
 			BucketURL:       bucketURL,
 			Region:          region,

@@ -1126,14 +1126,11 @@ type Sut struct {
 func newSut(t *testing.T) *Sut {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	// `t.TempDir` would auto-clean the directory at test end. We deliberately
-	// keep it around so failures can be inspected.
-	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling_sync_integration_*") //nolint:usetesting
-	assert.NoError(err, "failed to create temporary directory")
+	tmpDir := t.TempDir()
 	t.Logf("Using temporary directory: %s", tmpDir)
 
 	workspaceDir := filepath.Join(tmpDir, "workspace")
-	err = os.MkdirAll(workspaceDir, 0o700)
+	err := os.MkdirAll(workspaceDir, 0o700)
 	assert.NoError(err, "failed to create workspace directory")
 
 	fs := lib.NewRealFS(workspaceDir)
@@ -1405,6 +1402,12 @@ func head(s string) string {
 }
 
 func TestMain(m *testing.M) {
+	// Scratch trees go under the cache dir, not the default wheel-owned /tmp:
+	// macOS gives a new file its parent dir's group, which would break
+	// TestChmodChtimeChown's ownership round-trip.
+	if cache, err := os.UserCacheDir(); err == nil && os.MkdirAll(cache, 0o700) == nil {
+		_ = os.Setenv("TMPDIR", cache)
+	}
 	dir, err := os.MkdirTemp("", "cling_sync_integration_bin_*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create build tmpdir: %v\n", err)
