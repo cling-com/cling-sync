@@ -48,7 +48,7 @@ type FS interface {
 	Remove(name string) error
 	RemoveAll(path string) error
 	Rename(oldpath, newpath string) error
-	// Create a sub directory and return a `FS` for it. Return `fs.ErrExist` if the directory already exists.
+	// Create a sub directory, including any missing parents, and return a `FS` for it.
 	MkSub(path string) (FS, error)
 	// Return a `FS` for the sub directory. Return `fs.ErrNotExist` if the directory does not exist.
 	Sub(path string) (FS, error)
@@ -61,34 +61,95 @@ type FS interface {
 	Lock(ctx context.Context, path string) (unlock func() error, err error)
 }
 
-type memoryFileWriter struct {
-	*bytes.Buffer
-	fs     *MemoryFS
-	closed bool
+// MemoryFS is a complete in-memory file system modelled as a tree: each
+// directory node holds its children by base name, so a node and its subtree
+// list, move, and delete as a unit.
+
+// memNode is a single tree node: a regular file, a directory, or a symlink.
+type memNode struct {
+	mode        fs.FileMode
+	uid         uint32
+	gid         uint32
+	modTimeSec  int64
+	modTimeNSec int32
+	content     bytes.Buffer        // regular file data
+	linkTarget  string              // symlink target
+	children    map[string]*memNode // non-nil iff this is a directory
 }
 
-func (w *memoryFileWriter) Write(p []byte) (n int, err error) {
-	w.fs.mu.Lock()
-	defer w.fs.mu.Unlock()
-	if int64(w.Len()+len(p)) > w.fs.maxMemory {
-		return 0, WrapErrorf(io.ErrShortWrite, "memory limit of %d bytes exceeded", w.fs.maxMemory)
+func newNode(mode fs.FileMode) *memNode {
+	now := time.Now()
+	n := &memNode{ //nolint:exhaustruct
+		mode:        mode,
+		uid:         1001,
+		gid:         1000,
+		modTimeSec:  now.Unix(),
+		modTimeNSec: int32(now.Nanosecond()), //nolint:gosec
 	}
-	return w.Buffer.Write(p)
-}
-
-func (w *memoryFileWriter) Sync() error {
-	return nil
-}
-
-func (w *memoryFileWriter) Close() error {
-	w.fs.mu.Lock()
-	defer w.fs.mu.Unlock()
-	if w.closed {
-		return nil
+	if mode.IsDir() {
+		n.children = map[string]*memNode{}
 	}
-	w.closed = true
-	w.fs.usedMemory += int64(w.Len())
-	return nil
+	return n
+}
+
+func (n *memNode) isDir() bool {
+	return n.mode&fs.ModeDir != 0
+}
+
+func (n *memNode) isSymlink() bool {
+	return n.mode&fs.ModeSymlink != 0
+}
+
+func (n *memNode) touch() {
+	now := time.Now()
+	n.modTimeSec = now.Unix()
+	n.modTimeNSec = int32(now.Nanosecond()) //nolint:gosec
+}
+
+// info snapshots the node so the caller's reads can't race a later mutation.
+func (n *memNode) info(name string) memFileInfo {
+	size := int64(n.content.Len())
+	if n.isSymlink() {
+		size = int64(len(n.linkTarget))
+	}
+	return memFileInfo{
+		name:        name,
+		mode:        n.mode,
+		size:        size,
+		uid:         n.uid,
+		gid:         n.gid,
+		modTimeSec:  n.modTimeSec,
+		modTimeNSec: n.modTimeNSec,
+	}
+}
+
+type memFileInfo struct {
+	name        string
+	mode        fs.FileMode
+	size        int64
+	uid         uint32
+	gid         uint32
+	modTimeSec  int64
+	modTimeNSec int32
+}
+
+func (i *memFileInfo) Name() string       { return i.name }
+func (i *memFileInfo) Size() int64        { return i.size }
+func (i *memFileInfo) Mode() fs.FileMode  { return i.mode }
+func (i *memFileInfo) ModTime() time.Time { return time.Unix(i.modTimeSec, int64(i.modTimeNSec)) }
+func (i *memFileInfo) IsDir() bool        { return i.mode.IsDir() }
+func (i *memFileInfo) Type() fs.FileMode  { return i.mode.Type() }
+
+func (i *memFileInfo) Sys() any {
+	return &syscall.Stat_t{ //nolint:exhaustruct
+		Uid: i.uid,
+		Gid: i.gid,
+	}
+}
+
+// This returns itself to make it compatible with `fs.DirEntry`.
+func (i *memFileInfo) Info() (fs.FileInfo, error) {
+	return i, nil
 }
 
 // Always returns an error on `Read`.
@@ -100,101 +161,104 @@ func (r errorReader) Read(p []byte) (n int, err error) {
 	return 0, r.err
 }
 
-type MemoryFileInfo struct {
-	name        string
-	mode        fs.FileMode
-	gid         uint32
-	uid         uint32
-	modTimeSec  int64
-	modTimeNSec int32
-	content     bytes.Buffer
-	linkTarget  string
+type memoryFileWriter struct {
+	*bytes.Buffer
+	shared *memShared
+	closed bool
 }
 
-func (f *MemoryFileInfo) Name() string {
-	return f.name
-}
-
-func (f *MemoryFileInfo) Size() int64 {
-	if f.mode&fs.ModeSymlink != 0 {
-		return int64(len(f.linkTarget))
+func (w *memoryFileWriter) Write(p []byte) (n int, err error) {
+	w.shared.mu.Lock()
+	defer w.shared.mu.Unlock()
+	if int64(w.Len()+len(p)) > w.shared.maxMemory {
+		return 0, WrapErrorf(io.ErrShortWrite, "memory limit of %d bytes exceeded", w.shared.maxMemory)
 	}
-	return int64(f.content.Len())
+	return w.Buffer.Write(p)
 }
 
-func (f *MemoryFileInfo) Mode() fs.FileMode {
-	return f.mode
+func (w *memoryFileWriter) Sync() error {
+	return nil
 }
 
-func (f *MemoryFileInfo) ModTime() time.Time {
-	return time.Unix(f.modTimeSec, int64(f.modTimeNSec))
-}
-
-func (f *MemoryFileInfo) IsDir() bool {
-	return f.mode.IsDir()
-}
-
-func (f *MemoryFileInfo) Sys() any {
-	return &syscall.Stat_t{ //nolint:exhaustruct
-		Uid: f.uid,
-		Gid: f.gid,
+func (w *memoryFileWriter) Close() error {
+	w.shared.mu.Lock()
+	defer w.shared.mu.Unlock()
+	if w.closed {
+		return nil
 	}
+	w.closed = true
+	w.shared.usedMemory += int64(w.Len())
+	return nil
 }
 
-// This returns itself to make it compatible with `fs.DirEntry`.
-func (f *MemoryFileInfo) Info() (fs.FileInfo, error) {
-	return f, nil
-}
-
-func (f *MemoryFileInfo) Type() fs.FileMode {
-	return f.mode.Type()
-}
-
-// MemoryFS matches RealFS thread-safety guarantees: every method is safe to
-// call concurrently from multiple goroutines. A single mutex serializes all
-// access to `files` and `usedMemory`; the per-path Lock map has its own
-// mutex so locking doesn't contend with FS operations.
-type MemoryFS struct {
+// memShared is the state shared by a MemoryFS and every view Sub/MkSub returns.
+// The views differ only in their `base` prefix.
+type memShared struct {
 	mu         sync.Mutex
-	files      map[string]*MemoryFileInfo
+	root       *memNode
 	locks      map[string]chan struct{}
 	locksMutex sync.Mutex
 	maxMemory  int64
 	usedMemory int64
 }
 
+type MemoryFS struct {
+	shared *memShared
+	base   string
+}
+
 func NewMemoryFS(maxMemory int64) *MemoryFS {
-	f := &MemoryFS{
-		mu:         sync.Mutex{},
-		files:      make(map[string]*MemoryFileInfo),
-		locks:      make(map[string]chan struct{}),
-		locksMutex: sync.Mutex{},
-		maxMemory:  maxMemory,
-		usedMemory: 0,
+	return &MemoryFS{
+		shared: &memShared{ //nolint:exhaustruct
+			root:      newNode(0o700 | fs.ModeDir),
+			locks:     map[string]chan struct{}{},
+			maxMemory: maxMemory,
+		},
+		base: ".",
 	}
-	f.create(".", 0o700|os.ModeDir)
-	return f
 }
 
 func (f *MemoryFS) OpenWrite(name string) (io.WriteCloser, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if file, ok := f.files[name]; ok && file.mode&fs.ModeSymlink != 0 {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: ErrIsSymlink}
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	parent, leaf, err := f.shared.resolveParent(f.abs(name))
+	if err != nil {
+		return nil, err
 	}
-	return f.openWriteLocked(name)
+	if node, ok := parent.children[leaf]; ok {
+		if node.isSymlink() {
+			return nil, &fs.PathError{Op: "open", Path: name, Err: ErrIsSymlink}
+		}
+		if node.isDir() {
+			return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.EISDIR}
+		}
+		// Truncate in place so mode and ownership survive, like O_TRUNC.
+		f.shared.usedMemory -= int64(node.content.Len())
+		node.content.Reset()
+		node.touch()
+		return &memoryFileWriter{&node.content, f.shared, false}, nil
+	}
+	node := newNode(0o600)
+	parent.children[leaf] = node
+	return &memoryFileWriter{&node.content, f.shared, false}, nil
 }
 
 func (f *MemoryFS) OpenWriteExcl(name string) (io.WriteCloser, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if file, ok := f.files[name]; ok {
-		if file.mode&fs.ModeSymlink != 0 {
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	parent, leaf, err := f.shared.resolveParent(f.abs(name))
+	if err != nil {
+		return nil, err
+	}
+	if node, ok := parent.children[leaf]; ok {
+		if node.isSymlink() {
 			return nil, &fs.PathError{Op: "open", Path: name, Err: ErrIsSymlink}
 		}
 		return nil, fs.ErrExist
 	}
-	return f.openWriteLocked(name)
+	node := newNode(0o600)
+	parent.children[leaf] = node
+	return &memoryFileWriter{&node.content, f.shared, false}, nil
 }
 
 func (f *MemoryFS) FSync(file io.WriteCloser) error {
@@ -202,272 +266,264 @@ func (f *MemoryFS) FSync(file io.WriteCloser) error {
 }
 
 func (f *MemoryFS) FSyncDir(path string) error {
-	return nil
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	_, err := f.shared.resolve(f.abs(path))
+	return err
 }
 
 func (f *MemoryFS) OpenRead(name string) (io.ReadCloser, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	file, ok := f.files[name]
-	if !ok {
-		return nil, fs.ErrNotExist
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	node, err := f.shared.resolve(f.abs(name))
+	if err != nil {
+		return nil, err
 	}
-	if file.mode&fs.ModeSymlink != 0 {
+	if node.isSymlink() {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: ErrIsSymlink}
 	}
-	if file.mode.IsDir() {
+	if node.isDir() {
 		return io.NopCloser(errorReader{&fs.PathError{Op: "read", Path: name, Err: syscall.EISDIR}}), nil
 	}
-	src := file.content.Bytes()
-	data := make([]byte, len(src))
-	copy(data, src)
+	data := make([]byte, node.content.Len())
+	copy(data, node.content.Bytes())
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 func (f *MemoryFS) Chmod(name string, mode fs.FileMode) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	file, ok := f.files[name]
-	if !ok {
-		return fs.ErrNotExist
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	node, err := f.shared.resolve(f.abs(name))
+	if err != nil {
+		return err
 	}
-	if file.mode&fs.ModeSymlink != 0 {
+	if node.isSymlink() {
 		return &fs.PathError{Op: "chmod", Path: name, Err: ErrIsSymlink}
 	}
-	file.mode &= ^fs.ModePerm
-	file.mode |= mode & fs.ModePerm
+	node.mode = node.mode&^fs.ModePerm | mode&fs.ModePerm
 	return nil
 }
 
 // `Chmtime` operates on the path's final component without following.
 // Setting a symlink's own mtime is allowed (matches `lutimes` semantics).
 func (f *MemoryFS) Chmtime(name string, mtime time.Time) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	file, ok := f.files[name]
-	if !ok {
-		return fs.ErrNotExist
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	node, err := f.shared.resolve(f.abs(name))
+	if err != nil {
+		return err
 	}
-	file.modTimeSec = mtime.Unix()
-	file.modTimeNSec = int32(mtime.Nanosecond()) //nolint:gosec
+	node.modTimeSec = mtime.Unix()
+	node.modTimeNSec = int32(mtime.Nanosecond()) //nolint:gosec
 	return nil
 }
 
 func (f *MemoryFS) Chown(name string, uid int, gid int) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	file, ok := f.files[name]
-	if !ok {
-		return fs.ErrNotExist
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	node, err := f.shared.resolve(f.abs(name))
+	if err != nil {
+		return err
 	}
-	if file.mode&fs.ModeSymlink != 0 {
+	if node.isSymlink() {
 		return &fs.PathError{Op: "chown", Path: name, Err: ErrIsSymlink}
 	}
-	file.uid = uint32(uid) //nolint:gosec
-	file.gid = uint32(gid) //nolint:gosec
+	node.uid = uint32(uid) //nolint:gosec
+	node.gid = uint32(gid) //nolint:gosec
 	return nil
 }
 
 func (f *MemoryFS) Stat(name string) (fs.FileInfo, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	file, ok := f.files[name]
-	if !ok {
-		return nil, fs.ErrNotExist
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	abs := f.abs(name)
+	node, err := f.shared.resolve(abs)
+	if err != nil {
+		return nil, err
 	}
-	// Return a value-copy so concurrent mutation of the live struct does
-	// not race with the caller's reads.
-	snapshot := *file
-	return &snapshot, nil
+	info := node.info(abs)
+	return &info, nil
 }
 
 func (f *MemoryFS) Symlink(target string, name string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.files[name]; ok {
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	parent, leaf, err := f.shared.resolveParent(f.abs(name))
+	if err != nil {
+		return err
+	}
+	if _, ok := parent.children[leaf]; ok {
 		return fs.ErrExist
 	}
-	file := f.create(name, 0o777|fs.ModeSymlink)
-	file.linkTarget = target
+	node := newNode(0o777 | fs.ModeSymlink)
+	node.linkTarget = target
+	parent.children[leaf] = node
 	return nil
 }
 
 func (f *MemoryFS) ReadLink(name string) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	file, ok := f.files[name]
-	if !ok {
-		return "", fs.ErrNotExist
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	node, err := f.shared.resolve(f.abs(name))
+	if err != nil {
+		return "", err
 	}
-	if file.mode&fs.ModeSymlink == 0 {
+	if !node.isSymlink() {
 		return "", fs.ErrInvalid
 	}
-	return file.linkTarget, nil
+	return node.linkTarget, nil
 }
 
-func (f *MemoryFS) ReadDir(path string) ([]fs.DirEntry, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	file, ok := f.files[path]
-	if !ok {
-		return nil, fs.ErrNotExist
+func (f *MemoryFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	node, err := f.shared.resolve(f.abs(name))
+	if err != nil {
+		return nil, err
 	}
-	if !file.mode.IsDir() {
-		return nil, fs.ErrInvalid
+	if !node.isDir() {
+		return nil, &fs.PathError{Op: "readdir", Path: name, Err: syscall.ENOTDIR}
 	}
-	entries := []fs.DirEntry{}
-	for name, file := range f.files {
-		if filepath.Dir(name) == path && name != path {
-			entry := *file
-			entry.name = strings.TrimPrefix(name, path+"/")
-			entries = append(entries, &entry)
-		}
+	entries := make([]fs.DirEntry, 0, len(node.children))
+	for _, key := range sortedKeys(node.children) {
+		info := node.children[key].info(key)
+		entries = append(entries, &info)
 	}
 	return entries, nil
 }
 
-func (f *MemoryFS) Mkdir(path string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.files[path]; ok {
+func (f *MemoryFS) Mkdir(name string) error {
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	parent, leaf, err := f.shared.resolveParent(f.abs(name))
+	if err != nil {
+		return err
+	}
+	if _, ok := parent.children[leaf]; ok {
 		return fs.ErrExist
 	}
-	for {
-		parent := filepath.Dir(path)
-		if parent == "." {
-			break
-		}
-		if _, ok := f.files[parent]; !ok {
-			return fs.ErrNotExist
-		}
-		f.create(path, 0o700|os.ModeDir)
-		path = parent
-	}
-	f.create(path, 0o700|os.ModeDir)
+	parent.children[leaf] = newNode(0o700 | fs.ModeDir)
 	return nil
 }
 
 func (f *MemoryFS) MkdirAll(path string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for path != "." {
-		if file, ok := f.files[path]; ok && file.mode.IsDir() {
-			file.mode |= 0o700
-			return nil
-		}
-		f.create(path, 0o700|os.ModeDir)
-		path = filepath.Dir(path)
-	}
-	return nil
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	return f.shared.mkdirAllLocked(f.abs(path))
 }
 
 func (f *MemoryFS) Remove(name string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	file, ok := f.files[name]
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	parent, leaf, err := f.shared.resolveParent(f.abs(name))
+	if err != nil {
+		return err
+	}
+	node, ok := parent.children[leaf]
 	if !ok {
 		return fs.ErrNotExist
 	}
-	if file.mode.IsDir() {
-		isEmpty := true
-		for _, file := range f.files {
-			if strings.HasPrefix(file.name, name+"/") {
-				isEmpty = false
-				break
-			}
-		}
-		if !isEmpty {
-			return &fs.PathError{Op: "remove", Path: name, Err: syscall.ENOTEMPTY}
-		}
+	if node.isDir() && len(node.children) > 0 {
+		return &fs.PathError{Op: "remove", Path: name, Err: syscall.ENOTEMPTY}
 	}
-	f.usedMemory -= int64(file.content.Len())
-	delete(f.files, name)
+	f.shared.usedMemory -= int64(node.content.Len())
+	delete(parent.children, leaf)
 	return nil
 }
 
 func (f *MemoryFS) RemoveAll(path string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	toDelete := []string{}
-	for _, file := range f.files {
-		if strings.HasPrefix(file.name, path+"/") || file.name == path {
-			toDelete = append(toDelete, file.name)
-		}
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	parent, leaf, err := f.shared.resolveParent(f.abs(path))
+	if err != nil {
+		// A missing or blocked parent means there is nothing to remove.
+		return nil
 	}
-	for _, name := range toDelete {
-		f.usedMemory -= int64(f.files[name].content.Len())
-		delete(f.files, name)
+	node, ok := parent.children[leaf]
+	if !ok {
+		return nil
 	}
+	f.shared.usedMemory -= subtreeContentSize(node)
+	delete(parent.children, leaf)
 	return nil
 }
 
 func (f *MemoryFS) Rename(oldpath, newpath string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	oldFile, ok := f.files[oldpath]
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	oldParent, oldLeaf, err := f.shared.resolveParent(f.abs(oldpath))
+	if err != nil {
+		return err
+	}
+	node, ok := oldParent.children[oldLeaf]
 	if !ok {
 		return fs.ErrNotExist
 	}
-	newFile, ok := f.files[newpath]
-	if ok {
-		if newFile.mode.IsDir() {
+	newParent, newLeaf, err := f.shared.resolveParent(f.abs(newpath))
+	if err != nil {
+		return err
+	}
+	if existing, ok := newParent.children[newLeaf]; ok {
+		if existing.isDir() {
 			return fs.ErrExist
 		}
-		f.usedMemory -= int64(newFile.content.Len())
+		f.shared.usedMemory -= int64(existing.content.Len())
 	}
-	delete(f.files, newpath)
-	delete(f.files, oldpath)
-	oldFile.name = newpath
-	f.files[newpath] = oldFile
+	delete(oldParent.children, oldLeaf)
+	newParent.children[newLeaf] = node
 	return nil
 }
 
 func (f *MemoryFS) Sub(path string) (FS, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.files[path]; !ok {
-		return nil, fs.ErrNotExist
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	abs := f.abs(path)
+	if _, err := f.shared.resolve(abs); err != nil {
+		return nil, err
 	}
-	return &subMemoryFS{f, path}, nil
+	return &MemoryFS{shared: f.shared, base: abs}, nil
 }
 
 func (f *MemoryFS) MkSub(path string) (FS, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.files[path]; ok {
-		return nil, fs.ErrExist
+	f.shared.mu.Lock()
+	defer f.shared.mu.Unlock()
+	abs := f.abs(path)
+	if err := f.shared.mkdirAllLocked(abs); err != nil {
+		return nil, err
 	}
-	f.create(path, 0o700|os.ModeDir)
-	return &subMemoryFS{f, path}, nil
+	return &MemoryFS{shared: f.shared, base: abs}, nil
 }
 
 func (f *MemoryFS) WalkDir(path string, fn fs.WalkDirFunc) error {
-	if path == "." {
-		path = ""
-	}
 	// Snapshot the matching entries under the lock so `fn` can safely call
 	// back into the FS without deadlocking.
 	type walkEntry struct {
 		name string
-		info MemoryFileInfo
+		info memFileInfo
 	}
-	f.mu.Lock()
-	entries := make([]walkEntry, 0, len(f.files))
-	for name, file := range f.files {
-		if !strings.HasPrefix(name, path) {
-			continue
+	f.shared.mu.Lock()
+	start, err := f.shared.resolve(f.abs(path))
+	if err != nil {
+		f.shared.mu.Unlock()
+		return err
+	}
+	entries := []walkEntry{}
+	var rec func(node *memNode, viewPath string)
+	rec = func(node *memNode, viewPath string) {
+		entries = append(entries, walkEntry{name: viewPath, info: node.info(viewPath)})
+		if node.isDir() {
+			for _, key := range sortedKeys(node.children) {
+				rec(node.children[key], filepath.Join(viewPath, key))
+			}
 		}
-		entries = append(entries, walkEntry{name: name, info: *file})
 	}
-	f.mu.Unlock()
-	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+	rec(start, path)
+	f.shared.mu.Unlock()
 	skipDir := ""
 	for i := range entries {
 		e := &entries[i]
-		if skipDir != "" {
-			if strings.HasPrefix(e.name, skipDir) {
-				continue
-			}
+		if skipDir != "" && strings.HasPrefix(e.name, skipDir) {
+			continue
 		}
 		if err := fn(e.name, &e.info, nil); err != nil {
 			switch {
@@ -484,21 +540,23 @@ func (f *MemoryFS) WalkDir(path string, fn fs.WalkDirFunc) error {
 }
 
 func (f *MemoryFS) String() string {
-	return "MemoryFS"
+	if f.base == "." {
+		return "MemoryFS"
+	}
+	return "MemoryFS(" + f.base + ")"
 }
 
-// A buffered channel of size 1 acts as the per-path mutex: sending claims it,
-// receiving releases it. Selecting the send against ctx.Done() makes the
-// acquisition itself cancel-aware, so a bailed-out caller can't leave the
-// lock held by a stranded goroutine.
+// Lock is cancel-aware: a size-1 channel per path is the mutex (send to
+// acquire, receive to release), so a blocked acquire can lose to ctx.Done().
 func (f *MemoryFS) Lock(ctx context.Context, path string) (func() error, error) {
-	f.locksMutex.Lock()
-	ch, existed := f.locks[path]
+	abs := f.abs(path)
+	f.shared.locksMutex.Lock()
+	ch, existed := f.shared.locks[abs]
 	if !existed {
 		ch = make(chan struct{}, 1)
-		f.locks[path] = ch
+		f.shared.locks[abs] = ch
 	}
-	f.locksMutex.Unlock()
+	f.shared.locksMutex.Unlock()
 
 	if !existed {
 		lf, err := f.OpenWriteExcl(path)
@@ -513,8 +571,8 @@ func (f *MemoryFS) Lock(ctx context.Context, path string) (func() error, error) 
 		}
 	}
 
-	// Honor an already-cancelled context before attempting the send: with
-	// both cases ready, the select below would pick at random.
+	// A cancelled ctx must win even when the lock is free. The select below
+	// would otherwise pick a ready case at random.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -522,11 +580,10 @@ func (f *MemoryFS) Lock(ctx context.Context, path string) (func() error, error) 
 	case ch <- struct{}{}:
 		unlocked := false
 		return func() error {
-			if unlocked {
-				return nil
+			if !unlocked {
+				unlocked = true
+				<-ch
 			}
-			unlocked = true
-			<-ch
 			return nil
 		}, nil
 	case <-ctx.Done():
@@ -534,118 +591,83 @@ func (f *MemoryFS) Lock(ctx context.Context, path string) (func() error, error) 
 	}
 }
 
-func (f *MemoryFS) Debug() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var sb strings.Builder
-	sb.WriteString("MemoryFS(")
-	for _, file := range f.files {
-		sb.WriteString(file.name + "\n")
+func (f *MemoryFS) abs(name string) string {
+	return filepath.Join(f.base, name)
+}
+
+// resolve returns the node at `abs`. A missing component yields fs.ErrNotExist,
+// descending through a non-directory yields ENOTDIR. Caller must hold s.mu.
+func (s *memShared) resolve(abs string) (*memNode, error) {
+	node := s.root
+	for _, seg := range splitPath(abs) {
+		if !node.isDir() {
+			return nil, syscall.ENOTDIR
+		}
+		child, ok := node.children[seg]
+		if !ok {
+			return nil, fs.ErrNotExist
+		}
+		node = child
 	}
-	sb.WriteString(")")
-	return sb.String()
+	return node, nil
 }
 
-type subMemoryFS struct {
-	parent *MemoryFS
-	path   string
+// resolveParent returns the parent directory node of `abs` and the final path
+// component. Caller must hold s.mu.
+func (s *memShared) resolveParent(abs string) (*memNode, string, error) {
+	parent, err := s.resolve(filepath.Dir(abs))
+	if err != nil {
+		return nil, "", err
+	}
+	if !parent.isDir() {
+		return nil, "", syscall.ENOTDIR
+	}
+	return parent, filepath.Base(abs), nil
 }
 
-func (f *subMemoryFS) OpenWrite(name string) (io.WriteCloser, error) {
-	return f.parent.OpenWrite(filepath.Join(f.path, name))
-}
-
-func (f *subMemoryFS) OpenWriteExcl(name string) (io.WriteCloser, error) {
-	return f.parent.OpenWriteExcl(filepath.Join(f.path, name))
-}
-
-func (f *subMemoryFS) FSync(file io.WriteCloser) error {
-	return f.parent.FSync(file)
-}
-
-func (f *subMemoryFS) FSyncDir(path string) error {
-	return f.parent.FSyncDir(path)
-}
-
-func (f *subMemoryFS) OpenRead(name string) (io.ReadCloser, error) {
-	return f.parent.OpenRead(filepath.Join(f.path, name))
-}
-
-func (f *subMemoryFS) Chmod(name string, mode fs.FileMode) error {
-	return f.parent.Chmod(filepath.Join(f.path, name), mode)
-}
-
-func (f *subMemoryFS) Chmtime(name string, mtime time.Time) error {
-	return f.parent.Chmtime(filepath.Join(f.path, name), mtime)
-}
-
-func (f *subMemoryFS) Chown(name string, uid int, gid int) error {
-	return f.parent.Chown(filepath.Join(f.path, name), uid, gid)
-}
-
-func (f *subMemoryFS) Stat(name string) (fs.FileInfo, error) {
-	return f.parent.Stat(filepath.Join(f.path, name))
-}
-
-func (f *subMemoryFS) Symlink(target string, name string) error {
-	return f.parent.Symlink(target, filepath.Join(f.path, name))
-}
-
-func (f *subMemoryFS) ReadLink(name string) (string, error) {
-	return f.parent.ReadLink(filepath.Join(f.path, name))
-}
-
-func (f *subMemoryFS) ReadDir(name string) ([]fs.DirEntry, error) {
-	return f.parent.ReadDir(filepath.Join(f.path, name))
-}
-
-func (f *subMemoryFS) Mkdir(name string) error {
-	return f.parent.Mkdir(filepath.Join(f.path, name))
-}
-
-func (f *subMemoryFS) MkdirAll(path string) error {
-	return f.parent.MkdirAll(filepath.Join(f.path, path))
-}
-
-func (f *subMemoryFS) Remove(name string) error {
-	return f.parent.Remove(filepath.Join(f.path, name))
-}
-
-func (f *subMemoryFS) RemoveAll(path string) error {
-	return f.parent.RemoveAll(filepath.Join(f.path, path))
-}
-
-func (f *subMemoryFS) Rename(oldpath, newpath string) error {
-	return f.parent.Rename(filepath.Join(f.path, oldpath), filepath.Join(f.path, newpath))
-}
-
-func (f *subMemoryFS) MkSub(path string) (FS, error) {
-	return f.parent.MkSub(filepath.Join(f.path, path))
-}
-
-func (f *subMemoryFS) Sub(path string) (FS, error) {
-	return f.parent.Sub(filepath.Join(f.path, path))
-}
-
-func (f *subMemoryFS) WalkDir(path string, fn fs.WalkDirFunc) error {
-	return f.parent.WalkDir(filepath.Join(f.path, path), func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+// mkdirAllLocked mirrors os.MkdirAll: create every missing component, no error
+// if the directory already exists, ENOTDIR if a component is a file. Caller
+// must hold s.mu.
+func (s *memShared) mkdirAllLocked(abs string) error {
+	node := s.root
+	for _, seg := range splitPath(abs) {
+		child, ok := node.children[seg]
+		switch {
+		case !ok:
+			child = newNode(0o700 | fs.ModeDir)
+			node.children[seg] = child
+		case !child.isDir():
+			return &fs.PathError{Op: "mkdir", Path: seg, Err: syscall.ENOTDIR}
 		}
-		relPath, err := filepath.Rel(f.path, path)
-		if err != nil {
-			return err
-		}
-		return fn(relPath, d, err)
-	})
+		node = child
+	}
+	return nil
 }
 
-func (f *subMemoryFS) String() string {
-	return "MemoryFS(" + f.path + ")"
+// splitPath turns a tree-relative path into its components. "." and "" are the
+// root and yield no components.
+func splitPath(abs string) []string {
+	if abs == "." || abs == "" {
+		return nil
+	}
+	return strings.Split(abs, "/")
 }
 
-func (f *subMemoryFS) Lock(ctx context.Context, path string) (unlock func() error, err error) {
-	return f.parent.Lock(ctx, filepath.Join(f.path, path))
+func sortedKeys(m map[string]*memNode) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func subtreeContentSize(node *memNode) int64 {
+	total := int64(node.content.Len())
+	for _, child := range node.children {
+		total += subtreeContentSize(child)
+	}
+	return total
 }
 
 func ReadFile(fs FS, name string) ([]byte, error) {
@@ -767,27 +789,4 @@ func AtomicWriteFile(fs FS, name string, perm fs.FileMode, data ...[]byte) error
 		return WrapErrorf(err, "failed to fsync parent directory of temporary file %s", tmpPath)
 	}
 	return nil
-}
-
-func (f *MemoryFS) create(path string, mode fs.FileMode) *MemoryFileInfo {
-	mtime := time.Now()
-	file := &MemoryFileInfo{ //nolint:exhaustruct
-		name:        path,
-		mode:        mode,
-		gid:         1000,
-		uid:         1001,
-		modTimeSec:  mtime.Unix(),
-		modTimeNSec: int32(mtime.Nanosecond()), //nolint:gosec
-	}
-	f.files[path] = file
-	return file
-}
-
-// Caller must hold f.mu.
-func (f *MemoryFS) openWriteLocked(name string) (io.WriteCloser, error) {
-	if file, ok := f.files[name]; ok && file.mode.IsDir() {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.EISDIR}
-	}
-	file := f.create(name, 0o600)
-	return &memoryFileWriter{&file.content, f, false}, nil
 }

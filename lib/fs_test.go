@@ -82,14 +82,14 @@ func TestMemoryFS(t *testing.T) {
 		sut := NewMemoryFS(20)
 
 		writeFile(t, sut, "a.txt", "1234567890")
-		assert.Equal(int64(10), sut.usedMemory)
+		assert.Equal(int64(10), sut.shared.usedMemory)
 
 		writeFile(t, sut, "b.txt", "12345")
-		assert.Equal(int64(15), sut.usedMemory)
+		assert.Equal(int64(15), sut.shared.usedMemory)
 
 		err := sut.Remove("a.txt")
 		assert.NoError(err)
-		assert.Equal(int64(5), sut.usedMemory)
+		assert.Equal(int64(5), sut.shared.usedMemory)
 	})
 
 	t.Run("RemoveAll frees memory", func(t *testing.T) {
@@ -101,11 +101,11 @@ func TestMemoryFS(t *testing.T) {
 		writeFile(t, sut, "a/b.txt", "1234567890")
 		writeFile(t, sut, "a/c.txt", "12345")
 		writeFile(t, sut, "d.txt", "123")
-		assert.Equal(int64(18), sut.usedMemory)
+		assert.Equal(int64(18), sut.shared.usedMemory)
 
 		err := sut.RemoveAll("a")
 		assert.NoError(err)
-		assert.Equal(int64(3), sut.usedMemory)
+		assert.Equal(int64(3), sut.shared.usedMemory)
 	})
 
 	t.Run("RemoveAll should not delete entries that merely share a prefix", func(t *testing.T) {
@@ -170,12 +170,12 @@ func TestMemoryFS(t *testing.T) {
 
 		writeFile(t, sut, "a.txt", "1234567890")
 		assert.NoError(sut.Rename("a.txt", "b.txt"))
-		assert.Equal(int64(10), sut.usedMemory)
+		assert.Equal(int64(10), sut.shared.usedMemory)
 
 		writeFile(t, sut, "c.txt", "12345")
-		assert.Equal(int64(15), sut.usedMemory)
+		assert.Equal(int64(15), sut.shared.usedMemory)
 		assert.NoError(sut.Rename("b.txt", "c.txt"))
-		assert.Equal(int64(10), sut.usedMemory)
+		assert.Equal(int64(10), sut.shared.usedMemory)
 	})
 
 	t.Run("Concurrent FS operations are race-free", func(t *testing.T) {
@@ -288,6 +288,192 @@ func checkConsistency(t *testing.T, newSut func() FS) {
 		assert.NoError(err)
 		assert.NoError(w.Close())
 		assert.Equal("efgh", readFile(t, sut, "a.txt"))
+	})
+
+	t.Run("OpenWrite with a missing parent directory should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		_, err := sut.OpenWrite("missing/a.txt")
+		assert.ErrorIs(err, fs.ErrNotExist)
+	})
+
+	t.Run("OpenWriteExcl with a missing parent directory should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		_, err := sut.OpenWriteExcl("missing/a.txt")
+		assert.ErrorIs(err, fs.ErrNotExist)
+	})
+
+	t.Run("OpenWrite on a path whose parent is a file should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "f.txt", "x")
+		_, err := sut.OpenWrite("f.txt/child")
+		assert.ErrorIs(err, syscall.ENOTDIR)
+	})
+
+	t.Run("OpenWrite on an existing file should preserve its mode", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "a.txt", "abcd")
+		assert.NoError(sut.Chmod("a.txt", 0o755))
+		writeFile(t, sut, "a.txt", "ef")
+		stat, err := sut.Stat("a.txt")
+		assert.NoError(err)
+		assert.Equal(fs.FileMode(0o755), stat.Mode().Perm())
+		assert.Equal("ef", readFile(t, sut, "a.txt"))
+	})
+
+	t.Run("Mkdir with a parent that is a file should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "f.txt", "x")
+		assert.ErrorIs(sut.Mkdir("f.txt/sub"), syscall.ENOTDIR)
+	})
+
+	t.Run("MkdirAll over an existing file should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "f.txt", "x")
+		assert.ErrorIs(sut.MkdirAll("f.txt/sub"), syscall.ENOTDIR)
+	})
+
+	t.Run("Symlink with a missing parent directory should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		assert.ErrorIs(sut.Symlink("target", "missing/link"), fs.ErrNotExist)
+	})
+
+	t.Run("Symlink with a parent that is a file should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "f.txt", "x")
+		assert.ErrorIs(sut.Symlink("target", "f.txt/link"), syscall.ENOTDIR)
+	})
+
+	t.Run("ReadDir returns entries sorted by name", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		assert.NoError(sut.Mkdir("d"))
+		for _, n := range []string{"c.txt", "a.txt", "b.txt"} {
+			writeFile(t, sut, "d/"+n, "x")
+		}
+		entries, err := sut.ReadDir("d")
+		assert.NoError(err)
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		assert.Equal([]string{"a.txt", "b.txt", "c.txt"}, names)
+	})
+
+	t.Run("ReadDir on a file should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "f.txt", "x")
+		_, err := sut.ReadDir("f.txt")
+		assert.ErrorIs(err, syscall.ENOTDIR)
+	})
+
+	t.Run("MkSub creates missing parent directories", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		_, err := sut.MkSub("a/b/c")
+		assert.NoError(err)
+		stat, err := sut.Stat("a/b")
+		assert.NoError(err)
+		assert.Equal(true, stat.IsDir())
+	})
+
+	t.Run("MkSub on an existing directory should succeed", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		_, err := sut.MkSub("a")
+		assert.NoError(err)
+		_, err = sut.MkSub("a")
+		assert.NoError(err)
+	})
+
+	t.Run("Rename a non-empty directory moves its contents", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		assert.NoError(sut.Mkdir("src"))
+		writeFile(t, sut, "src/child.txt", "data")
+		assert.NoError(sut.Rename("src", "dst"))
+		assert.Equal("data", readFile(t, sut, "dst/child.txt"))
+		_, err := sut.Stat("src/child.txt")
+		assert.ErrorIs(err, fs.ErrNotExist)
+	})
+
+	t.Run("Rename to a missing parent directory should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		writeFile(t, sut, "f.txt", "x")
+		assert.ErrorIs(sut.Rename("f.txt", "missing/f.txt"), fs.ErrNotExist)
+	})
+
+	t.Run("WalkDir on a missing path should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		err := sut.WalkDir("missing", func(string, fs.DirEntry, error) error { return nil })
+		assert.ErrorIs(err, fs.ErrNotExist)
+	})
+
+	t.Run("WalkDir should not descend into siblings sharing a name prefix", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		assert.NoError(sut.Mkdir("a"))
+		writeFile(t, sut, "a/inner.txt", "x")
+		writeFile(t, sut, "ab.txt", "x")
+		seen := map[string]bool{}
+		err := sut.WalkDir("a", func(p string, _ fs.DirEntry, _ error) error {
+			seen[p] = true
+			return nil
+		})
+		assert.NoError(err)
+		assert.Equal(true, seen["a"])
+		assert.Equal(true, seen["a/inner.txt"])
+		assert.Equal(false, seen["ab.txt"])
+	})
+
+	t.Run("FSyncDir on a missing path should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+
+		assert.ErrorIs(sut.FSyncDir("missing"), fs.ErrNotExist)
 	})
 
 	t.Run("OpenWrite on a directory should fail", func(t *testing.T) {
