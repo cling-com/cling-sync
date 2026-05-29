@@ -7,6 +7,8 @@ import (
 )
 
 type RepositorySyncMonitor interface {
+	OnSrcBlockIdsRead(blocksTotal int)
+	OnDstBlockIdsRead(blocksTotal int)
 	OnBeforeCopy(srcBlocks, dstBlocks int)
 	OnCopyBlock(blockId BlockId, existed bool, length int)
 	OnBeforeUpdateDstHead(newHead RevisionId)
@@ -15,6 +17,8 @@ type RepositorySyncMonitor interface {
 type RepositorySyncOptions struct {
 	Monitor RepositorySyncMonitor
 }
+
+const blockIdReadProgressEvery = 1000
 
 // Sync new blocks from src to dst, then advance dst's head to src's.
 // Both storages must share the exact same repository config.
@@ -58,6 +62,9 @@ func SyncRepository( //nolint:funlen
 	srcSeenHead := false
 	srcTemp, err := ReadSortedBlockIds(src, srcFS, func(id BlockId) {
 		srcCount++
+		if srcCount%blockIdReadProgressEvery == 0 {
+			opts.Monitor.OnSrcBlockIdsRead(srcCount)
+		}
 		if id == BlockId(srcHead) {
 			srcSeenHead = true
 		}
@@ -66,6 +73,9 @@ func SyncRepository( //nolint:funlen
 		return WrapErrorf(err, "failed to snapshot src block ids")
 	}
 	defer srcTemp.Remove() //nolint:errcheck
+	if srcCount%blockIdReadProgressEvery != 0 {
+		opts.Monitor.OnSrcBlockIdsRead(srcCount)
+	}
 	if !srcSeenHead {
 		return Errorf("src head %s is not present in src storage", srcHead)
 	}
@@ -74,11 +84,19 @@ func SyncRepository( //nolint:funlen
 		return WrapErrorf(err, "failed to create temp dir for dst block ids")
 	}
 	dstCount := 0
-	dstTemp, err := ReadSortedBlockIds(dst, dstFS, func(BlockId) { dstCount++ })
+	dstTemp, err := ReadSortedBlockIds(dst, dstFS, func(BlockId) {
+		dstCount++
+		if dstCount%blockIdReadProgressEvery == 0 {
+			opts.Monitor.OnDstBlockIdsRead(dstCount)
+		}
+	})
 	if err != nil {
 		return WrapErrorf(err, "failed to snapshot dst block ids")
 	}
 	defer dstTemp.Remove() //nolint:errcheck
+	if dstCount%blockIdReadProgressEvery != 0 {
+		opts.Monitor.OnDstBlockIdsRead(dstCount)
+	}
 	dstCache, err := NewTempCache(dstTemp, func(id BlockId) string { return string(id[:]) }, 4)
 	if err != nil {
 		return WrapErrorf(err, "failed to open dst block id cache")

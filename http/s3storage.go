@@ -228,7 +228,7 @@ func (c *S3StorageClient) WriteBlock(blockId lib.BlockId, data []byte) (bool, er
 	return false, lib.Errorf("write block failed: %d (%s)", status, truncateErrBody(body))
 }
 
-func (c *S3StorageClient) ReadBlockIds(yield func(lib.BlockId) error) error {
+func (c *S3StorageClient) ReadBlockIds(yield func(lib.BlockId) bool) error {
 	prefix := c.key("blocks") + "/"
 	continuation := ""
 	for {
@@ -263,8 +263,8 @@ func (c *S3StorageClient) ReadBlockIds(yield func(lib.BlockId) error) error {
 			if err != nil {
 				return lib.WrapErrorf(err, "invalid block key %q", item.Key)
 			}
-			if err := yield(blockId); err != nil {
-				return err
+			if !yield(blockId) {
+				return nil
 			}
 		}
 		if !result.IsTruncated {

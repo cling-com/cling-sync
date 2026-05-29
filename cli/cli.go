@@ -1933,7 +1933,7 @@ func main() { //nolint:funlen
 		os.Exit(1)
 	}
 	if err != nil {
-		PrintErr(err.Error())
+		PrintErr("%s", err.Error())
 		os.Exit(1)
 	}
 }

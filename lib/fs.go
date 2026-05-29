@@ -469,9 +469,12 @@ func (f *MemoryFS) WalkDir(path string, fn fs.WalkDirFunc) error {
 			}
 		}
 		if err := fn(e.name, &e.info, nil); err != nil {
-			if errors.Is(err, fs.SkipDir) {
+			switch {
+			case errors.Is(err, fs.SkipAll):
+				return nil
+			case errors.Is(err, fs.SkipDir):
 				skipDir = e.name + "/"
-			} else {
+			default:
 				return err
 			}
 		}

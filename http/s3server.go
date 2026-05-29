@@ -18,16 +18,34 @@ import (
 	"github.com/flunderpero/cling-sync/lib"
 )
 
-const storageLockTimeout = 2 * time.Second
+const (
+	storageLockTimeout           = 2 * time.Second
+	defaultListPageSize          = 10000
+	defaultListInactivityTimeout = 60 * time.Second
+)
 
 type S3StorageServer struct {
-	Storage         lib.Storage
-	Region          string
-	AccessKeyID     string
-	SecretAccessKey string
+	Storage               lib.Storage
+	Region                string
+	AccessKeyID           string
+	SecretAccessKey       string
+	ListPageSize          int
+	ListInactivityTimeout time.Duration
 
 	locksMutex sync.Mutex
 	locks      map[string]*serverLock
+
+	// Only one block-id listing runs at a time.
+	listMu      sync.Mutex
+	listSession *listSession
+}
+
+type listSession struct {
+	id           string
+	ch           chan lib.BlockId
+	cancel       context.CancelFunc
+	producerErr  error
+	lastActivity time.Time
 }
 
 type serverLock struct {
@@ -39,7 +57,9 @@ func NewS3StorageServer(storage lib.Storage, region, accessKeyID, secretAccessKe
 	return &S3StorageServer{
 		Storage: storage, Region: region,
 		AccessKeyID: accessKeyID, SecretAccessKey: secretAccessKey,
+		ListPageSize: defaultListPageSize, ListInactivityTimeout: defaultListInactivityTimeout,
 		locksMutex: sync.Mutex{}, locks: map[string]*serverLock{},
+		listMu: sync.Mutex{}, listSession: nil,
 	}
 }
 
@@ -132,40 +152,113 @@ func (s *S3StorageServer) handleControlRoute(
 	s.handleControl(w, r, section, name, body)
 }
 
+//nolint:funlen,contextcheck
 func (s *S3StorageServer) handleList(w http.ResponseWriter, r *http.Request) {
 	wantPrefix := r.URL.Query().Get("prefix")
+	token := r.URL.Query().Get("continuation-token")
 	// Only the blocks/ namespace is enumerable. Other prefixes return empty.
 	if !strings.HasSuffix(wantPrefix, "blocks/") {
-		s.writeListResult(w, nil)
+		s.writeListResult(w, wantPrefix, nil, false, "")
 		return
 	}
-	var keys []string
-	err := s.Storage.ReadBlockIds(func(id lib.BlockId) error {
-		keys = append(keys, wantPrefix+id.String())
-		return nil
-	})
-	if err != nil {
-		s.internalError(w, err)
+	s.listMu.Lock()
+	defer s.listMu.Unlock()
+	sess := s.listSession
+	if token == "" {
+		if sess != nil && time.Since(sess.lastActivity) < s.ListInactivityTimeout {
+			s.writeError(w, http.StatusServiceUnavailable, "SlowDown", "a block listing is already in progress")
+			return
+		}
+		if sess != nil {
+			sess.cancel()
+		}
+		id, err := lib.RandStr(32)
+		if err != nil {
+			s.internalError(w, lib.WrapErrorf(err, "failed to generate listing session id"))
+			return
+		}
+		ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec
+		sess = &listSession{
+			id:           id,
+			ch:           make(chan lib.BlockId, s.ListPageSize*3),
+			cancel:       cancel,
+			producerErr:  nil,
+			lastActivity: time.Now(),
+		}
+		s.listSession = sess
+		go func() {
+			defer close(sess.ch)
+			err := s.Storage.ReadBlockIds(func(blockId lib.BlockId) bool {
+				select {
+				case sess.ch <- blockId:
+					return true
+				case <-ctx.Done():
+					return false
+				}
+			})
+			if err != nil {
+				sess.producerErr = err
+			}
+		}()
+	} else if sess == nil || sess.id != token {
+		s.writeError(w, http.StatusBadRequest, "InvalidArgument", "no matching listing session")
 		return
 	}
-	s.writeListResult(w, keys)
+	sess.lastActivity = time.Now()
+
+	keys := make([]string, 0, s.ListPageSize)
+	done := false
+	for i := 0; i < s.ListPageSize && !done; i++ {
+		select {
+		case id, ok := <-sess.ch:
+			if !ok {
+				done = true
+			} else {
+				keys = append(keys, wantPrefix+id.String())
+			}
+		case <-r.Context().Done():
+			// Client disconnected mid-page. The session stays alive for one
+			// inactivity window so a reconnect with the token can resume it.
+			return
+		}
+	}
+
+	if done {
+		s.listSession = nil
+		sess.cancel()
+		if sess.producerErr != nil {
+			s.internalError(w, sess.producerErr)
+			return
+		}
+		s.writeListResult(w, wantPrefix, keys, false, "")
+		return
+	}
+	s.writeListResult(w, wantPrefix, keys, true, sess.id)
 }
 
-func (s *S3StorageServer) writeListResult(w http.ResponseWriter, keys []string) {
+func (s *S3StorageServer) writeListResult(
+	w http.ResponseWriter, prefix string, keys []string, isTruncated bool, nextToken string,
+) {
 	type entry struct {
 		Key string `xml:"Key"`
 	}
 	type result struct {
-		XMLName     xml.Name `xml:"ListBucketResult"`
-		IsTruncated bool     `xml:"IsTruncated"`
-		Contents    []entry  `xml:"Contents"`
+		XMLName               xml.Name `xml:"ListBucketResult"`
+		Prefix                string   `xml:"Prefix"`
+		IsTruncated           bool     `xml:"IsTruncated"`
+		NextContinuationToken string   `xml:"NextContinuationToken,omitempty"`
+		Contents              []entry  `xml:"Contents"`
 	}
 	contents := make([]entry, len(keys))
 	for i, k := range keys {
 		contents[i] = entry{Key: k}
 	}
 	out, err := xml.Marshal(result{
-		XMLName: xml.Name{Space: "", Local: "ListBucketResult"}, IsTruncated: false, Contents: contents,
+		XMLName:               xml.Name{Space: "", Local: "ListBucketResult"},
+		Prefix:                prefix,
+		IsTruncated:           isTruncated,
+		NextContinuationToken: nextToken,
+		Contents:              contents,
 	})
 	if err != nil {
 		s.internalError(w, err)

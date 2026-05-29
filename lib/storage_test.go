@@ -287,9 +287,9 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.NoError(f.Close())
 
 		blockIds := []BlockId{}
-		err = sut.ReadBlockIds(func(blockId BlockId) error {
+		err = sut.ReadBlockIds(func(blockId BlockId) bool {
 			blockIds = append(blockIds, blockId)
-			return nil
+			return true
 		})
 		assert.NoError(err)
 		slices.SortFunc(blockIds, func(a, b BlockId) int {

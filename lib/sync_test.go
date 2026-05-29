@@ -308,6 +308,14 @@ func (m *TestSyncMonitor) CountBlockCopies(blockId BlockId) int {
 	return count
 }
 
+func (m *TestSyncMonitor) OnSrcBlockIdsRead(n int) {
+	m.Calls = append(m.Calls, NewMockCall("OnSrcBlockIdsRead", n))
+}
+
+func (m *TestSyncMonitor) OnDstBlockIdsRead(n int) {
+	m.Calls = append(m.Calls, NewMockCall("OnDstBlockIdsRead", n))
+}
+
 func (m *TestSyncMonitor) OnBeforeCopy(srcBlocks, dstBlocks int) {
 	m.Calls = append(m.Calls, NewMockCall("OnBeforeCopy", srcBlocks, dstBlocks))
 }

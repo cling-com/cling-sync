@@ -208,6 +208,10 @@ type countingMonitor struct {
 	blocks int
 }
 
+func (m *countingMonitor) OnSrcBlockIdsRead(int) {}
+
+func (m *countingMonitor) OnDstBlockIdsRead(int) {}
+
 func (m *countingMonitor) OnBeforeCopy(int, int) {}
 
 func (m *countingMonitor) OnCopyBlock(_ lib.BlockId, existed bool, _ int) {

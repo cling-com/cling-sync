@@ -579,6 +579,20 @@ func NewDefaultSyncRepoMonitor(mode DefaultMonitorMode, emit MonitorEmit) *Defau
 	}
 }
 
+func (m *DefaultSyncRepoMonitor) OnSrcBlockIdsRead(blocksTotal int) {
+	if m.Mode != DefaultMonitorModeProgress {
+		return
+	}
+	m.emit(fmt.Sprintf("Read %d source blocks", blocksTotal))
+}
+
+func (m *DefaultSyncRepoMonitor) OnDstBlockIdsRead(blocksTotal int) {
+	if m.Mode != DefaultMonitorModeProgress {
+		return
+	}
+	m.emit(fmt.Sprintf("Read %d target blocks", blocksTotal))
+}
+
 func (m *DefaultSyncRepoMonitor) OnBeforeCopy(srcBlocks, dstBlocks int) {
 	m.StartTime = time.Now()
 	m.SrcBlocks = srcBlocks

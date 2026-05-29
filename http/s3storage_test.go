@@ -4,6 +4,7 @@ package http
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/xml"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -192,9 +193,9 @@ func checkS3Storage(t *testing.T, newSut func(*testing.T) (S3StorageConfig, HTTP
 			assert.NoError(err)
 		}
 		var got []lib.BlockId
-		assert.NoError(c.ReadBlockIds(func(id lib.BlockId) error {
+		assert.NoError(c.ReadBlockIds(func(id lib.BlockId) bool {
 			got = append(got, id)
-			return nil
+			return true
 		}))
 		slices.SortFunc(got, lib.BlockIdCompare)
 		slices.SortFunc(ids, lib.BlockIdCompare)
@@ -203,9 +204,9 @@ func checkS3Storage(t *testing.T, newSut func(*testing.T) (S3StorageConfig, HTTP
 
 	t.Run("ReadBlockIds on empty storage yields nothing", func(t *testing.T) {
 		t.Parallel()
-		err := initClient(t).ReadBlockIds(func(id lib.BlockId) error {
+		err := initClient(t).ReadBlockIds(func(id lib.BlockId) bool {
 			t.Fatalf("unexpected id %s", id)
-			return nil
+			return true
 		})
 		lib.NewAssert(t).NoError(err)
 	})
@@ -513,6 +514,163 @@ func TestS3StorageServer(t *testing.T) {
 		}, NewDefaultHTTPClient(srv.Client()))
 		_, err := client.ReadBlock(td.BlockId("1"), lib.NewBlockBuf())
 		assert.Error(err, "response body exceeds buffer")
+	})
+}
+
+func TestS3StorageServerListPagination(t *testing.T) {
+	t.Parallel()
+
+	const pageSize = 5
+
+	newSut := func(t *testing.T, blockCount int) *S3StorageClient { //nolint:thelper
+		assert := lib.NewAssert(t)
+		storage, err := lib.NewFileStorage(td.NewFS(t), lib.StoragePurposeRepository)
+		assert.NoError(err)
+		server := NewS3StorageServer(storage, testRegion, testAccessKey, testSecret)
+		server.ListPageSize = pageSize
+		mux := http.NewServeMux()
+		server.RegisterRoutes(mux)
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		client := NewS3StorageClient(S3StorageConfig{
+			BucketURL:       srv.URL,
+			Region:          testRegion,
+			Prefix:          "",
+			AccessKeyID:     testAccessKey,
+			SecretAccessKey: []byte(testSecret),
+		}, NewDefaultHTTPClient(srv.Client()))
+		assert.NoError(client.Init(lib.Toml{}, ""))
+		for i := range blockCount {
+			_, err := client.WriteBlock(td.BlockId(strconv.Itoa(i)), []byte("data"))
+			assert.NoError(err)
+		}
+		return client
+	}
+
+	listAll := func(t *testing.T, c *S3StorageClient) []lib.BlockId { //nolint:thelper
+		var got []lib.BlockId
+		lib.NewAssert(t).NoError(c.ReadBlockIds(func(id lib.BlockId) bool {
+			got = append(got, id)
+			return true
+		}))
+		slices.SortFunc(got, lib.BlockIdCompare)
+		return got
+	}
+
+	cases := []struct {
+		name  string
+		count int
+	}{
+		// Boundary values: below, at, and above one page.
+		{"Below page size", pageSize - 1},
+		{"Exactly one page", pageSize},
+		{"One past page size", pageSize + 1},
+		{"Multiple pages", pageSize*3 + 2},
+	}
+	for _, tc := range cases {
+		t.Run("Pagination with "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert := lib.NewAssert(t)
+			c := newSut(t, tc.count)
+			got := listAll(t, c)
+			assert.Equal(tc.count, len(got))
+		})
+	}
+
+	t.Run("Continuation token from a stale session should be rejected", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		// Drive the server directly via signed requests so we control the
+		// continuation token. A token that doesn't match the current
+		// (empty) session must return 400.
+		storage, err := lib.NewFileStorage(td.NewFS(t), lib.StoragePurposeRepository)
+		assert.NoError(err)
+		server := NewS3StorageServer(storage, testRegion, testAccessKey, testSecret)
+		mux := http.NewServeMux()
+		server.RegisterRoutes(mux)
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		client := NewS3StorageClient(S3StorageConfig{
+			BucketURL: srv.URL, Region: testRegion, Prefix: "",
+			AccessKeyID: testAccessKey, SecretAccessKey: []byte(testSecret),
+		}, NewDefaultHTTPClient(srv.Client()))
+		assert.NoError(client.Init(lib.Toml{}, ""))
+
+		resp, err := sendSignedTest(srv, http.MethodGet,
+			srv.URL+"/?list-type=2&prefix=blocks%2F&continuation-token=bogus", nil)
+		assert.NoError(err)
+		assert.Equal(http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("An idle listing is evicted after the inactivity timeout", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		storage, err := lib.NewFileStorage(td.NewFS(t), lib.StoragePurposeRepository)
+		assert.NoError(err)
+		server := NewS3StorageServer(storage, testRegion, testAccessKey, testSecret)
+		server.ListPageSize = pageSize
+		server.ListInactivityTimeout = 50 * time.Millisecond
+		mux := http.NewServeMux()
+		server.RegisterRoutes(mux)
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		client := NewS3StorageClient(S3StorageConfig{
+			BucketURL: srv.URL, Region: testRegion, Prefix: "",
+			AccessKeyID: testAccessKey, SecretAccessKey: []byte(testSecret),
+		}, NewDefaultHTTPClient(srv.Client()))
+		assert.NoError(client.Init(lib.Toml{}, ""))
+		for i := range pageSize * 3 {
+			_, err := client.WriteBlock(td.BlockId(strconv.Itoa(i)), []byte("data"))
+			assert.NoError(err)
+		}
+		listURL := client.cfg.BucketURL + "/?list-type=2&prefix=blocks%2F"
+		// Start a listing and leave it in flight.
+		status, _, err := client.do(t.Context(), http.MethodGet, listURL, nil, nil, nil)
+		assert.NoError(err)
+		assert.Equal(http.StatusOK, status)
+		// Once it has been idle past the timeout, a new listing evicts it and is
+		// accepted rather than throttled.
+		time.Sleep(150 * time.Millisecond)
+		status, _, err = client.do(t.Context(), http.MethodGet, listURL, nil, nil, nil)
+		assert.NoError(err)
+		assert.Equal(http.StatusOK, status)
+	})
+
+	t.Run("A new listing while one is in flight should be throttled", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		c := newSut(t, pageSize*3)
+		listURL := c.cfg.BucketURL + "/?list-type=2&prefix=blocks%2F"
+		// Grab page 1 and a continuation token, leaving the session in flight.
+		status, body, err := c.do(t.Context(), http.MethodGet, listURL, nil, nil, nil)
+		assert.NoError(err)
+		assert.Equal(http.StatusOK, status)
+		var page struct {
+			NextContinuationToken string `xml:"NextContinuationToken"`
+		}
+		assert.NoError(xml.Unmarshal(body, &page))
+		assert.Equal(true, page.NextContinuationToken != "")
+
+		// A second fresh listing must be refused, not allowed to stomp the first.
+		status, _, err = c.do(t.Context(), http.MethodGet, listURL, nil, nil, nil)
+		assert.NoError(err)
+		assert.Equal(http.StatusServiceUnavailable, status)
+
+		// Draining the in-flight session to completion frees the slot.
+		for page.NextContinuationToken != "" {
+			url := listURL + "&continuation-token=" + page.NextContinuationToken
+			status, body, err = c.do(t.Context(), http.MethodGet, url, nil, nil, nil)
+			assert.NoError(err)
+			assert.Equal(http.StatusOK, status)
+			page.NextContinuationToken = ""
+			assert.NoError(xml.Unmarshal(body, &page))
+		}
+		var got []lib.BlockId
+		assert.NoError(c.ReadBlockIds(func(id lib.BlockId) bool {
+			got = append(got, id)
+			return true
+		}))
+		assert.Equal(pageSize*3, len(got))
 	})
 }
 

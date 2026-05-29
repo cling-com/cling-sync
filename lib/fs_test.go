@@ -767,6 +767,22 @@ func checkConsistency(t *testing.T, newSut func() FS) {
 		assert.Equal([]string{".", "dir1a.txt", "dir1b", "dir1b/a.txt"}, actual)
 	})
 
+	t.Run("WalkDir with SkipAll stops the walk", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := newSut()
+		writeFile(t, sut, "a.txt", "a")
+		writeFile(t, sut, "b.txt", "b")
+		writeFile(t, sut, "c.txt", "c")
+		visited := 0
+		err := sut.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+			visited++
+			return fs.SkipAll
+		})
+		assert.NoError(err)
+		assert.Equal(1, visited)
+	})
+
 	t.Run("WalkDir with last error", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

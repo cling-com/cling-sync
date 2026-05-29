@@ -125,14 +125,19 @@ func NewBlockIdTempWriter(fs FS) *TempWriter[BlockId] {
 // `inspect`, if non-nil, sees every id before it is added to the writer.
 func ReadSortedBlockIds(storage Storage, fs FS, inspect func(BlockId)) (*Temp[BlockId], error) {
 	writer := NewBlockIdTempWriter(fs)
-	err := storage.ReadBlockIds(func(id BlockId) error {
+	var addErr error
+	err := storage.ReadBlockIds(func(id BlockId) bool {
 		if inspect != nil {
 			inspect(id)
 		}
-		return writer.Add(id)
+		addErr = writer.Add(id)
+		return addErr == nil
 	})
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read block ids")
+	}
+	if addErr != nil {
+		return nil, WrapErrorf(addErr, "failed to add block id")
 	}
 	temp, err := writer.Finalize()
 	if err != nil {
@@ -170,8 +175,8 @@ type Storage interface {
 	Open() (Toml, error)
 	HasBlock(blockId BlockId) (bool, error)
 
-	// Stream all block ids present in storage.
-	ReadBlockIds(yield func(BlockId) error) error
+	// Stream all block ids present in storage. `yield` returns false to stop early.
+	ReadBlockIds(yield func(BlockId) bool) error
 
 	// Return `ErrBlockNotFound` if the block does not exist.
 	ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error)
@@ -286,7 +291,7 @@ func (s *FileStorage) HasBlock(blockId BlockId) (bool, error) {
 	return true, nil
 }
 
-func (s *FileStorage) ReadBlockIds(yield func(BlockId) error) error {
+func (s *FileStorage) ReadBlockIds(yield func(BlockId) bool) error {
 	objectsPath := filepath.Join(".cling", string(s.Purpose), "objects")
 	stat, err := s.FS.Stat(objectsPath)
 	if err != nil {
@@ -317,8 +322,8 @@ func (s *FileStorage) ReadBlockIds(yield func(BlockId) error) error {
 		if err != nil {
 			return WrapErrorf(err, "invalid block path %s", path)
 		}
-		if err := yield(blockId); err != nil {
-			return WrapErrorf(err, "failed to handle block id %s", blockId)
+		if !yield(blockId) {
+			return fs.SkipAll
 		}
 		return nil
 	})
