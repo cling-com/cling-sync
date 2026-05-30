@@ -1,4 +1,7 @@
-//go:build wasm && test
+//go:build wasm && test && checkrepo
+
+// Checks for the repository API. The `checkrepo` tag selects this file into the
+// repository test binary. See `testgo.go` for the wasm test system.
 
 package main
 

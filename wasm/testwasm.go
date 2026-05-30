@@ -1,20 +1,12 @@
 //go:build wasm && test
 
-// The Wasm side of the test runner. This file is always compiled as part of `RunWasMTests`.
-// It provides a simple API for writing tests, a limited version of Go's `testing.T`.
+// The wasm side of the test runner: a small `testing.T`-like harness (`WasmT`)
+// that JS drives through the exported `registerTests`. Checks register
+// themselves in an `init`, for example:
 //
-// Because tests cannot be discovered at runtime, they must be registered with `RegisterTest`.
-// This should be done in an `init` function in the test file:
+//	func init() { RegisterTest("My test", TestMyTest) }
 //
-//	package my_test
-//
-//  func init() {
-//		RegisterTest("My test", TestMyTest)
-//	}
-//
-//  func TestMyTest(t *WasmT) {
-//      t.Fatal("This test always fails")
-//  }
+// See `testgo.go` for how the whole wasm test system fits together.
 
 package main
 

@@ -772,5 +772,5 @@ Serve a repository, build the Wasm example, then open it:
     open http://127.0.0.1:8000/example.html
 
 The default Go compiler produces a Wasm binary of about 5 MiB. Building
-with `--optimize` uses [TinyGo](https://tinygo.org/) and reduces it to
-about 600 KiB.
+with `--tinygo` uses [TinyGo](https://tinygo.org/) and reduces it to
+about 750 KiB.

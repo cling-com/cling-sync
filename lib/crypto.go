@@ -211,7 +211,8 @@ func UnmarshalArgon2idConfig(s string) (Argon2id, error) {
 			return 0, Errorf("expected parameter %s", param)
 		}
 		i, err := strconv.Atoi(s)
-		if err != nil || i < 0 || i >= 1<<32 {
+		// `int64(i)` so the bound does not overflow `int` on 32-bit targets (TinyGo wasm).
+		if err != nil || i < 0 || int64(i) >= 1<<32 {
 			return 0, Errorf("invalid value for parameter %s", param)
 		}
 		return uint32(i), nil

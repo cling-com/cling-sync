@@ -19,7 +19,7 @@ func OpenStorage(uri string, passphrase []byte) (lib.Storage, error) {
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to decode S3 URI")
 		}
-		return clingHTTP.NewS3StorageClient(cfg, nil), nil
+		return clingHTTP.NewS3StorageClient(cfg, clingHTTP.NewDefaultHTTPClient(nil)), nil
 	}
 	storage, err := lib.NewFileStorage(lib.NewRealFS(uri), lib.StoragePurposeRepository)
 	if err != nil {

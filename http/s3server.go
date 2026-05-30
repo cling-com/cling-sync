@@ -1,3 +1,5 @@
+//go:build !wasm
+
 // An S3 compatible server that only implements what's actually needed for cling-sync clients.
 // It only ever serves one repository.
 package http

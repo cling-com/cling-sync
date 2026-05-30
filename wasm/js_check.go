@@ -1,4 +1,7 @@
-//go:build wasm && test
+//go:build wasm && test && checkhttp
+
+// Checks for the `WasmHTTPClient`. The `checkhttp` tag selects this file into
+// the http test binary. See `testgo.go` for the wasm test system.
 
 package main
 

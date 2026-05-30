@@ -7,10 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
-	"io"
 	"maps"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -21,6 +18,21 @@ import (
 	"github.com/flunderpero/cling-sync/lib"
 )
 
+// HTTP methods and status codes the S3 client cares about. They are defined
+// here so this file does not import net/http and can be compiled for wasm.
+const (
+	methodGet    = "GET"
+	methodHead   = "HEAD"
+	methodPut    = "PUT"
+	methodDelete = "DELETE"
+
+	statusOK                 = 200
+	statusCreated            = 201
+	statusNoContent          = 204
+	statusNotFound           = 404
+	statusPreconditionFailed = 412
+)
+
 type HTTPClient interface {
 	// Response bytes go into `dst` when non-nil, otherwise into a fresh slice capped at `MaxBlockSize`.
 	Request(
@@ -29,45 +41,6 @@ type HTTPClient interface {
 		headers map[string]string,
 		body, dst []byte,
 	) (status int, respBody []byte, err error)
-}
-
-type DefaultHTTPClient struct {
-	Client *http.Client
-}
-
-func NewDefaultHTTPClient(client *http.Client) *DefaultHTTPClient {
-	if client == nil {
-		client = http.DefaultClient
-	}
-	return &DefaultHTTPClient{Client: client}
-}
-
-func (c *DefaultHTTPClient) Request(
-	ctx context.Context,
-	method, fullURL string,
-	headers map[string]string,
-	body, dst []byte,
-) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
-	if err != nil {
-		return 0, nil, lib.WrapErrorf(err, "failed to create request")
-	}
-	req.ContentLength = int64(len(body))
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	// SSRF taint is the design: `fullURL` is the user's configured bucket
-	// URL. We're their S3 client.
-	resp, err := c.Client.Do(req) //nolint:gosec
-	if err != nil {
-		return 0, nil, lib.WrapErrorf(err, "failed to execute %s %s", method, fullURL)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	respBody, err := readCappedBody(resp.Body, dst)
-	if err != nil {
-		return resp.StatusCode, nil, err
-	}
-	return resp.StatusCode, respBody, nil
 }
 
 type S3StorageConfig struct {
@@ -101,9 +74,6 @@ type s3LockMeta struct {
 
 func NewS3StorageClient(cfg S3StorageConfig, httpClient HTTPClient) *S3StorageClient {
 	cfg.Prefix = strings.Trim(cfg.Prefix, "/")
-	if httpClient == nil {
-		httpClient = NewDefaultHTTPClient(nil)
-	}
 	return &S3StorageClient{
 		cfg: cfg,
 		signer: SigV4Signer{
@@ -124,13 +94,13 @@ func (c *S3StorageClient) Init(config lib.Toml, headerComment string) error {
 	}
 	key := c.key("repository.txt")
 	ctx := context.Background()
-	status, body, err := c.do(ctx, http.MethodPut, key, ifNoneMatch, buf.Bytes(), nil)
+	status, body, err := c.do(ctx, methodPut, key, ifNoneMatch, buf.Bytes(), nil)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to init storage")
 	}
 	switch status {
-	case http.StatusOK, http.StatusCreated:
-	case http.StatusPreconditionFailed:
+	case statusOK, statusCreated:
+	case statusPreconditionFailed:
 		return lib.ErrStorageAlreadyExists
 	default:
 		return lib.Errorf("init failed: %d (%s)", status, truncateErrBody(body))
@@ -140,13 +110,13 @@ func (c *S3StorageClient) Init(config lib.Toml, headerComment string) error {
 	// locking and write-once blocks depend on this. We piggy-back on
 	// repository.txt and remove it again if the backend turns out to be
 	// non-conformant, so the bucket is left in a clean uninitialized state.
-	verifyStatus, _, err := c.do(ctx, http.MethodPut, key, ifNoneMatch, buf.Bytes(), nil)
+	verifyStatus, _, err := c.do(ctx, methodPut, key, ifNoneMatch, buf.Bytes(), nil)
 	if err != nil {
-		_, _, _ = c.do(ctx, http.MethodDelete, key, nil, nil, nil)
+		_, _, _ = c.do(ctx, methodDelete, key, nil, nil, nil)
 		return lib.WrapErrorf(err, "If-None-Match verification PUT failed")
 	}
-	if verifyStatus != http.StatusPreconditionFailed {
-		_, _, _ = c.do(ctx, http.MethodDelete, key, nil, nil, nil)
+	if verifyStatus != statusPreconditionFailed {
+		_, _, _ = c.do(ctx, methodDelete, key, nil, nil, nil)
 		return lib.Errorf(
 			"S3 backend does not support `If-None-Match: *` "+
 				"(verification PUT returned %d, expected 412); "+
@@ -158,14 +128,14 @@ func (c *S3StorageClient) Init(config lib.Toml, headerComment string) error {
 }
 
 func (c *S3StorageClient) Open() (lib.Toml, error) {
-	status, body, err := c.do(context.Background(), http.MethodGet, c.key("repository.txt"), nil, nil, nil)
+	status, body, err := c.do(context.Background(), methodGet, c.key("repository.txt"), nil, nil, nil)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
 	}
-	if status == http.StatusNotFound {
+	if status == statusNotFound {
 		return nil, lib.ErrStorageNotFound
 	}
-	if status != http.StatusOK {
+	if status != statusOK {
 		return nil, lib.Errorf("open failed: %d (%s)", status, truncateErrBody(body))
 	}
 	toml, err := lib.ReadToml(bytes.NewReader(body))
@@ -176,14 +146,14 @@ func (c *S3StorageClient) Open() (lib.Toml, error) {
 }
 
 func (c *S3StorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
-	status, _, err := c.do(context.Background(), http.MethodHead, c.key("blocks", blockId.String()), nil, nil, nil)
+	status, _, err := c.do(context.Background(), methodHead, c.key("blocks", blockId.String()), nil, nil, nil)
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to check block")
 	}
 	switch status {
-	case http.StatusOK:
+	case statusOK:
 		return true, nil
-	case http.StatusNotFound:
+	case statusNotFound:
 		return false, nil
 	}
 	return false, lib.Errorf("unexpected status: %d", status)
@@ -191,15 +161,15 @@ func (c *S3StorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
 
 func (c *S3StorageClient) ReadBlock(blockId lib.BlockId, buf lib.BlockBuf) ([]byte, error) {
 	status, body, err := c.do(
-		context.Background(), http.MethodGet, c.key("blocks", blockId.String()), nil, nil, buf.Bytes(),
+		context.Background(), methodGet, c.key("blocks", blockId.String()), nil, nil, buf.Bytes(),
 	)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read block")
 	}
-	if status == http.StatusNotFound {
+	if status == statusNotFound {
 		return nil, lib.WrapErrorf(lib.ErrBlockNotFound, "block %s does not exist", blockId)
 	}
-	if status != http.StatusOK {
+	if status != statusOK {
 		return nil, lib.Errorf("read block failed: %d", status)
 	}
 	return body, nil
@@ -213,16 +183,16 @@ func (c *S3StorageClient) WriteBlock(blockId lib.BlockId, data []byte) (bool, er
 		return false, err
 	}
 	status, body, err := c.do(
-		context.Background(), http.MethodPut, c.key("blocks", blockId.String()),
+		context.Background(), methodPut, c.key("blocks", blockId.String()),
 		ifNoneMatch, data, nil,
 	)
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to write block")
 	}
 	switch status {
-	case http.StatusOK, http.StatusCreated:
+	case statusOK, statusCreated:
 		return false, nil
-	case http.StatusPreconditionFailed:
+	case statusPreconditionFailed:
 		return true, nil
 	}
 	return false, lib.Errorf("write block failed: %d (%s)", status, truncateErrBody(body))
@@ -239,12 +209,12 @@ func (c *S3StorageClient) ReadBlockIds(yield func(lib.BlockId) bool) error {
 			query.Set("continuation-token", continuation)
 		}
 		status, body, err := c.do(
-			context.Background(), http.MethodGet, c.cfg.BucketURL+"/?"+query.Encode(), nil, nil, nil,
+			context.Background(), methodGet, c.cfg.BucketURL+"/?"+query.Encode(), nil, nil, nil,
 		)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to list blocks")
 		}
-		if status != http.StatusOK {
+		if status != statusOK {
 			return lib.Errorf("list failed: %d (%s)", status, truncateErrBody(body))
 		}
 		var result struct {
@@ -283,14 +253,14 @@ func (c *S3StorageClient) HasControlFile(section lib.ControlFileSection, name st
 	if err := lib.ValidateControlFileName(name); err != nil {
 		return false, err //nolint:wrapcheck
 	}
-	status, _, err := c.do(context.Background(), http.MethodHead, c.key(string(section), name), nil, nil, nil)
+	status, _, err := c.do(context.Background(), methodHead, c.key(string(section), name), nil, nil, nil)
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to check control file")
 	}
 	switch status {
-	case http.StatusOK:
+	case statusOK:
 		return true, nil
-	case http.StatusNotFound:
+	case statusNotFound:
 		return false, nil
 	}
 	return false, lib.Errorf("unexpected status: %d", status)
@@ -300,14 +270,14 @@ func (c *S3StorageClient) ReadControlFile(section lib.ControlFileSection, name s
 	if err := lib.ValidateControlFileName(name); err != nil {
 		return nil, err //nolint:wrapcheck
 	}
-	status, body, err := c.do(context.Background(), http.MethodGet, c.key(string(section), name), nil, nil, nil)
+	status, body, err := c.do(context.Background(), methodGet, c.key(string(section), name), nil, nil, nil)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read control file")
 	}
-	if status == http.StatusNotFound {
+	if status == statusNotFound {
 		return nil, lib.WrapErrorf(lib.ErrControlFileNotFound, "control file %s/%s does not exist", section, name)
 	}
-	if status != http.StatusOK {
+	if status != statusOK {
 		return nil, lib.Errorf("read control file failed: %d", status)
 	}
 	if len(body) > lib.MaxControlFileSize {
@@ -327,12 +297,12 @@ func (c *S3StorageClient) WriteControlFile(section lib.ControlFileSection, name 
 		return err
 	}
 	status, body, err := c.do(
-		context.Background(), http.MethodPut, c.key(string(section), name), nil, data, nil,
+		context.Background(), methodPut, c.key(string(section), name), nil, data, nil,
 	)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to write control file")
 	}
-	if status != http.StatusOK && status != http.StatusCreated {
+	if status != statusOK && status != statusCreated {
 		return lib.Errorf("write control file failed: %d (%s)", status, truncateErrBody(body))
 	}
 	return nil
@@ -345,14 +315,14 @@ func (c *S3StorageClient) DeleteControlFile(section lib.ControlFileSection, name
 	if err := c.verifyLockIfHeld(); err != nil {
 		return err
 	}
-	status, _, err := c.do(context.Background(), http.MethodDelete, c.key(string(section), name), nil, nil, nil)
+	status, _, err := c.do(context.Background(), methodDelete, c.key(string(section), name), nil, nil, nil)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to delete control file")
 	}
-	if status == http.StatusNotFound {
+	if status == statusNotFound {
 		return lib.WrapErrorf(lib.ErrControlFileNotFound, "control file %s/%s does not exist", section, name)
 	}
-	if status != http.StatusOK && status != http.StatusNoContent {
+	if status != statusOK && status != statusNoContent {
 		return lib.Errorf("delete control file failed: %d", status)
 	}
 	return nil
@@ -374,18 +344,18 @@ func (c *S3StorageClient) Lock(ctx context.Context, name string) (func() error, 
 		return nil, lib.WrapErrorf(err, "failed to marshal lock meta")
 	}
 
-	status, _, err := c.do(ctx, http.MethodPut, c.key("locks", name), ifNoneMatch, body, nil)
+	status, _, err := c.do(ctx, methodPut, c.key("locks", name), ifNoneMatch, body, nil)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to acquire lock %s", name)
 	}
 	switch status {
-	case http.StatusOK, http.StatusCreated:
+	case statusOK, statusCreated:
 		state := &s3LockState{Name: name, Owner: owner}
 		c.lockMu.Lock()
 		c.lockState = state
 		c.lockMu.Unlock()
 		return c.releaseLock(state), nil //nolint:contextcheck
-	case http.StatusPreconditionFailed:
+	case statusPreconditionFailed:
 		existsErr, perr := c.readLockExistsErr(ctx, name)
 		if perr != nil {
 			existsErr = &lib.LockExistsError{
@@ -403,18 +373,18 @@ func (c *S3StorageClient) ForceUnlock(name string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	status, _, err := c.do(ctx, http.MethodHead, c.key("locks", name), nil, nil, nil)
+	status, _, err := c.do(ctx, methodHead, c.key("locks", name), nil, nil, nil)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to probe lock")
 	}
-	if status == http.StatusNotFound {
+	if status == statusNotFound {
 		return lib.WrapErrorf(lib.ErrLockNotFound, "lock %s does not exist", name)
 	}
-	status, _, err = c.do(ctx, http.MethodDelete, c.key("locks", name), nil, nil, nil)
+	status, _, err = c.do(ctx, methodDelete, c.key("locks", name), nil, nil, nil)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to force-release lock")
 	}
-	if status != http.StatusOK && status != http.StatusNoContent && status != http.StatusNotFound {
+	if status != statusOK && status != statusNoContent && status != statusNotFound {
 		return lib.Errorf("force-release lock failed: %d", status)
 	}
 	return nil
@@ -427,14 +397,14 @@ func (c *S3StorageClient) verifyLockIfHeld() error {
 	if state == nil {
 		return nil
 	}
-	status, body, err := c.do(context.Background(), http.MethodGet, c.key("locks", state.Name), nil, nil, nil)
+	status, body, err := c.do(context.Background(), methodGet, c.key("locks", state.Name), nil, nil, nil)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to verify lock %s", state.Name)
 	}
-	if status == http.StatusNotFound {
+	if status == statusNotFound {
 		return lib.Errorf("lock %s no longer exists (force-unlocked?)", state.Name)
 	}
-	if status != http.StatusOK {
+	if status != statusOK {
 		return lib.Errorf("verify lock %s failed: %d", state.Name, status)
 	}
 	var meta s3LockMeta
@@ -448,11 +418,11 @@ func (c *S3StorageClient) verifyLockIfHeld() error {
 }
 
 func (c *S3StorageClient) readLockExistsErr(ctx context.Context, name string) (*lib.LockExistsError, error) {
-	status, body, err := c.do(ctx, http.MethodGet, c.key("locks", name), nil, nil, nil)
+	status, body, err := c.do(ctx, methodGet, c.key("locks", name), nil, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	if status != http.StatusOK {
+	if status != statusOK {
 		return nil, lib.Errorf("read lock holder failed: %d", status)
 	}
 	var meta s3LockMeta
@@ -478,11 +448,11 @@ func (c *S3StorageClient) releaseLock(state *s3LockState) func() error {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		status, _, err := c.do(ctx, http.MethodDelete, c.key("locks", state.Name), nil, nil, nil)
+		status, _, err := c.do(ctx, methodDelete, c.key("locks", state.Name), nil, nil, nil)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to release lock %s", state.Name)
 		}
-		if status != http.StatusOK && status != http.StatusNoContent && status != http.StatusNotFound {
+		if status != statusOK && status != statusNoContent && status != statusNotFound {
 			return lib.Errorf("release lock %s failed: %d", state.Name, status)
 		}
 		return nil
@@ -520,36 +490,6 @@ func (c *S3StorageClient) do(
 
 // ifNoneMatch refuses overwrites. 412 means the object already exists.
 var ifNoneMatch = map[string]string{"If-None-Match": "*"} //nolint:gochecknoglobals
-
-// readCappedBody reads at most `MaxBlockSize` bytes (or `len(dst)` when
-// `dst != nil`) so a misbehaving peer can't OOM us.
-func readCappedBody(src io.Reader, dst []byte) ([]byte, error) {
-	if dst != nil {
-		limit := io.LimitReader(src, int64(len(dst))+1)
-		n, err := io.ReadFull(limit, dst)
-		switch {
-		case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
-			return dst[:n], nil
-		case err != nil:
-			return nil, lib.WrapErrorf(err, "failed to read response body")
-		}
-		var extra [1]byte
-		more, _ := limit.Read(extra[:])
-		if more > 0 {
-			return nil, lib.Errorf("response body exceeds buffer of %d", len(dst))
-		}
-		return dst[:n], nil
-	}
-	limit := io.LimitReader(src, int64(lib.MaxBlockSize)+1)
-	data, err := io.ReadAll(limit)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to read response body")
-	}
-	if len(data) > lib.MaxBlockSize {
-		return nil, lib.Errorf("response body exceeds maximum of %d", lib.MaxBlockSize)
-	}
-	return data, nil
-}
 
 func truncateErrBody(b []byte) string {
 	const limit = 200

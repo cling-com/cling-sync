@@ -1,5 +1,7 @@
 //go:build !wasm
 
+// Native entry point for the `WasmHTTPClient` checks (see `testgo.go`).
+
 package main
 
 import (
@@ -59,5 +61,5 @@ func TestWasmHTTPClient(t *testing.T) {
 		}
 	})
 
-	RunWasmTests(t, []string{"./js.go", "./js_check.go"})
+	RunWasmTests(t, "checkhttp")
 }

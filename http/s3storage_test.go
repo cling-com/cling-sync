@@ -80,7 +80,7 @@ func TestS3StorageScaleway(t *testing.T) {
 			Prefix:          prefix,
 			AccessKeyID:     ak,
 			SecretAccessKey: []byte(sk),
-		}, nil
+		}, NewDefaultHTTPClient(nil)
 	})
 }
 

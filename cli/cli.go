@@ -111,7 +111,7 @@ func AttachCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to decode S3 URI")
 		}
-		storage = clingHTTP.NewS3StorageClient(cfg, nil)
+		storage = clingHTTP.NewS3StorageClient(cfg, clingHTTP.NewDefaultHTTPClient(nil))
 		if _, err := lib.OpenRepository(storage, passphrase); err != nil {
 			return lib.WrapErrorf(err, "failed to open repository")
 		}
@@ -240,7 +240,7 @@ func InitCmd(argv []string, passphraseFromStdin bool) error { //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to decode S3 URI")
 		}
-		storage = clingHTTP.NewS3StorageClient(cfg, nil)
+		storage = clingHTTP.NewS3StorageClient(cfg, clingHTTP.NewDefaultHTTPClient(nil))
 		repositoryURI = encryptedURI
 	} else {
 		repositoryPath, err := filepath.Abs(rawTarget)
@@ -1104,7 +1104,7 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to decode S3 target URI")
 			}
-			storage := clingHTTP.NewS3StorageClient(cfg, nil)
+			storage := clingHTTP.NewS3StorageClient(cfg, clingHTTP.NewDefaultHTTPClient(nil))
 			if err := storage.Init(toml, lib.RepositoryConfigHeaderComment); err != nil {
 				return lib.WrapErrorf(err, "failed to initialize S3 target repository")
 			}
@@ -1509,7 +1509,8 @@ func securityEncryptS3URLCmd(argv []string, passphraseFromStdin bool) error { //
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to parse endpoint")
 	}
-	if _, err := lib.OpenRepository(clingHTTP.NewS3StorageClient(cfg, nil), passphrase); err != nil {
+	storage := clingHTTP.NewS3StorageClient(cfg, clingHTTP.NewDefaultHTTPClient(nil))
+	if _, err := lib.OpenRepository(storage, passphrase); err != nil {
 		return lib.WrapErrorf(err, "failed to open repository at %s", endpoint)
 	}
 	uri, err := clingHTTP.EncodeS3URI(endpoint, creds, passphrase)

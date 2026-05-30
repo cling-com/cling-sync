@@ -1,11 +1,13 @@
-// A simple test runner for Wasm that builds a Wasm test binary and runs it in Node.js.
+//go:build !wasm
+
+// Native driver for the wasm tests: builds the wasm test binary once per
+// available compiler (Go always, TinyGo when installed) and runs it in Node.js.
 //
-// If Node.js v22 or higher is not installed, tests are skipped.
+// Build tags pick what compiles, since TinyGo builds a whole package, not a
+// file list:
 //
-// A Wasm test consists of two parts:
-//   - a Go test file (my_test.go) that calls `RunWasmTests`
-//   - a Wasm test file (my_check.go) that registers tests to
-//     be run (see `RegisterTest` in `testwasm.go`)
+//	wasm && test && <check>  test build: testwasm.go harness + one *_check.go,
+//	                         selected by <check> (checkrepo or checkhttp)
 package main
 
 import (
@@ -20,30 +22,91 @@ import (
 	"testing"
 )
 
-// Build and run the Wasm tests.
-// `srcFiles` is a list of files to compile and is passed to `go build`.
-// `extraEnv` is forwarded to the Node.js process so the wasm test can read it
-// via `process.env.<NAME>`.
-func RunWasmTests(tb testing.TB, srcFiles []string, extraEnv ...string) {
-	tb.Helper()
-	if err := skipIfNodeJSNotInstalled(tb.Context()); err != nil {
-		tb.Skip(err.Error())
+// RunWasmTests builds and runs the checks selected by `checkTag` (e.g.
+// "checkrepo") under each available compiler as a subtest. `extraEnv` is passed
+// to Node.js and read there via `process.env.<NAME>`. See the file header for
+// the overall design.
+func RunWasmTests(t *testing.T, checkTag string, extraEnv ...string) {
+	t.Helper()
+	if err := skipIfNodeJSNotInstalled(t.Context()); err != nil {
+		t.Skip(err.Error())
 	}
-	wasmPath := compile(tb, srcFiles)
-	runNodeJS(tb, wasmPath, extraEnv)
+	for _, c := range wasmCompilers() {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if reason := c.skip(); reason != "" {
+				t.Skip(reason)
+			}
+			wasmPath := filepath.Join(t.TempDir(), "main_test.wasm")
+			c.build(t, wasmPath, "test "+checkTag)
+			runNodeJS(t, c.wasmExecJS(t), wasmPath, extraEnv)
+		})
+	}
 }
 
-func runNodeJS(tb testing.TB, wasmPath string, extraEnv []string) { //nolint:funlen
-	tb.Helper()
+type wasmCompiler struct {
+	name       string
+	skip       func() string
+	build      func(t *testing.T, outPath, tags string)
+	wasmExecJS func(t *testing.T) string
+}
+
+func wasmCompilers() []wasmCompiler {
+	return []wasmCompiler{
+		{
+			name: "go",
+			skip: func() string { return "" },
+			build: func(t *testing.T, outPath, tags string) {
+				t.Helper()
+				runBuild(t, "go", "build", "-tags", tags, "-o", outPath, ".")
+			},
+			wasmExecJS: func(t *testing.T) string {
+				t.Helper()
+				return filepath.Join(runtime.GOROOT(), "lib", "wasm", "wasm_exec.js") //nolint:staticcheck
+			},
+		},
+		{
+			name: "tinygo",
+			skip: func() string {
+				if _, err := exec.LookPath("tinygo"); err != nil {
+					return "TinyGo not installed"
+				}
+				return ""
+			},
+			build: func(t *testing.T, outPath, tags string) {
+				t.Helper()
+				runBuild(t, "tinygo", "build", "-no-debug", "-tags", tags, "-o", outPath, ".")
+			},
+			wasmExecJS: func(t *testing.T) string {
+				t.Helper()
+				out, err := exec.CommandContext(t.Context(), "tinygo", "env", "TINYGOROOT").Output()
+				if err != nil {
+					t.Fatalf("Failed to find TINYGOROOT: %v", err)
+				}
+				return filepath.Join(strings.TrimSpace(string(out)), "targets", "wasm_exec.js")
+			},
+		},
+	}
+}
+
+func runBuild(t *testing.T, tool string, args ...string) {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), tool, args...)
+	cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm") //nolint:forbidigo
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build Wasm with %s: %v\n%s", tool, err, output)
+	}
+}
+
+func runNodeJS(t *testing.T, wasmExecJS, wasmPath string, extraEnv []string) { //nolint:funlen
+	t.Helper()
 	nodeJSScript := `
 		(async () => {
 			const fs = require('fs');
-			const path = require('path');
 			const process = require('process');
 
-			// Load the Go Wasm support file.
-			const wasmExecPath = path.join(process.env.GOROOT, 'lib/wasm/wasm_exec.js');
-			require(wasmExecPath);
+			// Load the Wasm support file (Go or TinyGo flavour).
+			require(process.env.WASM_EXEC_JS);
 
 			// Load the Wasm binary.
 			const go = new Go();
@@ -62,28 +125,28 @@ func runNodeJS(tb testing.TB, wasmPath string, extraEnv []string) { //nolint:fun
 		})()`
 
 	// Run the Node.js script from stdin and stream its output.
-	cmd := exec.CommandContext(tb.Context(), "node", "-")
+	cmd := exec.CommandContext(t.Context(), "node", "-")
 	cmd.Env = append([]string{
-		"GOROOT=" + runtime.GOROOT(), //nolint:staticcheck
+		"WASM_EXEC_JS=" + wasmExecJS,
 		"WASM_BINARY=" + wasmPath,
 	}, extraEnv...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		tb.Fatalf("Failed to create stdin pipe: %v", err)
+		t.Fatalf("Failed to create stdin pipe: %v", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		tb.Fatalf("Failed to create stdout pipe: %v", err)
+		t.Fatalf("Failed to create stdout pipe: %v", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		tb.Fatalf("Failed to create stderr pipe: %v", err)
+		t.Fatalf("Failed to create stderr pipe: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		tb.Fatalf("Failed to start node: %v", err)
+		t.Fatalf("Failed to start node: %v", err)
 	}
 	if _, err := stdin.Write([]byte(nodeJSScript)); err != nil {
-		tb.Fatalf("Failed to write script to stdin: %v", err)
+		t.Fatalf("Failed to write script to stdin: %v", err)
 	}
 	_ = stdin.Close()
 
@@ -91,7 +154,7 @@ func runNodeJS(tb testing.TB, wasmPath string, extraEnv []string) { //nolint:fun
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			tb.Log(scanner.Text())
+			t.Log(scanner.Text())
 		}
 	}()
 
@@ -99,27 +162,14 @@ func runNodeJS(tb testing.TB, wasmPath string, extraEnv []string) { //nolint:fun
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
-			tb.Log("stderr:", scanner.Text())
+			t.Log("stderr:", scanner.Text())
 		}
 	}()
 
 	// Wait for completion.
 	if err := cmd.Wait(); err != nil {
-		tb.Fatalf("Node.js test failed: %v", err)
+		t.Fatalf("Node.js test failed: %v", err)
 	}
-}
-
-func compile(tb testing.TB, wasmScripts []string) string {
-	tb.Helper()
-	wasmPath := filepath.Join(tb.TempDir(), "main_test.wasm")
-	args := []string{"build", "-o", wasmPath, "./testwasm.go"} //nolint:prealloc
-	args = append(args, wasmScripts...)
-	buildCmd := exec.CommandContext(tb.Context(), "go", args...)
-	buildCmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm") //nolint:forbidigo
-	if output, err := buildCmd.CombinedOutput(); err != nil {
-		tb.Fatalf("Failed to build Wasm: %v\n%s", err, output)
-	}
-	return wasmPath
 }
 
 func skipIfNodeJSNotInstalled(ctx context.Context) error {

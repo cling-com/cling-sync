@@ -1,3 +1,5 @@
+//go:build !wasm
+
 //nolint:forbidigo
 package http
 

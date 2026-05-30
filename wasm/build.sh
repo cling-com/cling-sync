@@ -7,17 +7,22 @@ cd "$root"
 
 
 if [ $# -eq 0 ]; then
-    echo "Usage: $0 build|dev|fmt|lint"
+    echo "Usage: $0 build|dev|deps|fmt|lint"
     echo
-    echo "  build [--optimize]"
+    echo "  build [--tinygo]"
     echo "      Build the wasm binary."
-    echo "      --optimize - use the TinyGo compiler to produce a much smaller binary (~10%)"
-    echo "                   (TinyGo has to be installed)"
+    echo "      --tinygo - use the TinyGo compiler to produce a much smaller binary"
+    echo "                 (TinyGo has to be installed)"
     echo
-    echo "  dev [--optimize]"
+    echo "  dev [--tinygo]"
     echo "      Build and serve the wasm binary and supporting files."
-    echo "      --optimize - use the TinyGo compiler to produce a much smaller binary (~10%)"
-    echo "                   (TinyGo has to be installed)"
+    echo "      --tinygo - use the TinyGo compiler to produce a much smaller binary"
+    echo "                 (TinyGo has to be installed)"
+    echo
+    echo "  deps [--tinygo]"
+    echo "      Show what ends up in the wasm binary, by size."
+    echo "      Default lists the largest symbols of the Go build (needs twiggy)."
+    echo "      --tinygo - per-package sizes of the TinyGo build (needs TinyGo)."
     echo
     echo "  fmt"
     echo "      Run golangci-lint fmt with wasm build tags."
@@ -29,15 +34,15 @@ fi
 
 # Build the wasm binary.
 # Input:
-#   - $1 (optional): `optimize` to use the TinyGo compiler
+#   - $1 (optional): `--tinygo` to use the TinyGo compiler
 build_wasm() {
     echo ">>> Building Wasm"
     rm -rf build
     mkdir -p build
     if [ $# -gt 0 ] ; then
         case $1 in
-            "--optimize")
-                echo "    Using TinyGo compiler and optimize the output"
+            "--tinygo")
+                echo "    Using TinyGo compiler"
                 cp "$(tinygo env TINYGOROOT)/targets/wasm_exec.js" build
                 GOOS=js GOARCH=wasm tinygo build -no-debug -o build/main.wasm .
                 ;;
@@ -58,11 +63,35 @@ build_wasm() {
     echo "main.wasm: $((wasm_size / 1024)) KB"
 }
 
+# Show what ends up in the wasm binary, using each compiler's own size report.
+# Input:
+#   - $1 (optional): `--tinygo` to analyse the TinyGo build
+deps_wasm() {
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    if [ "${1:-}" = "--tinygo" ]; then
+        command -v tinygo >/dev/null 2>&1 || { echo "TinyGo is not installed"; exit 1; }
+        echo ">>> Wasm package sizes (TinyGo build)"
+        GOOS=js GOARCH=wasm tinygo build -size=full -o "$tmp/main.wasm" .
+    elif [ -n "${1:-}" ]; then
+        echo "Unknown flag: $1"
+        exit 1
+    else
+        command -v twiggy >/dev/null 2>&1 || { echo "twiggy is not installed (cargo install twiggy)"; exit 1; }
+        echo ">>> Largest wasm symbols (Go build)"
+        GOOS=js GOARCH=wasm go build -o "$tmp/main.wasm" .
+        twiggy top -n 25 "$tmp/main.wasm"
+    fi
+}
+
 cmd=$1
 shift
 case "$cmd" in
     build)
         build_wasm "$@"
+        ;;
+    deps)
+        deps_wasm "$@"
         ;;
     dev)
         build_wasm "$@"
