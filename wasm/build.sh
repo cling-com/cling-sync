@@ -56,7 +56,7 @@ build_wasm() {
         cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" build
         GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o build/main.wasm .
     fi
-    wasm_size=$(stat -c%s build/main.wasm)
+    wasm_size=$(wc -c < build/main.wasm)
     if [ $wasm_size -gt 1048576 ]; then
         echo "Warning: main.wasm is larger than 1MB"
     fi
