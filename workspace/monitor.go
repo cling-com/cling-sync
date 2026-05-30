@@ -629,7 +629,7 @@ func (m *DefaultSyncRepoMonitor) emitProgress() {
 		fmt.Sprintf(
 			"%d/%d blocks copied, %s at %s/s",
 			m.Blocks,
-			m.SrcBlocks,
+			m.SrcBlocks-m.DstBlocks,
 			FormatBytes(m.Bytes),
 			FormatBytes(int64(float64(m.Bytes)/elapsed)),
 		),

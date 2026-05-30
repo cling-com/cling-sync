@@ -1030,15 +1030,9 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		return lib.WrapErrorf(err, "failed to open workspace")
 	}
 	defer workspace.Close() //nolint:errcheck
-	args := struct {        //nolint:exhaustruct
-		Help       bool
-		Verbose    bool
-		NoProgress bool
-	}{}
+	var help bool
 	flags := flag.NewFlagSet("sync-repo", flag.ExitOnError)
-	flags.BoolVar(&args.Help, "help", false, "Show help message")
-	flags.BoolVar(&args.Verbose, "verbose", false, "Show detailed progress")
-	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	flags.BoolVar(&help, "help", false, "Show help message")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s sync-repo <command> [args]\n\n", appName)
 		fmt.Fprint(os.Stderr, "Manage and run mirror copies of this repository.\n\n")
@@ -1051,9 +1045,10 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		fmt.Fprint(os.Stderr, "        List all registered sync targets.\n")
 		fmt.Fprint(os.Stderr, "  delete <name>\n")
 		fmt.Fprint(os.Stderr, "        Unregister a sync target. The target storage is not removed.\n")
-		fmt.Fprint(os.Stderr, "  run [name]\n")
+		fmt.Fprint(os.Stderr, "  run [flags] [name]\n")
 		fmt.Fprint(os.Stderr, "        Sync to every registered target, or to a single named target.\n")
 		fmt.Fprint(os.Stderr, "        Failures are reported but do not stop subsequent targets.\n")
+		fmt.Fprint(os.Stderr, "        Run `sync-repo run --help` for its flags.\n")
 		fmt.Fprint(os.Stderr, "\nNames must be ASCII alphanumeric including '-'.\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
@@ -1061,7 +1056,7 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 	if err := flags.Parse(argv); err != nil {
 		return err //nolint:wrapcheck
 	}
-	if args.Help {
+	if help {
 		flags.Usage()
 		return nil
 	}
@@ -1221,8 +1216,33 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 		fmt.Printf("Unregistered sync target %q\n", posArgs[0])
 		return nil
 	case "run":
+		runArgs := struct { //nolint:exhaustruct
+			Help       bool
+			Verbose    bool
+			NoProgress bool
+			Workers    int
+		}{}
+		runFlags := flag.NewFlagSet("sync-repo run", flag.ExitOnError)
+		runFlags.BoolVar(&runArgs.Help, "help", false, "Show help message")
+		runFlags.BoolVar(&runArgs.Verbose, "verbose", false, "Show detailed progress")
+		runFlags.BoolVar(&runArgs.NoProgress, "no-progress", false, "Do not show progress")
+		runFlags.IntVar(&runArgs.Workers, "workers", 2, "Number of blocks to copy in parallel")
+		runFlags.Usage = func() {
+			fmt.Fprintf(os.Stderr, "Usage: %s sync-repo run [flags] [name]\n\n", appName)
+			fmt.Fprint(os.Stderr, "Sync to every registered target, or to a single named target.\n")
+			fmt.Fprint(os.Stderr, "Failures are reported but do not stop subsequent targets.\n")
+			fmt.Fprint(os.Stderr, "\nFlags:\n")
+			runFlags.PrintDefaults()
+		}
+		if err := runFlags.Parse(posArgs); err != nil {
+			return err //nolint:wrapcheck
+		}
+		if runArgs.Help {
+			runFlags.Usage()
+			return nil
+		}
 		var names []string
-		switch len(posArgs) {
+		switch len(runFlags.Args()) {
 		case 0:
 			targets, err := ws.LoadSyncTargets(workspace)
 			if err != nil {
@@ -1236,9 +1256,9 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 				names[i] = t.Name
 			}
 		case 1:
-			names = []string{posArgs[0]}
+			names = []string{runFlags.Arg(0)}
 		default:
-			return lib.Errorf("usage: sync-repo run [name]")
+			return lib.Errorf("usage: sync-repo run [flags] [name]")
 		}
 		// Determine if any source or target URI is S3, in which case we need
 		// the workspace passphrase to decrypt it.
@@ -1263,10 +1283,10 @@ func SyncRepoCmd(argv []string, passphraseFromStdin bool) error { //nolint:funle
 				return err
 			}
 		}
-		mode := CLIMonitorMode(args.Verbose, args.NoProgress)
+		mode := CLIMonitorMode(runArgs.Verbose, runArgs.NoProgress)
 		for _, name := range names {
 			mon := NewSyncRepoMonitor(name, mode)
-			err := ws.RunSync(context.Background(), workspace, name, mon, passphrase)
+			err := ws.RunSync(context.Background(), workspace, name, mon, passphrase, runArgs.Workers)
 			mon.done(err)
 			if err != nil {
 				return err //nolint:wrapcheck

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type RepositorySyncMonitor interface {
@@ -16,6 +19,7 @@ type RepositorySyncMonitor interface {
 
 type RepositorySyncOptions struct {
 	Monitor RepositorySyncMonitor
+	Workers int
 }
 
 const blockIdReadProgressEvery = 1000
@@ -25,6 +29,9 @@ const blockIdReadProgressEvery = 1000
 func SyncRepository( //nolint:funlen
 	ctx context.Context, src, dst Storage, tempFS FS, opts RepositorySyncOptions,
 ) error {
+	if opts.Workers < 1 {
+		return Errorf("number of workers must be at least 1")
+	}
 	srcToml, err := src.Open()
 	if err != nil {
 		return WrapErrorf(err, "failed to read src repository config")
@@ -102,33 +109,64 @@ func SyncRepository( //nolint:funlen
 		return WrapErrorf(err, "failed to open dst block id cache")
 	}
 	opts.Monitor.OnBeforeCopy(srcCount, dstCount)
-	reader := srcTemp.Reader(nil)
-	buf := NewBlockBuf()
-	blockBuf := NewBlockBuf()
-	for {
-		id, err := reader.Read(buf)
-		if errors.Is(err, io.EOF) {
-			break
+	// A pool of workers copies each block missing from dst: read it from src,
+	// write it to dst.
+	g, gctx := errgroup.WithContext(ctx)
+	ids := make(chan BlockId, opts.Workers)
+	// Workers call OnCopyBlock concurrently, so serialize it. Every other monitor
+	// call runs on this goroutine alone.
+	var copyMu sync.Mutex
+	for range opts.Workers {
+		g.Go(func() error {
+			// Each worker owns its BlockBuf because ReadBlock returns a slice that aliases it.
+			blockBuf := NewBlockBuf()
+			for id := range ids {
+				data, err := src.ReadBlock(id, blockBuf)
+				if err != nil {
+					return WrapErrorf(err, "failed to read block %s from src", id)
+				}
+				existed, err := dst.WriteBlock(id, data)
+				if err != nil {
+					return WrapErrorf(err, "failed to write block %s to dst", id)
+				}
+				copyMu.Lock()
+				opts.Monitor.OnCopyBlock(id, existed, len(data))
+				copyMu.Unlock()
+			}
+			return nil
+		})
+	}
+	// The dispatcher streams the ids of blocks missing from dst into `ids`. It
+	// runs in the group alongside the workers so a failure on either side cancels
+	// gctx and unblocks the other.
+	g.Go(func() error {
+		defer close(ids)
+		reader := srcTemp.Reader(nil)
+		buf := NewBlockBuf()
+		for {
+			id, err := reader.Read(buf)
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			if err != nil {
+				return WrapErrorf(err, "failed to read src block id")
+			}
+			_, present, err := dstCache.Get(string(id[:]))
+			if err != nil {
+				return WrapErrorf(err, "failed to look up block %s in dst", id)
+			}
+			if present {
+				continue
+			}
+			select {
+			case ids <- id:
+			case <-gctx.Done():
+				return gctx.Err()
+			}
 		}
-		if err != nil {
-			return WrapErrorf(err, "failed to read src block id")
-		}
-		_, present, err := dstCache.Get(string(id[:]))
-		if err != nil {
-			return WrapErrorf(err, "failed to look up block %s in dst", id)
-		}
-		if present {
-			continue
-		}
-		data, err := src.ReadBlock(id, blockBuf)
-		if err != nil {
-			return WrapErrorf(err, "failed to read block %s from src", id)
-		}
-		existed, err := dst.WriteBlock(id, data)
-		if err != nil {
-			return WrapErrorf(err, "failed to write block %s to dst", id)
-		}
-		opts.Monitor.OnCopyBlock(id, existed, len(data))
+	})
+	if err := g.Wait(); err != nil {
+		return err //nolint:wrapcheck
 	}
 	unlock, err := dst.Lock(ctx, UpdateHeadRevisionLockName)
 	if err != nil {

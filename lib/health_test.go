@@ -17,9 +17,9 @@ func TestCheckHealth(t *testing.T) {
 
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		blockId1, _, err := r.WriteBlock([]byte("abc"))
+		blockId1, _, err := r.WriteBlock([]byte("abc"), NewBlockBuf())
 		assert.NoError(err)
-		blockId2, _, err := r.WriteBlock([]byte("de"))
+		blockId2, _, err := r.WriteBlock([]byte("de"), NewBlockBuf())
 		assert.NoError(err)
 		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		e1.Metadata.BlockIds = []BlockId{blockId1}
@@ -61,9 +61,9 @@ func TestCheckHealth(t *testing.T) {
 
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		blockId1, _, err := r.WriteBlock([]byte("abc"))
+		blockId1, _, err := r.WriteBlock([]byte("abc"), NewBlockBuf())
 		assert.NoError(err)
-		blockId2, _, err := r.WriteBlock([]byte("de"))
+		blockId2, _, err := r.WriteBlock([]byte("de"), NewBlockBuf())
 		assert.NoError(err)
 		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		e1.Metadata.BlockIds = []BlockId{blockId1}
@@ -108,11 +108,11 @@ func TestCheckHealth(t *testing.T) {
 
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		blockId1, _, err := r.WriteBlock([]byte("abc"))
+		blockId1, _, err := r.WriteBlock([]byte("abc"), NewBlockBuf())
 		assert.NoError(err)
-		blockId2, _, err := r.WriteBlock([]byte("def"))
+		blockId2, _, err := r.WriteBlock([]byte("def"), NewBlockBuf())
 		assert.NoError(err)
-		blockId3, _, err := r.WriteBlock([]byte("ghi"))
+		blockId3, _, err := r.WriteBlock([]byte("ghi"), NewBlockBuf())
 		assert.NoError(err)
 		e := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		e.Metadata.BlockIds = []BlockId{blockId1, blockId2, blockId3}
@@ -148,7 +148,7 @@ func TestCheckHealth(t *testing.T) {
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
 		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
-		blockId, _, err := r.WriteBlock([]byte{1, 2, 3})
+		blockId, _, err := r.WriteBlock([]byte{1, 2, 3}, NewBlockBuf())
 		assert.NoError(err)
 		e1.Metadata.BlockIds = []BlockId{blockId, td.BlockId("1")}
 		assert.NoError(commit.Add(e1))
@@ -186,7 +186,7 @@ func TestCheckHealth(t *testing.T) {
 		chunkBuf := make([]byte, chunk.MarshallSize())
 		chunkWriter := NewProtobufWriter(chunkBuf)
 		assert.NoError(chunk.Marshall(chunkWriter))
-		chunkBlockId, _, err := r.WriteBlock(chunkWriter.Bytes())
+		chunkBlockId, _, err := r.WriteBlock(chunkWriter.Bytes(), NewBlockBuf())
 		assert.NoError(err)
 		_, err = r.WriteRevision(&Revision{ //nolint:exhaustruct
 			Timestamp:        NewTimestampNow(),
@@ -220,7 +220,7 @@ func TestCheckHealth(t *testing.T) {
 		chunkBuf := make([]byte, chunk.MarshallSize())
 		chunkWriter := NewProtobufWriter(chunkBuf)
 		assert.NoError(chunk.Marshall(chunkWriter))
-		chunkBlockId, _, err := r.WriteBlock(chunkWriter.Bytes())
+		chunkBlockId, _, err := r.WriteBlock(chunkWriter.Bytes(), NewBlockBuf())
 		assert.NoError(err)
 		_, err = r.WriteRevision(&Revision{ //nolint:exhaustruct
 			Timestamp:        NewTimestampNow(),
@@ -245,11 +245,11 @@ func TestCheckHealth(t *testing.T) {
 		// never referenced by any revision).
 		commit, err := NewCommit(r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		referenced, _, err := r.WriteBlock([]byte("hello"))
+		referenced, _, err := r.WriteBlock([]byte("hello"), NewBlockBuf())
 		assert.NoError(err)
-		orphan1, _, err := r.WriteBlock([]byte("orphan-1"))
+		orphan1, _, err := r.WriteBlock([]byte("orphan-1"), NewBlockBuf())
 		assert.NoError(err)
-		orphan2, _, err := r.WriteBlock([]byte("orphan-2"))
+		orphan2, _, err := r.WriteBlock([]byte("orphan-2"), NewBlockBuf())
 		assert.NoError(err)
 		e := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		e.Metadata.BlockIds = []BlockId{referenced}

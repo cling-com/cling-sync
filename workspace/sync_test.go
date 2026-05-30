@@ -135,7 +135,7 @@ func TestRunSync(t *testing.T) {
 		assert.NoError(AddSyncTarget(w, "one", dstPath, nil))
 
 		entry := td.RevisionEntry("a.txt", lib.RevisionEntryKindAdd)
-		blockId, _, err := src.WriteBlock([]byte("hello"))
+		blockId, _, err := src.WriteBlock([]byte("hello"), lib.NewBlockBuf())
 		assert.NoError(err)
 		entry.Metadata.BlockIds = []lib.BlockId{blockId}
 		entry.Metadata.Size = 5
@@ -147,7 +147,7 @@ func TestRunSync(t *testing.T) {
 		assert.NoError(err)
 
 		mon := &countingMonitor{}
-		assert.NoError(RunSync(context.Background(), w, "one", mon, nil))
+		assert.NoError(RunSync(context.Background(), w, "one", mon, nil, 8))
 
 		dstStorage, err := lib.NewFileStorage(lib.NewRealFS(dstPath), lib.StoragePurposeRepository)
 		assert.NoError(err)
@@ -162,7 +162,7 @@ func TestRunSync(t *testing.T) {
 		assert := lib.NewAssert(t)
 		w := newSyncTestWorkspace(t)
 		mon := &countingMonitor{}
-		err := RunSync(context.Background(), w, "ghost", mon, nil)
+		err := RunSync(context.Background(), w, "ghost", mon, nil, 8)
 		assert.Error(err, `no sync target named "ghost"`)
 	})
 
@@ -178,7 +178,7 @@ func TestRunSync(t *testing.T) {
 		assert.NoError(os.RemoveAll(dstPath)) //nolint:forbidigo
 
 		mon := &countingMonitor{}
-		err = RunSync(context.Background(), w, "one", mon, nil)
+		err = RunSync(context.Background(), w, "one", mon, nil, 8)
 		assert.Error(err, "storage not found")
 	})
 }

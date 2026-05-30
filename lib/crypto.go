@@ -47,11 +47,11 @@ func Rand(n int) ([]byte, error) {
 }
 
 func NewRawKey() (RawKey, error) {
-	b, err := Rand(RawKeySize)
-	if err != nil {
-		return RawKey{}, err
+	var key RawKey
+	if _, err := io.ReadFull(rand.Reader, key[:]); err != nil {
+		return RawKey{}, WrapErrorf(err, "failed to generate random key")
 	}
-	return RawKey(b), nil
+	return key, nil
 }
 
 // RandStr returns a string of n hex characters of entropy (n/2 random bytes

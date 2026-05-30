@@ -70,7 +70,7 @@ func TestCommit(t *testing.T) {
 		assert.NoError(err)
 
 		// Change the head.
-		blockId, _, err := r.WriteBlock([]byte{1, 2, 3})
+		blockId, _, err := r.WriteBlock([]byte{1, 2, 3}, NewBlockBuf())
 		assert.NoError(err)
 		msg := "test message"
 		author := "test author"

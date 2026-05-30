@@ -807,6 +807,7 @@ func AddFileToRepository(
 	defer f.Close() //nolint:errcheck
 	// Read blocks and add them to the repository.
 	cdc := lib.NewGearCDCWithDefaults(f, repository.GearCDCTable())
+	writeBuf := lib.NewBlockBuf()
 	for {
 		data, err := cdc.Read()
 		if errors.Is(err, io.EOF) {
@@ -818,7 +819,7 @@ func AddFileToRepository(
 		if _, err := fileHash.Write(data); err != nil {
 			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to update file hash")
 		}
-		blockId, bytesWritten, err := repository.WriteBlock(data)
+		blockId, bytesWritten, err := repository.WriteBlock(data, writeBuf)
 		if err != nil {
 			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to write block")
 		}

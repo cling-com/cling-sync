@@ -119,6 +119,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 	blockIds := []BlockId{}
 	sortedReader := sorted.Reader(nil)
 	buf := NewBlockBuf()
+	writeBuf := NewBlockBuf()
 	for i := range sorted.Chunks() {
 		entries, err := sortedReader.ReadChunk(i, buf)
 		if err != nil {
@@ -130,7 +131,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 		if err := chunk.Marshall(pw); err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to marshall revision entry chunk")
 		}
-		blockId, _, err := c.repository.WriteBlock(pw.Bytes())
+		blockId, _, err := c.repository.WriteBlock(pw.Bytes(), writeBuf)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to write revision entry chunk block")
 		}

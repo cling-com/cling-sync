@@ -28,8 +28,9 @@ if [ $# -eq 0 ]; then
     echo "  precommit"
     echo "      Run all checks before committing. This is the same as running \`gen\`, \`fmt\`, \`lint\`, and \`test\`."
     echo
-    echo "  test [project|integration-bash]"
+    echo "  test [--race] [project|integration-bash]"
     echo "      Run tests. If no project is specified, run all tests including integration tests."
+    echo "      Pass \`--race\` to run the Go tests under the race detector."
     echo
     echo "  bench [project]"
     echo "      Run all benchmarks. If no project is specified, run for all projects."
@@ -219,14 +220,19 @@ case "$cmd" in
         fi
         ;;
     test)
+        race=""
+        if [ "${1:-}" = "--race" ]; then
+            race="-race"
+            shift
+        fi
         if [ $# -gt 0 ] && [ "$1" = "integration-bash" ]; then
             echo ">>> Running tests"
             bash test/test.sh
             exit 0
         fi
         build_tools
-        echo ">>> Running tests"
-        run_project_cmd "go test ./... -count 1" "$@"
+        echo ">>> Running tests${race:+ (race)}"
+        run_project_cmd "go test ./... -count 1 $race" "$@"
         ;;
     bench)
         echo ">>> Running benchmarks"

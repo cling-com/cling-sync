@@ -30,7 +30,7 @@ func TestSyncRepository(t *testing.T) {
 
 		err = SyncRepository(
 			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
-			RepositorySyncOptions{Monitor: monitor},
+			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.NoError(err)
 
@@ -63,14 +63,14 @@ func TestSyncRepository(t *testing.T) {
 				src.Storage,
 				dst.Storage,
 				td.NewFS(t),
-				RepositorySyncOptions{Monitor: &TestSyncMonitor{}},
+				RepositorySyncOptions{Monitor: &TestSyncMonitor{}, Workers: 8},
 			),
 		)
 
 		monitor := &TestSyncMonitor{}
 		err = SyncRepository(
 			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
-			RepositorySyncOptions{Monitor: monitor},
+			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.NoError(err)
 		assert.Calls([]MockCall{}, monitor.Calls)
@@ -91,7 +91,7 @@ func TestSyncRepository(t *testing.T) {
 				src.Storage,
 				dst.Storage,
 				td.NewFS(t),
-				RepositorySyncOptions{Monitor: &TestSyncMonitor{}},
+				RepositorySyncOptions{Monitor: &TestSyncMonitor{}, Workers: 8},
 			),
 		)
 		entry2, blockId2 := testEntry(t, src, "b.txt", "def")
@@ -101,7 +101,7 @@ func TestSyncRepository(t *testing.T) {
 		monitor := &TestSyncMonitor{}
 		err = SyncRepository(
 			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
-			RepositorySyncOptions{Monitor: monitor},
+			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.NoError(err)
 
@@ -121,7 +121,7 @@ func TestSyncRepository(t *testing.T) {
 		src := td.NewTestRepository(t, td.NewFS(t))
 		dst := cloneRepository(t, src)
 
-		blockId, _, err := src.WriteBlock([]byte("shared"))
+		blockId, _, err := src.WriteBlock([]byte("shared"), NewBlockBuf())
 		assert.NoError(err)
 		entry1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		entry1.Metadata.BlockIds = []BlockId{blockId}
@@ -141,7 +141,7 @@ func TestSyncRepository(t *testing.T) {
 		monitor := &TestSyncMonitor{}
 		err = SyncRepository(
 			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
-			RepositorySyncOptions{Monitor: monitor},
+			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.NoError(err)
 
@@ -160,7 +160,7 @@ func TestSyncRepository(t *testing.T) {
 		monitor := &TestSyncMonitor{}
 		err := SyncRepository(
 			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
-			RepositorySyncOptions{Monitor: monitor},
+			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.Error(err, "not present in src storage")
 		assert.Calls([]MockCall{}, monitor.Calls)
@@ -179,7 +179,7 @@ func TestSyncRepository(t *testing.T) {
 		monitor := &TestSyncMonitor{}
 		err = SyncRepository(
 			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
-			RepositorySyncOptions{Monitor: monitor},
+			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.Error(err, "config")
 		assert.Calls([]MockCall{}, monitor.Calls)
@@ -190,7 +190,7 @@ func testEntry(t *testing.T, r *TestRepository, path, content string) (*Revision
 	t.Helper()
 	assert := NewAssert(t)
 	entry := td.RevisionEntry(path, RevisionEntryKindAdd)
-	blockId, _, err := r.WriteBlock([]byte(content))
+	blockId, _, err := r.WriteBlock([]byte(content), NewBlockBuf())
 	assert.NoError(err)
 	entry.Metadata.BlockIds = []BlockId{blockId}
 	entry.Metadata.Size = int64(len(content))

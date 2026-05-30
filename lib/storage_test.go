@@ -2,11 +2,15 @@ package lib
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"io/fs"
+	mrand "math/rand/v2"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -354,6 +358,109 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(false, has)
 	})
+}
+
+func TestFileStorageConcurrency(t *testing.T) {
+	t.Parallel()
+	assert := NewAssert(t)
+	sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
+	assert.NoError(err)
+	assert.NoError(sut.Init(Toml{"encryption": {"version": "1"}}, ""))
+
+	// Fresh blocks per round so writes never dedup. Pool < workers for overlap.
+	const (
+		poolSize = 4
+		rounds   = 20
+	)
+	poolIDs := make([][]BlockId, rounds)
+	poolData := make([][][]byte, rounds)
+	for round := range rounds {
+		poolIDs[round] = make([]BlockId, poolSize)
+		poolData[round] = make([][]byte, poolSize)
+		for j := range poolSize {
+			key := strconv.Itoa(round) + "-" + strconv.Itoa(j)
+			poolIDs[round][j] = td.BlockId("pool-" + key)
+			poolData[round][j] = []byte("pool " + key)
+		}
+	}
+
+	// Each goroutine also runs the other methods on its own keys.
+	const workers = 16
+	var wg sync.WaitGroup
+	errs := make([]error, workers)
+	for i := range workers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = func() error {
+				id := td.BlockId(strconv.Itoa(i))
+				name := "cf" + strconv.Itoa(i)
+				lockName := "lock" + strconv.Itoa(i)
+				want := []byte("data " + strconv.Itoa(i))
+				buf := NewBlockBuf()
+				if _, err := sut.WriteBlock(id, want); err != nil {
+					return err
+				}
+				if _, err := sut.HasBlock(id); err != nil {
+					return err
+				}
+				got, err := sut.ReadBlock(id, buf)
+				if err != nil {
+					return err
+				}
+				if string(got) != string(want) {
+					return Errorf("block %d: read %q, want %q", i, got, want)
+				}
+				if err := sut.ReadBlockIds(func(BlockId) bool { return true }); err != nil {
+					return err
+				}
+				if _, err := sut.Open(); err != nil {
+					return err
+				}
+				if err := sut.WriteControlFile(ControlFileSectionRefs, name, want); err != nil {
+					return err
+				}
+				if _, err := sut.HasControlFile(ControlFileSectionRefs, name); err != nil {
+					return err
+				}
+				cf, err := sut.ReadControlFile(ControlFileSectionRefs, name)
+				if err != nil {
+					return err
+				}
+				if string(cf) != string(want) {
+					return Errorf("control file %s: read %q, want %q", name, cf, want)
+				}
+				if err := sut.DeleteControlFile(ControlFileSectionRefs, name); err != nil {
+					return err
+				}
+
+				// Stress the write path. The atomic-write race shows up here.
+				for round := range rounds {
+					j := mrand.IntN(poolSize)
+					if _, err := sut.WriteBlock(poolIDs[round][j], poolData[round][j]); err != nil {
+						return err
+					}
+					got, err := sut.ReadBlock(poolIDs[round][j], buf)
+					if err != nil {
+						return err
+					}
+					if string(got) != string(poolData[round][j]) {
+						return Errorf("pool %d-%d: read %q, want %q", round, j, got, poolData[round][j])
+					}
+				}
+
+				// Acquire, then drop via ForceUnlock so both run.
+				if _, err := sut.Lock(context.Background(), lockName); err != nil {
+					return err
+				}
+				return sut.ForceUnlock(lockName)
+			}()
+		}(i)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		assert.NoError(err)
+	}
 }
 
 func TestBlockBuf(t *testing.T) {

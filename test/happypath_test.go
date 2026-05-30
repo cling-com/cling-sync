@@ -324,11 +324,11 @@ func TestSyncRepoHappyPath(t *testing.T) {
 	dst2Repo, err := lib.OpenRepository(dst2Storage, []byte(passphrase))
 	assert.NoError(err)
 
-	t.Log("Add a commit, then sync only backup2 by name")
+	t.Log("Add a commit, then sync only backup2 by name (with run-scoped flags before the name)")
 	firstHeadBeforeNamedRun := headFromRepository(t, dstRepo)
 	sut.Write("a.txt", "aaaa")
 	sut.ClingSync("merge", "--no-progress", "--message", "fourth commit")
-	sut.ClingSync("sync-repo", "run", "backup2")
+	sut.ClingSync("sync-repo", "run", "--no-progress", "--workers", "4", "backup2")
 
 	assert.Equal(firstHeadBeforeNamedRun, headFromRepository(t, dstRepo),
 		"backup must not move when running by name 'backup2'")
@@ -1295,6 +1295,7 @@ func (s *Sut) cmd(args ...string) *exec.Cmd {
 	// per-test isolation, parallel `save-passphrase` calls would race on
 	// the read-modify-write of that file.
 	cmd.Env = append(os.Environ(), "CLING_SYNC_MOCK_KEYCHAIN_FILE="+s.keychainFile)
+	cmd.Env = append(cmd.Env, raceEnv()...)
 	return cmd
 }
 
@@ -1411,6 +1412,7 @@ func TestMain(m *testing.M) {
 	}
 	clingSyncBin = filepath.Join(dir, "cling-sync")
 	buildArgs := []string{"build"}
+	buildArgs = append(buildArgs, raceBuildArgs()...)
 	if os.Getenv("CS_TEST_NO_MOCK") == "" {
 		buildArgs = append(buildArgs, "-tags", "mock")
 	}

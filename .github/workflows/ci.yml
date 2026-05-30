@@ -29,6 +29,12 @@ jobs:
     
     - name: Test
       run: ./build.sh test
-    
+
+    - name: Test race
+      run: ./build.sh test --race
+
     - name: Bash integration tests
       run: ./build.sh test integration-bash
+
+    - name: Bench
+      run: ./build.sh bench

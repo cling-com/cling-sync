@@ -8,6 +8,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"io"
+	mrand "math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -76,6 +77,135 @@ func TestS3StorageScaleway(t *testing.T) {
 			AccessKeyID:     ak,
 			SecretAccessKey: []byte(sk),
 		}, nil
+	})
+}
+
+// TestS3StorageConcurrency hammers the block and control-file methods from many
+// goroutines. Lock has its own test. ReadBlockIds is serialised server-side.
+func TestS3StorageConcurrency(t *testing.T) {
+	t.Parallel()
+
+	// Fresh blocks per round so writes never dedup. Pool < workers for overlap.
+	const (
+		poolSize = 4
+		rounds   = 20
+	)
+	poolIDs := make([][]lib.BlockId, rounds)
+	poolData := make([][][]byte, rounds)
+	for round := range rounds {
+		poolIDs[round] = make([]lib.BlockId, poolSize)
+		poolData[round] = make([][]byte, poolSize)
+		for j := range poolSize {
+			poolIDs[round][j] = td.BlockId(fmt.Sprintf("pool-%d-%d", round, j))
+			poolData[round][j] = fmt.Appendf(nil, "pool %d-%d", round, j)
+		}
+	}
+
+	setup := func(t *testing.T) (*S3StorageClient, S3StorageConfig, HTTPClient) {
+		t.Helper()
+		assert := lib.NewAssert(t)
+		storage, err := lib.NewFileStorage(td.NewFS(t), lib.StoragePurposeRepository)
+		assert.NoError(err)
+		srv := newServerForStorage(t, storage)
+		cfg := S3StorageConfig{
+			BucketURL:       srv.URL,
+			Region:          testRegion,
+			Prefix:          "",
+			AccessKeyID:     testAccessKey,
+			SecretAccessKey: []byte(testSecret),
+		}
+		httpC := NewDefaultHTTPClient(srv.Client())
+		c := NewS3StorageClient(cfg, httpC)
+		assert.NoError(c.Init(lib.Toml{"some": {"key": "value"}}, ""))
+		return c, cfg, httpC
+	}
+
+	work := func(c *S3StorageClient, i int) error {
+		id := td.BlockId(strconv.Itoa(i))
+		name := "cf" + strconv.Itoa(i)
+		want := []byte("block " + strconv.Itoa(i))
+		buf := lib.NewBlockBuf()
+		if _, err := c.WriteBlock(id, want); err != nil {
+			return err
+		}
+		if _, err := c.HasBlock(id); err != nil {
+			return err
+		}
+		got, err := c.ReadBlock(id, buf)
+		if err != nil {
+			return err
+		}
+		if string(got) != string(want) {
+			return fmt.Errorf("block %d: read %q, want %q", i, got, want)
+		}
+		if _, err := c.Open(); err != nil {
+			return err
+		}
+		if err := c.WriteControlFile(lib.ControlFileSectionRefs, name, want); err != nil {
+			return err
+		}
+		if _, err := c.HasControlFile(lib.ControlFileSectionRefs, name); err != nil {
+			return err
+		}
+		cf, err := c.ReadControlFile(lib.ControlFileSectionRefs, name)
+		if err != nil {
+			return err
+		}
+		if string(cf) != string(want) {
+			return fmt.Errorf("control file %s: read %q, want %q", name, cf, want)
+		}
+		if err := c.DeleteControlFile(lib.ControlFileSectionRefs, name); err != nil {
+			return err
+		}
+
+		// Stress the write path. Many goroutines write the same fresh block.
+		for round := range rounds {
+			j := mrand.IntN(poolSize)
+			if _, err := c.WriteBlock(poolIDs[round][j], poolData[round][j]); err != nil {
+				return err
+			}
+			got, err := c.ReadBlock(poolIDs[round][j], buf)
+			if err != nil {
+				return err
+			}
+			if string(got) != string(poolData[round][j]) {
+				return fmt.Errorf("pool %d-%d: read %q, want %q", round, j, got, poolData[round][j])
+			}
+		}
+		return nil
+	}
+
+	run := func(t *testing.T, client func() *S3StorageClient) {
+		t.Helper()
+		assert := lib.NewAssert(t)
+		const workers = 16
+		var wg sync.WaitGroup
+		errs := make([]error, workers)
+		for i := range workers {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				errs[i] = work(client(), i)
+			}(i)
+		}
+		wg.Wait()
+		for _, err := range errs {
+			assert.NoError(err)
+		}
+	}
+
+	// One shared client stresses the client's own shared state.
+	t.Run("One shared client", func(t *testing.T) {
+		t.Parallel()
+		c, _, _ := setup(t)
+		run(t, func() *S3StorageClient { return c })
+	})
+
+	// One client per goroutine stresses the server with independent clients.
+	t.Run("One client per goroutine", func(t *testing.T) {
+		t.Parallel()
+		_, cfg, httpC := setup(t)
+		run(t, func() *S3StorageClient { return NewS3StorageClient(cfg, httpC) })
 	})
 }
 

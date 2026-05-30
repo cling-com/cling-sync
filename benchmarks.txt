@@ -1,16 +1,13 @@
 
 ## lib
 
-  GearCDCWithDefaults                           5    235.15 ms    445.9 MB/s    281.21 MB/op         437 allocs/op
-  GlobMatch                             8,630,296     139.2 ns                        0 B/op           0 allocs/op
-  WriteBlock/4KiB                             100     10.14 ms                   37.58 KB/op          93 allocs/op
-  WriteBlock/256KiB                           100     11.09 ms                  556.11 KB/op          93 allocs/op
-  WriteBlock/max                               51     22.80 ms                   15.79 MB/op          93 allocs/op
-  ReadBlock/4KiB                           66,482     17.70 us                    1.23 KB/op          13 allocs/op
-  ReadBlock/256KiB                          5,049    230.81 us                    1.23 KB/op          13 allocs/op
-  ReadBlock/max                               170      7.01 ms                    1.23 KB/op          13 allocs/op
-  RevisionTemp                                 14     76.64 ms                   95.93 MB/op   1,637,907 allocs/op
-
-## http
-
-  RoundtripBlock                              541      2.17 ms                   16.87 MB/op         108 allocs/op
+  GearCDCWithDefaults                           5    224.97 ms    466.1 MB/s    267.00 MB/op         457 allocs/op
+  GlobMatch                             8,633,462     140.8 ns                        0 B/op           0 allocs/op
+  WriteBlock/4KiB                             114     10.39 ms                   25.64 KB/op          74 allocs/op
+  WriteBlock/195KiB-padded                     96     10.65 ms                   25.62 KB/op          74 allocs/op
+  WriteBlock/256KiB                           100     11.00 ms                   25.66 KB/op          74 allocs/op
+  WriteBlock/max                               51     21.22 ms                   25.66 KB/op          74 allocs/op
+  ReadBlock/4KiB                           69,380     17.20 us                      872 B/op          11 allocs/op
+  ReadBlock/256KiB                          5,098    233.07 us                      872 B/op          11 allocs/op
+  ReadBlock/max                               165      7.19 ms                      872 B/op          11 allocs/op
+  RevisionTemp                                 12     95.07 ms                  606.78 MB/op   1,812,332 allocs/op

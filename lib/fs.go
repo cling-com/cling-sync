@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -672,10 +673,16 @@ func WriteFile(fs FS, name string, data []byte) error {
 	return err
 }
 
+// atomicWriteSeq makes temp filenames unique. Seeding it with the startup time
+// keeps separate processes writing the same target from colliding; the atomic
+// increment keeps concurrent goroutines within one process from colliding too.
+var atomicWriteSeq = time.Now().UnixNano() //nolint:gochecknoglobals
+
 func AtomicWriteTempFilename(name string) string {
+	seq := atomic.AddInt64(&atomicWriteSeq, 1)
 	return filepath.Join(
 		filepath.Dir(name),
-		".cling_sync_tmp_"+filepath.Base(name)+"."+strconv.FormatInt(time.Now().UnixNano(), 16),
+		".cling_sync_tmp_"+filepath.Base(name)+"."+strconv.FormatInt(seq, 16),
 	)
 }
 

@@ -174,7 +174,12 @@ func writeSyncTargets(w *Workspace, targets []SyncTarget) error {
 // RunSync syncs the workspace's repository to the registered target named
 // `name`. The caller drives multi-target iteration and aggregation.
 func RunSync(
-	ctx context.Context, w *Workspace, name string, monitor lib.RepositorySyncMonitor, passphrase []byte,
+	ctx context.Context,
+	w *Workspace,
+	name string,
+	monitor lib.RepositorySyncMonitor,
+	passphrase []byte,
+	workers int,
 ) error {
 	uri, found, err := GetSyncTarget(w, name)
 	if err != nil {
@@ -196,7 +201,8 @@ func RunSync(
 		return lib.WrapErrorf(err, "failed to create temp directory for sync")
 	}
 	defer tempFS.RemoveAll(".") //nolint:errcheck
-	if err := lib.SyncRepository(ctx, src, dst, tempFS, lib.RepositorySyncOptions{Monitor: monitor}); err != nil {
+	opts := lib.RepositorySyncOptions{Monitor: monitor, Workers: workers}
+	if err := lib.SyncRepository(ctx, src, dst, tempFS, opts); err != nil {
 		return lib.WrapErrorf(err, "sync to %q failed", name)
 	}
 	return nil

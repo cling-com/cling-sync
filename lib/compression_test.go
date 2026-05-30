@@ -55,15 +55,18 @@ func TestDecompress(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		// Zeros compress to a tiny payload, so this is cheap to set up.
-		atLimit, err := Compress(make([]byte, MaxBlockDataSize))
+		target := make([]byte, MaxBlockDataSize+1024)
+		n, ok, err := Compress(make([]byte, MaxBlockDataSize), target)
 		assert.NoError(err)
-		decompressed, err := Decompress(atLimit)
+		assert.Equal(true, ok)
+		decompressed, err := Decompress(target[:n])
 		assert.NoError(err)
 		assert.Equal(MaxBlockDataSize, len(decompressed))
 
-		overLimit, err := Compress(make([]byte, MaxBlockDataSize+1))
+		n, ok, err = Compress(make([]byte, MaxBlockDataSize+1), target)
 		assert.NoError(err)
-		_, err = Decompress(overLimit)
+		assert.Equal(true, ok)
+		_, err = Decompress(target[:n])
 		assert.Error(err, "decompressed size")
 	})
 }

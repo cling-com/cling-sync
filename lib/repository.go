@@ -246,13 +246,13 @@ func (r *Repository) GearCDCTable() GearCDCTable {
 	return r.gearCDCTable
 }
 
-// If `dataBytesWritten` is nil then the block already existed. Otherwise it returns the
-// size of `data` after being compressed (if applicable).
-// Padding is added to the block (using Padmé: https://lbarman.ch/blog/padme) to obfuscate
-// its size.
+// WriteBlock stores `data` as an encrypted, padded, optionally-compressed block
+// and returns its id. If `dataBytesWritten` is nil the block already existed.
+// Otherwise, it is the payload size after compression (if any). Padding obfuscates
+// the block size (Padmé: https://lbarman.ch/blog/padme).
 //
 //nolint:funlen
-func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten *int, err error) {
+func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (blockId BlockId, dataBytesWritten *int, err error) {
 	if len(data) > MaxBlockDataSize {
 		return BlockId{}, nil, Errorf("data size %d exceeds maximum block size %d", len(data), MaxBlockDataSize)
 	}
@@ -265,77 +265,99 @@ func (r *Repository) WriteBlock(data []byte) (blockId BlockId, dataBytesWritten 
 		return blockId, nil, WrapErrorf(err, "failed to read header of block %s", blockId)
 	}
 
-	// Compress data if possible.
+	// The encrypted payload begins at `dataOffset`, leaving a front reserve for the
+	// block's protobuf prefix (written last, growing back toward `dataOffset`).
+	const dataOffset = 1024
+	work := buf.Bytes()
+
+	// Compress the payload into place, leaving room for its nonce in front so it can
+	// later be encrypted where it lies.
+	payload := work[dataOffset+nonceSize:]
 	compression := CompressionNone
+	payloadLen := len(data)
 	if IsCompressible(data) {
-		compressed, err := Compress(data)
-		if err != nil {
-			return blockId, nil, WrapErrorf(err, "failed to compress data of block %s", blockId)
+		// Keep the compressed form only if it beats the 0.95 ratio.
+		limit := len(data) * 95 / 100
+		n, compressed, cerr := Compress(data, payload[:limit])
+		if cerr != nil {
+			return blockId, nil, WrapErrorf(cerr, "failed to compress data of block %s", blockId)
 		}
-		compressionRatio := float64(len(compressed)) / float64(len(data))
-		if compressionRatio < 0.95 {
+		if compressed {
 			compression = CompressionDeflate
-			data = compressed
+			payloadLen = n
 		}
 	}
+	if compression == CompressionNone {
+		copy(payload, data)
+	}
 
-	// Add padding.
-	encryptedDataSize := len(data)
-	paddedSize := min(uint64(MaxBlockDataSize), Padme(uint64(encryptedDataSize)))
-	data = append(data, make([]byte, paddedSize-uint64(encryptedDataSize))...)
+	// Pad to a Padmé size to obfuscate the true length.
+	paddedLen := int(min(uint64(MaxBlockDataSize), Padme(uint64(payloadLen)))) //nolint:gosec
+	clear(payload[payloadLen:paddedLen])
+	payload = payload[:paddedLen]
 
-	// Encrypt data.
+	// Encrypt the payload in place with a fresh DEK.
 	dek, err := NewRawKey()
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to generate random DEK for block %s", blockId)
 	}
-	dekCypher, err := NewCipher(dek)
+	dekCipher, err := NewCipher(dek)
 	if err != nil {
-		return blockId, nil, WrapErrorf(
-			err,
-			"failed to create a XChaCha20Poly1305 cipher from DEK for block %s",
-			blockId,
-		)
+		return blockId, nil, WrapErrorf(err, "failed to create DEK cipher for block %s", blockId)
 	}
-	encryptedData := make([]byte, len(data)+TotalCipherOverhead)
-	if _, err := Encrypt(data, dekCypher, blockId[:], encryptedData); err != nil {
+	encryptedPayload := work[dataOffset : dataOffset+len(payload)+TotalCipherOverhead]
+	if _, err := Encrypt(payload, dekCipher, blockId[:], encryptedPayload); err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to encrypt data with DEK for block %s", blockId)
 	}
 
-	// Marshal and encrypt the header.
+	// Marshal and KEK-encrypt the header in the workspace behind the payload.
 	header := BlockHeader{
 		Version:           uint32(StorageVersion),
 		Compression:       compression,
 		Dek:               dek,
-		EncryptedDataSize: uint32(encryptedDataSize), //nolint:gosec
+		EncryptedDataSize: uint32(payloadLen), //nolint:gosec
 	}
-	headerBuf := make([]byte, header.MarshallSize())
-	headerWriter := NewProtobufWriter(headerBuf)
+	headerTemp := work[dataOffset+len(encryptedPayload):]
+	headerWriter := NewProtobufWriter(headerTemp[:header.MarshallSize()])
 	if err := header.Marshall(headerWriter); err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to marshal block header %s", blockId)
 	}
-	encryptedHeader := make([]byte, len(headerWriter.Bytes())+TotalCipherOverhead)
-	if _, err := Encrypt(headerWriter.Bytes(), r.kekCipher, blockId[:], encryptedHeader); err != nil {
+	headerBytes := headerWriter.Bytes()
+	encryptedHeaderLen := len(headerBytes) + TotalCipherOverhead
+	encryptedHeader := headerTemp[len(headerBytes) : len(headerBytes)+encryptedHeaderLen]
+	if _, err := Encrypt(headerBytes, r.kekCipher, blockId[:], encryptedHeader); err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to encrypt block header with KEK for block %s", blockId)
 	}
 
-	// Marshal the Block envelope.
-	block := Block{EncryptedHeader: encryptedHeader, EncryptedData: encryptedData}
-	blockBuf := make([]byte, block.MarshallSize())
-	blockWriter := NewProtobufWriter(blockBuf)
-	if err := block.Marshall(blockWriter); err != nil {
-		return blockId, nil, WrapErrorf(err, "failed to marshal block envelope for %s", blockId)
+	// Write the `Block` protobuf by hand, in field order: field 1 = encrypted header,
+	// field 2 = encrypted payload. The payload already sits at `dataOffset`, so we only
+	// write the field tags, the lengths, and a copy of the small encrypted header into
+	// the reserve, ending exactly where the payload begins.
+	protobufLen := TagLen(1, 2) + VarintLen(int64(encryptedHeaderLen)) + encryptedHeaderLen +
+		TagLen(2, 2) + VarintLen(int64(len(encryptedPayload)))
+	if protobufLen > dataOffset {
+		return blockId, nil, Errorf("block protobuf %d exceeds reserve %d", protobufLen, dataOffset)
+	}
+	result := work[dataOffset-protobufLen : dataOffset+len(encryptedPayload)]
+	protobuf := NewProtobufWriter(result[:protobufLen])
+	if err := protobuf.WriteBytes(1, encryptedHeader); err != nil {
+		return blockId, nil, WrapErrorf(err, "failed to write block header field for %s", blockId)
+	}
+	if err := protobuf.WriteTag(2, 2); err != nil {
+		return blockId, nil, WrapErrorf(err, "failed to write block data tag for %s", blockId)
+	}
+	if err := protobuf.WriteVarint(int64(len(encryptedPayload))); err != nil {
+		return blockId, nil, WrapErrorf(err, "failed to write block data length for %s", blockId)
 	}
 
-	// Write block.
-	exists, err := r.storage.WriteBlock(blockId, blockWriter.Bytes())
+	exists, err := r.storage.WriteBlock(blockId, result)
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to write block %s", blockId)
 	}
 	if exists {
 		return blockId, nil, nil
 	}
-	return blockId, &encryptedDataSize, nil
+	return blockId, &payloadLen, nil
 }
 
 func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
@@ -465,7 +487,7 @@ func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
 	if err := revision.Marshall(pw); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to marshal revision")
 	}
-	blockId, _, err := r.WriteBlock(pw.Bytes())
+	blockId, _, err := r.WriteBlock(pw.Bytes(), NewBlockBuf())
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write revision block")
 	}

@@ -3,6 +3,7 @@ package lib
 import (
 	"bytes"
 	"compress/zlib"
+	"errors"
 	"io"
 	"math"
 )
@@ -36,22 +37,46 @@ func IsCompressible(data []byte) bool {
 	return h < 7
 }
 
-// Compress data using the Deflate algorithm level 6.
-func Compress(data []byte) ([]byte, error) {
-	w := bytes.NewBuffer(nil)
+var errCompressOverflow = errors.New("compressed output exceeds target")
+
+// cappedWriter writes into a fixed buffer and reports `errCompressOverflow`
+// once it would write past the end.
+type cappedWriter struct {
+	buf []byte
+	n   int
+}
+
+func (w *cappedWriter) Write(p []byte) (int, error) {
+	n := copy(w.buf[w.n:], p)
+	w.n += n
+	if n < len(p) {
+		return n, errCompressOverflow
+	}
+	return n, nil
+}
+
+// Compress writes Deflate-compressed `data` into `target` and returns the
+// number of bytes written. `ok` is false when the compressed output would not
+// fit in `target`, which the caller treats as "not worth compressing".
+func Compress(data []byte, target []byte) (n int, ok bool, err error) {
+	w := &cappedWriter{buf: target, n: 0}
 	z, err := zlib.NewWriterLevel(w, 6)
 	if err != nil {
-		return nil, WrapErrorf(err, "failed to create zlib writer")
+		return 0, false, WrapErrorf(err, "failed to create zlib writer")
 	}
-	_, err = z.Write(data)
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to write to zlib writer")
+	if _, err := z.Write(data); err != nil {
+		if errors.Is(err, errCompressOverflow) {
+			return 0, false, nil
+		}
+		return 0, false, WrapErrorf(err, "failed to write to zlib writer")
 	}
-	err = z.Close()
-	if err != nil {
-		return nil, WrapErrorf(err, "failed to close zlib writer")
+	if err := z.Close(); err != nil {
+		if errors.Is(err, errCompressOverflow) {
+			return 0, false, nil
+		}
+		return 0, false, WrapErrorf(err, "failed to close zlib writer")
 	}
-	return w.Bytes(), nil
+	return w.n, true, nil
 }
 
 func Decompress(data []byte) ([]byte, error) {
