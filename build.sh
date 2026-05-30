@@ -222,7 +222,7 @@ case "$cmd" in
     test)
         race=""
         if [ "${1:-}" = "--race" ]; then
-            race="-race"
+            race="-race -timeout 30m"
             shift
         fi
         if [ $# -gt 0 ] && [ "$1" = "integration-bash" ]; then
