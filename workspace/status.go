@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -64,8 +65,14 @@ type StatusOptions struct {
 	UseStagingCache        bool
 }
 
-func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpFS lib.FS) (StatusFiles, error) {
-	head, err := ws.Head()
+func Status(
+	ctx context.Context,
+	ws *Workspace,
+	repository *lib.Repository,
+	opts *StatusOptions,
+	tmpFS lib.FS,
+) (StatusFiles, error) {
+	head, err := ws.Head(ctx)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get head")
 	}
@@ -75,7 +82,7 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 	// than deleting them, so suppress `Delete` entries in that mode.
 	suppressDeletes := false
 	if head.IsRoot() {
-		head, err = repository.Head()
+		head, err = repository.Head(ctx)
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read repository head")
 		}
@@ -89,7 +96,7 @@ func Status(ws *Workspace, repository *lib.Repository, opts *StatusOptions, tmpF
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create temporary staging directory")
 	}
-	snapshot, err := lib.NewRevisionSnapshot(repository, head, snapshotFS)
+	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, head, snapshotFS)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}

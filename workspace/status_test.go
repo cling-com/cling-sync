@@ -16,7 +16,7 @@ func TestStatus(t *testing.T) {
 		w := wstd.NewTestWorkspace(t, r.Repository)
 
 		// Empty workspace.
-		status, err := Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err := Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
@@ -27,7 +27,7 @@ func TestStatus(t *testing.T) {
 		w.Write("c/d/2.txt", "....")
 
 		// "Dirty" workspace.
-		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"A a.txt",
@@ -39,9 +39,9 @@ func TestStatus(t *testing.T) {
 		}, statusFilesString(status))
 
 		// Commit, workspace should be "clean" again.
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 		assert.NoError(err)
@@ -52,7 +52,7 @@ func TestStatus(t *testing.T) {
 		w.Touch("c/1.txt", time.Now())
 
 		// "Dirty" workspace.
-		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"D b.txt",
@@ -70,31 +70,31 @@ func TestStatus(t *testing.T) {
 		w.Write("a.txt", "a")
 
 		// Commit, workspace should be "clean".
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		status, err := Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err := Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
 		// Create a second workspace tied to the same repository.
 		// Status should be clean, because the workspace points to the initial (empty) revision.
 		w2 := wstd.NewTestWorkspace(t, r.Repository)
-		status, err = Status(w2.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), w2.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
 		// Merge repository into the second workspace.
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		status, err = Status(w2.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), w2.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
 		// Add a commit in the first workspace.
 		w.Write("b.txt", "b")
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
@@ -102,7 +102,7 @@ func TestStatus(t *testing.T) {
 		// The status should reflect the change in the second workspace relative to the workspace
 		// head and not the repository head.
 		w2.Write("c.txt", "c")
-		status, err = Status(w2.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), w2.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"A c.txt",
@@ -116,7 +116,7 @@ func TestStatus(t *testing.T) {
 		w := wstd.NewTestWorkspace(t, r.Repository)
 
 		// Empty workspace.
-		status, err := Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err := Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
@@ -127,9 +127,9 @@ func TestStatus(t *testing.T) {
 		w.Write("c/d/2.txt", "....")
 
 		// Commit, workspace should be "clean".
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 
@@ -137,7 +137,7 @@ func TestStatus(t *testing.T) {
 		w.Rm("c")
 
 		// "Dirty" workspace.
-		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"D c/",
@@ -147,9 +147,9 @@ func TestStatus(t *testing.T) {
 		}, statusFilesString(status))
 
 		// Commit, workspace should be "clean" again.
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		status, err = Status(w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(0, len(status))
 	})
@@ -167,21 +167,21 @@ func TestStatus(t *testing.T) {
 		rootW.Write("a.txt", "a")
 		rootW.MkdirAll("look/here")
 		rootW.Write("look/here/b.txt", "b")
-		_, err := Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), rootW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Merge into the prefixed workspace.
-		_, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Run `status` with no changes.
-		status, err := Status(prefixW.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err := Status(t.Context(), prefixW.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{}, statusFilesString(status))
 
 		// Add a file and run `status`.
 		prefixW.Write("new.txt", "new")
-		status, err = Status(prefixW.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		status, err = Status(t.Context(), prefixW.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"A new.txt",
@@ -198,10 +198,10 @@ func TestStatus(t *testing.T) {
 		w2 := wstd.NewTestWorkspaceExtra(t, r.Repository, "", lib.NewMemoryFS(10000000))
 
 		w.Write("a.txt", "a")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		w2revId1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		w2revId1, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(revId1, w2revId1)
 
@@ -211,7 +211,7 @@ func TestStatus(t *testing.T) {
 		// Status taking ownership into account.
 		opts := wstd.StatusOptions()
 		opts.RestorableMetadataFlag = lib.RestorableMetadataOwnership
-		status, err := Status(w2.Workspace, r.Repository, opts, td.NewFS(t))
+		status, err := Status(t.Context(), w2.Workspace, r.Repository, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"M a.txt",
@@ -219,7 +219,7 @@ func TestStatus(t *testing.T) {
 
 		// Status not taking ownership into account.
 		opts.RestorableMetadataFlag ^= lib.RestorableMetadataOwnership
-		status, err = Status(w2.Workspace, r.Repository, opts, td.NewFS(t))
+		status, err = Status(t.Context(), w2.Workspace, r.Repository, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{}, statusFilesString(status))
 	})
@@ -235,7 +235,7 @@ func TestStatus(t *testing.T) {
 		w := wstd.NewTestWorkspace(t, r.Repository)
 		w.Write("a.txt", "a")
 		w.Write("b.txt", "b")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		w2 := wstd.NewTestWorkspace(t, r.Repository)
@@ -246,7 +246,7 @@ func TestStatus(t *testing.T) {
 		// reports content-level changes.
 		opts := wstd.StatusOptions()
 		opts.RestorableMetadataFlag = 0
-		status, err := Status(w2.Workspace, r.Repository, opts, td.NewFS(t))
+		status, err := Status(t.Context(), w2.Workspace, r.Repository, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{"A c.txt"}, statusFilesString(status))
 	})

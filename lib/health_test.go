@@ -15,11 +15,11 @@ func TestCheckHealth(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		blockId1, _, err := r.WriteBlock([]byte("abc"), NewBlockBuf())
+		blockId1, _, err := r.WriteBlock(t.Context(), []byte("abc"), NewBlockBuf())
 		assert.NoError(err)
-		blockId2, _, err := r.WriteBlock([]byte("de"), NewBlockBuf())
+		blockId2, _, err := r.WriteBlock(t.Context(), []byte("de"), NewBlockBuf())
 		assert.NoError(err)
 		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		e1.Metadata.BlockIds = []BlockId{blockId1}
@@ -36,11 +36,12 @@ func TestCheckHealth(t *testing.T) {
 		assert.NoError(commit.Add(e2))
 		assert.NoError(commit.Add(e1))
 		assert.NoError(commit.Add(e3))
-		rev1Id, err := commit.Commit(td.CommitInfo())
+		rev1Id, err := commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
 		monitor := td.NewHealthCheckMonitor()
 		err = CheckHealth(
+			t.Context(),
 			r.Repository,
 			td.NewFS(t),
 			HealthCheckOptions{Monitor: monitor, CheckBlocks: false, CheckOrphanedBlocks: false},
@@ -59,11 +60,11 @@ func TestCheckHealth(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		blockId1, _, err := r.WriteBlock([]byte("abc"), NewBlockBuf())
+		blockId1, _, err := r.WriteBlock(t.Context(), []byte("abc"), NewBlockBuf())
 		assert.NoError(err)
-		blockId2, _, err := r.WriteBlock([]byte("de"), NewBlockBuf())
+		blockId2, _, err := r.WriteBlock(t.Context(), []byte("de"), NewBlockBuf())
 		assert.NoError(err)
 		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		e1.Metadata.BlockIds = []BlockId{blockId1}
@@ -80,11 +81,12 @@ func TestCheckHealth(t *testing.T) {
 		assert.NoError(commit.Add(e2))
 		assert.NoError(commit.Add(e1))
 		assert.NoError(commit.Add(e3))
-		rev1Id, err := commit.Commit(td.CommitInfo())
+		rev1Id, err := commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
 		monitor := td.NewHealthCheckMonitor()
 		err = CheckHealth(
+			t.Context(),
 			r.Repository,
 			td.NewFS(t),
 			HealthCheckOptions{Monitor: monitor, CheckBlocks: true, CheckOrphanedBlocks: false},
@@ -106,20 +108,20 @@ func TestCheckHealth(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		blockId1, _, err := r.WriteBlock([]byte("abc"), NewBlockBuf())
+		blockId1, _, err := r.WriteBlock(t.Context(), []byte("abc"), NewBlockBuf())
 		assert.NoError(err)
-		blockId2, _, err := r.WriteBlock([]byte("def"), NewBlockBuf())
+		blockId2, _, err := r.WriteBlock(t.Context(), []byte("def"), NewBlockBuf())
 		assert.NoError(err)
-		blockId3, _, err := r.WriteBlock([]byte("ghi"), NewBlockBuf())
+		blockId3, _, err := r.WriteBlock(t.Context(), []byte("ghi"), NewBlockBuf())
 		assert.NoError(err)
 		e := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		e.Metadata.BlockIds = []BlockId{blockId1, blockId2, blockId3}
 		e.Metadata.Size = 9
 		e.Metadata.FileHash = td.SHA256("abcdefghi")
 		assert.NoError(commit.Add(e))
-		_, err = commit.Commit(td.CommitInfo())
+		_, err = commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
 		// Flip a bit in the second data block.
@@ -132,6 +134,7 @@ func TestCheckHealth(t *testing.T) {
 
 		monitor := td.NewHealthCheckMonitor()
 		err = CheckHealth(
+			t.Context(),
 			r.Repository,
 			td.NewFS(t),
 			HealthCheckOptions{Monitor: monitor, CheckBlocks: true, CheckOrphanedBlocks: false},
@@ -145,19 +148,20 @@ func TestCheckHealth(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 		e1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
-		blockId, _, err := r.WriteBlock([]byte{1, 2, 3}, NewBlockBuf())
+		blockId, _, err := r.WriteBlock(t.Context(), []byte{1, 2, 3}, NewBlockBuf())
 		assert.NoError(err)
 		e1.Metadata.BlockIds = []BlockId{blockId, td.BlockId("1")}
 		assert.NoError(commit.Add(e1))
-		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+		_, err = commit.Commit(t.Context(), &CommitInfo{Author: "test author", Message: "test message"})
 		assert.NoError(err)
 
 		// When not checking for data blocks, nothing is detected.
 		monitor := td.NewHealthCheckMonitor()
 		err = CheckHealth(
+			t.Context(),
 			r.Repository,
 			td.NewFS(t),
 			HealthCheckOptions{Monitor: monitor, CheckBlocks: false, CheckOrphanedBlocks: false},
@@ -166,6 +170,7 @@ func TestCheckHealth(t *testing.T) {
 
 		// With --data the missing block surfaces as a read error.
 		err = CheckHealth(
+			t.Context(),
 			r.Repository,
 			td.NewFS(t),
 			HealthCheckOptions{Monitor: monitor, CheckBlocks: true, CheckOrphanedBlocks: false},
@@ -186,9 +191,9 @@ func TestCheckHealth(t *testing.T) {
 		chunkBuf := make([]byte, chunk.MarshallSize())
 		chunkWriter := NewProtobufWriter(chunkBuf)
 		assert.NoError(chunk.Marshall(chunkWriter))
-		chunkBlockId, _, err := r.WriteBlock(chunkWriter.Bytes(), NewBlockBuf())
+		chunkBlockId, _, err := r.WriteBlock(t.Context(), chunkWriter.Bytes(), NewBlockBuf())
 		assert.NoError(err)
-		_, err = r.WriteRevision(&Revision{ //nolint:exhaustruct
+		_, err = r.WriteRevision(t.Context(), &Revision{ //nolint:exhaustruct
 			Timestamp:        NewTimestampNow(),
 			ParentRevisionId: RevisionId{},
 			BlockIds:         []BlockId{chunkBlockId},
@@ -197,6 +202,7 @@ func TestCheckHealth(t *testing.T) {
 
 		monitor := td.NewHealthCheckMonitor()
 		err = CheckHealth(
+			t.Context(),
 			r.Repository,
 			td.NewFS(t),
 			HealthCheckOptions{Monitor: monitor, CheckBlocks: false, CheckOrphanedBlocks: false},
@@ -220,9 +226,9 @@ func TestCheckHealth(t *testing.T) {
 		chunkBuf := make([]byte, chunk.MarshallSize())
 		chunkWriter := NewProtobufWriter(chunkBuf)
 		assert.NoError(chunk.Marshall(chunkWriter))
-		chunkBlockId, _, err := r.WriteBlock(chunkWriter.Bytes(), NewBlockBuf())
+		chunkBlockId, _, err := r.WriteBlock(t.Context(), chunkWriter.Bytes(), NewBlockBuf())
 		assert.NoError(err)
-		_, err = r.WriteRevision(&Revision{ //nolint:exhaustruct
+		_, err = r.WriteRevision(t.Context(), &Revision{ //nolint:exhaustruct
 			Timestamp:        NewTimestampNow(),
 			ParentRevisionId: RevisionId{},
 			BlockIds:         []BlockId{chunkBlockId},
@@ -230,7 +236,7 @@ func TestCheckHealth(t *testing.T) {
 		assert.NoError(err)
 
 		monitor := td.NewHealthCheckMonitor()
-		err = CheckHealth(r.Repository, td.NewFS(t), HealthCheckOptions{
+		err = CheckHealth(t.Context(), r.Repository, td.NewFS(t), HealthCheckOptions{
 			Monitor: monitor, CheckBlocks: false, CheckOrphanedBlocks: false,
 		})
 		assert.Error(err, "has SymLinkTarget but is not a symlink")
@@ -243,24 +249,24 @@ func TestCheckHealth(t *testing.T) {
 
 		// One referenced block and two orphaned blocks (written directly to storage,
 		// never referenced by any revision).
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		referenced, _, err := r.WriteBlock([]byte("hello"), NewBlockBuf())
+		referenced, _, err := r.WriteBlock(t.Context(), []byte("hello"), NewBlockBuf())
 		assert.NoError(err)
-		orphan1, _, err := r.WriteBlock([]byte("orphan-1"), NewBlockBuf())
+		orphan1, _, err := r.WriteBlock(t.Context(), []byte("orphan-1"), NewBlockBuf())
 		assert.NoError(err)
-		orphan2, _, err := r.WriteBlock([]byte("orphan-2"), NewBlockBuf())
+		orphan2, _, err := r.WriteBlock(t.Context(), []byte("orphan-2"), NewBlockBuf())
 		assert.NoError(err)
 		e := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		e.Metadata.BlockIds = []BlockId{referenced}
 		e.Metadata.Size = 5
 		e.Metadata.FileHash = td.SHA256("hello")
 		assert.NoError(commit.Add(e))
-		rev1Id, err := commit.Commit(td.CommitInfo())
+		rev1Id, err := commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
 		monitor := td.NewHealthCheckMonitor()
-		err = CheckHealth(r.Repository, td.NewFS(t), HealthCheckOptions{
+		err = CheckHealth(t.Context(), r.Repository, td.NewFS(t), HealthCheckOptions{
 			Monitor: monitor, CheckBlocks: false, CheckOrphanedBlocks: true,
 		})
 		assert.NoError(err)

@@ -87,13 +87,12 @@ func NewS3StorageClient(cfg S3StorageConfig, httpClient HTTPClient) *S3StorageCl
 	}
 }
 
-func (c *S3StorageClient) Init(config lib.Toml, headerComment string) error {
+func (c *S3StorageClient) Init(ctx context.Context, config lib.Toml, headerComment string) error {
 	var buf bytes.Buffer
 	if err := lib.WriteToml(&buf, headerComment, config); err != nil {
 		return lib.WrapErrorf(err, "failed to encode config TOML")
 	}
 	key := c.key("repository.txt")
-	ctx := context.Background()
 	status, body, err := c.do(ctx, methodPut, key, ifNoneMatch, buf.Bytes(), nil)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to init storage")
@@ -127,8 +126,8 @@ func (c *S3StorageClient) Init(config lib.Toml, headerComment string) error {
 	return nil
 }
 
-func (c *S3StorageClient) Open() (lib.Toml, error) {
-	status, body, err := c.do(context.Background(), methodGet, c.key("repository.txt"), nil, nil, nil)
+func (c *S3StorageClient) Open(ctx context.Context) (lib.Toml, error) {
+	status, body, err := c.do(ctx, methodGet, c.key("repository.txt"), nil, nil, nil)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open storage")
 	}
@@ -145,8 +144,8 @@ func (c *S3StorageClient) Open() (lib.Toml, error) {
 	return toml, nil
 }
 
-func (c *S3StorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
-	status, _, err := c.do(context.Background(), methodHead, c.key("blocks", blockId.String()), nil, nil, nil)
+func (c *S3StorageClient) HasBlock(ctx context.Context, blockId lib.BlockId) (bool, error) {
+	status, _, err := c.do(ctx, methodHead, c.key("blocks", blockId.String()), nil, nil, nil)
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to check block")
 	}
@@ -159,9 +158,9 @@ func (c *S3StorageClient) HasBlock(blockId lib.BlockId) (bool, error) {
 	return false, lib.Errorf("unexpected status: %d", status)
 }
 
-func (c *S3StorageClient) ReadBlock(blockId lib.BlockId, buf lib.BlockBuf) ([]byte, error) {
+func (c *S3StorageClient) ReadBlock(ctx context.Context, blockId lib.BlockId, buf lib.BlockBuf) ([]byte, error) {
 	status, body, err := c.do(
-		context.Background(), methodGet, c.key("blocks", blockId.String()), nil, nil, buf.Bytes(),
+		ctx, methodGet, c.key("blocks", blockId.String()), nil, nil, buf.Bytes(),
 	)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read block")
@@ -175,15 +174,15 @@ func (c *S3StorageClient) ReadBlock(blockId lib.BlockId, buf lib.BlockBuf) ([]by
 	return body, nil
 }
 
-func (c *S3StorageClient) WriteBlock(blockId lib.BlockId, data []byte) (bool, error) {
+func (c *S3StorageClient) WriteBlock(ctx context.Context, blockId lib.BlockId, data []byte) (bool, error) {
 	if len(data) > lib.MaxBlockSize {
 		return false, lib.Errorf("block %s is too large: %d", blockId, len(data))
 	}
-	if err := c.verifyLockIfHeld(); err != nil {
+	if err := c.verifyLockIfHeld(ctx); err != nil {
 		return false, err
 	}
 	status, body, err := c.do(
-		context.Background(), methodPut, c.key("blocks", blockId.String()),
+		ctx, methodPut, c.key("blocks", blockId.String()),
 		ifNoneMatch, data, nil,
 	)
 	if err != nil {
@@ -198,7 +197,7 @@ func (c *S3StorageClient) WriteBlock(blockId lib.BlockId, data []byte) (bool, er
 	return false, lib.Errorf("write block failed: %d (%s)", status, truncateErrBody(body))
 }
 
-func (c *S3StorageClient) ReadBlockIds(yield func(lib.BlockId) bool) error {
+func (c *S3StorageClient) ReadBlockIds(ctx context.Context, yield func(lib.BlockId) bool) error {
 	prefix := c.key("blocks") + "/"
 	continuation := ""
 	for {
@@ -209,7 +208,7 @@ func (c *S3StorageClient) ReadBlockIds(yield func(lib.BlockId) bool) error {
 			query.Set("continuation-token", continuation)
 		}
 		status, body, err := c.do(
-			context.Background(), methodGet, c.cfg.BucketURL+"/?"+query.Encode(), nil, nil, nil,
+			ctx, methodGet, c.cfg.BucketURL+"/?"+query.Encode(), nil, nil, nil,
 		)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to list blocks")
@@ -249,11 +248,15 @@ func (c *S3StorageClient) ReadBlockIds(yield func(lib.BlockId) bool) error {
 	}
 }
 
-func (c *S3StorageClient) HasControlFile(section lib.ControlFileSection, name string) (bool, error) {
+func (c *S3StorageClient) HasControlFile(
+	ctx context.Context,
+	section lib.ControlFileSection,
+	name string,
+) (bool, error) {
 	if err := lib.ValidateControlFileName(name); err != nil {
 		return false, err //nolint:wrapcheck
 	}
-	status, _, err := c.do(context.Background(), methodHead, c.key(string(section), name), nil, nil, nil)
+	status, _, err := c.do(ctx, methodHead, c.key(string(section), name), nil, nil, nil)
 	if err != nil {
 		return false, lib.WrapErrorf(err, "failed to check control file")
 	}
@@ -266,11 +269,15 @@ func (c *S3StorageClient) HasControlFile(section lib.ControlFileSection, name st
 	return false, lib.Errorf("unexpected status: %d", status)
 }
 
-func (c *S3StorageClient) ReadControlFile(section lib.ControlFileSection, name string) ([]byte, error) {
+func (c *S3StorageClient) ReadControlFile(
+	ctx context.Context,
+	section lib.ControlFileSection,
+	name string,
+) ([]byte, error) {
 	if err := lib.ValidateControlFileName(name); err != nil {
 		return nil, err //nolint:wrapcheck
 	}
-	status, body, err := c.do(context.Background(), methodGet, c.key(string(section), name), nil, nil, nil)
+	status, body, err := c.do(ctx, methodGet, c.key(string(section), name), nil, nil, nil)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read control file")
 	}
@@ -286,18 +293,23 @@ func (c *S3StorageClient) ReadControlFile(section lib.ControlFileSection, name s
 	return body, nil
 }
 
-func (c *S3StorageClient) WriteControlFile(section lib.ControlFileSection, name string, data []byte) error {
+func (c *S3StorageClient) WriteControlFile(
+	ctx context.Context,
+	section lib.ControlFileSection,
+	name string,
+	data []byte,
+) error {
 	if err := lib.ValidateControlFileName(name); err != nil {
 		return err //nolint:wrapcheck
 	}
 	if len(data) > lib.MaxControlFileSize {
 		return lib.Errorf("control file %s/%s is too large: %d", section, name, len(data))
 	}
-	if err := c.verifyLockIfHeld(); err != nil {
+	if err := c.verifyLockIfHeld(ctx); err != nil {
 		return err
 	}
 	status, body, err := c.do(
-		context.Background(), methodPut, c.key(string(section), name), nil, data, nil,
+		ctx, methodPut, c.key(string(section), name), nil, data, nil,
 	)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to write control file")
@@ -308,14 +320,14 @@ func (c *S3StorageClient) WriteControlFile(section lib.ControlFileSection, name 
 	return nil
 }
 
-func (c *S3StorageClient) DeleteControlFile(section lib.ControlFileSection, name string) error {
+func (c *S3StorageClient) DeleteControlFile(ctx context.Context, section lib.ControlFileSection, name string) error {
 	if err := lib.ValidateControlFileName(name); err != nil {
 		return err //nolint:wrapcheck
 	}
-	if err := c.verifyLockIfHeld(); err != nil {
+	if err := c.verifyLockIfHeld(ctx); err != nil {
 		return err
 	}
-	status, _, err := c.do(context.Background(), methodDelete, c.key(string(section), name), nil, nil, nil)
+	status, _, err := c.do(ctx, methodDelete, c.key(string(section), name), nil, nil, nil)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to delete control file")
 	}
@@ -367,11 +379,11 @@ func (c *S3StorageClient) Lock(ctx context.Context, name string) (func() error, 
 	return nil, lib.Errorf("unexpected status acquiring lock: %d", status)
 }
 
-func (c *S3StorageClient) ForceUnlock(name string) error {
+func (c *S3StorageClient) ForceUnlock(ctx context.Context, name string) error {
 	if err := lib.ValidateStorageLockName(name); err != nil {
 		return err //nolint:wrapcheck
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	status, _, err := c.do(ctx, methodHead, c.key("locks", name), nil, nil, nil)
 	if err != nil {
@@ -390,14 +402,14 @@ func (c *S3StorageClient) ForceUnlock(name string) error {
 	return nil
 }
 
-func (c *S3StorageClient) verifyLockIfHeld() error {
+func (c *S3StorageClient) verifyLockIfHeld(ctx context.Context) error {
 	c.lockMu.Lock()
 	state := c.lockState
 	c.lockMu.Unlock()
 	if state == nil {
 		return nil
 	}
-	status, body, err := c.do(context.Background(), methodGet, c.key("locks", state.Name), nil, nil, nil)
+	status, body, err := c.do(ctx, methodGet, c.key("locks", state.Name), nil, nil, nil)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to verify lock %s", state.Name)
 	}

@@ -41,15 +41,15 @@ func ValidateSyncTargetName(name string) error {
 }
 
 // LoadSyncTargets returns the workspace's registered sync targets sorted by name.
-func LoadSyncTargets(w *Workspace) ([]SyncTarget, error) {
-	has, err := w.Storage.HasControlFile(lib.ControlFileSectionConf, syncTargetsControlFile)
+func LoadSyncTargets(ctx context.Context, w *Workspace) ([]SyncTarget, error) {
+	has, err := w.Storage.HasControlFile(ctx, lib.ControlFileSectionConf, syncTargetsControlFile)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to check for sync targets")
 	}
 	if !has {
 		return nil, nil
 	}
-	data, err := w.Storage.ReadControlFile(lib.ControlFileSectionConf, syncTargetsControlFile)
+	data, err := w.Storage.ReadControlFile(ctx, lib.ControlFileSectionConf, syncTargetsControlFile)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read sync targets")
 	}
@@ -78,8 +78,8 @@ func LoadSyncTargets(w *Workspace) ([]SyncTarget, error) {
 
 // GetSyncTarget looks up a registered target by name. `found` is false if
 // no target with that name is registered.
-func GetSyncTarget(w *Workspace, name string) (uri string, found bool, err error) {
-	targets, err := LoadSyncTargets(w)
+func GetSyncTarget(ctx context.Context, w *Workspace, name string) (uri string, found bool, err error) {
+	targets, err := LoadSyncTargets(ctx, w)
 	if err != nil {
 		return "", false, err
 	}
@@ -96,11 +96,11 @@ func GetSyncTarget(w *Workspace, name string) (uri string, found bool, err error
 // match the workspace's source repository (the sync precondition).
 // `passphrase` is forwarded to `OpenStorage` so it can decrypt S3 URIs (both
 // `w`'s source URI and the target `uri`). Non-S3 URIs ignore it.
-func AddSyncTarget(w *Workspace, name, uri string, passphrase []byte) error {
+func AddSyncTarget(ctx context.Context, w *Workspace, name, uri string, passphrase []byte) error {
 	if err := ValidateSyncTargetName(name); err != nil {
 		return err
 	}
-	if _, found, err := GetSyncTarget(w, name); err != nil {
+	if _, found, err := GetSyncTarget(ctx, w, name); err != nil {
 		return err
 	} else if found {
 		return lib.Errorf("sync target %q already exists", name)
@@ -109,7 +109,7 @@ func AddSyncTarget(w *Workspace, name, uri string, passphrase []byte) error {
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open source storage")
 	}
-	srcToml, err := src.Open()
+	srcToml, err := src.Open(ctx)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to read source repository config")
 	}
@@ -117,25 +117,25 @@ func AddSyncTarget(w *Workspace, name, uri string, passphrase []byte) error {
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to open target storage at %s", uri)
 	}
-	dstToml, err := dst.Open()
+	dstToml, err := dst.Open(ctx)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to read target repository config at %s", uri)
 	}
 	if !srcToml.Eq(dstToml) {
 		return lib.Errorf("target repository at %s does not share the same configuration as the source", uri)
 	}
-	targets, err := LoadSyncTargets(w)
+	targets, err := LoadSyncTargets(ctx, w)
 	if err != nil {
 		return err
 	}
 	targets = append(targets, SyncTarget{Name: name, URI: uri})
-	return writeSyncTargets(w, targets)
+	return writeSyncTargets(ctx, w, targets)
 }
 
 // DeleteSyncTarget removes the named target. Returns an error if it isn't
 // registered.
-func DeleteSyncTarget(w *Workspace, name string) error {
-	targets, err := LoadSyncTargets(w)
+func DeleteSyncTarget(ctx context.Context, w *Workspace, name string) error {
+	targets, err := LoadSyncTargets(ctx, w)
 	if err != nil {
 		return err
 	}
@@ -151,10 +151,10 @@ func DeleteSyncTarget(w *Workspace, name string) error {
 	if !found {
 		return lib.Errorf("sync target %q does not exist", name)
 	}
-	return writeSyncTargets(w, out)
+	return writeSyncTargets(ctx, w, out)
 }
 
-func writeSyncTargets(w *Workspace, targets []SyncTarget) error {
+func writeSyncTargets(ctx context.Context, w *Workspace, targets []SyncTarget) error {
 	toml := lib.Toml{}
 	for _, t := range targets {
 		toml[syncTargetSectionPrefix+t.Name] = map[string]string{syncTargetURIKey: t.URI}
@@ -164,7 +164,7 @@ func writeSyncTargets(w *Workspace, targets []SyncTarget) error {
 		return lib.WrapErrorf(err, "failed to encode sync targets")
 	}
 	if err := w.Storage.WriteControlFile(
-		lib.ControlFileSectionConf, syncTargetsControlFile, buf.Bytes(),
+		ctx, lib.ControlFileSectionConf, syncTargetsControlFile, buf.Bytes(),
 	); err != nil {
 		return lib.WrapErrorf(err, "failed to write sync targets")
 	}
@@ -181,7 +181,7 @@ func RunSync(
 	passphrase []byte,
 	workers int,
 ) error {
-	uri, found, err := GetSyncTarget(w, name)
+	uri, found, err := GetSyncTarget(ctx, w, name)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to look up sync target %q", name)
 	}

@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"io/fs"
 
 	"github.com/flunderpero/cling-sync/lib"
@@ -25,7 +26,7 @@ type ResetError struct {
 
 // Reset the workspace to a specific revision.
 // Return `ResetError` if there are local changes and `opts.Force` is not set.
-func Reset(ws *Workspace, repository *lib.Repository, opts *ResetOptions) error {
+func Reset(ctx context.Context, ws *Workspace, repository *lib.Repository, opts *ResetOptions) error {
 	tempFS, err := ws.TempFS.MkSub("reset")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create reset tmp dir")
@@ -42,7 +43,7 @@ func Reset(ws *Workspace, repository *lib.Repository, opts *ResetOptions) error 
 		RestorableMetadataFlag: opts.RestorableMetadataFlag,
 		UseStagingCache:        opts.UseStagingCache,
 	}
-	wsHead, staging, localChanges, _, err := buildLocalChanges(ws, tempFS, repository, &mergeOptions)
+	wsHead, staging, localChanges, _, err := buildLocalChanges(ctx, ws, tempFS, repository, &mergeOptions)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to build local changes")
 	}
@@ -53,7 +54,7 @@ func Reset(ws *Workspace, repository *lib.Repository, opts *ResetOptions) error 
 	}
 	// We ignore local changes.
 	localChanges = nil
-	remoteRevision, err := buildRemoteChanges(tempFS, repository, opts.RevisionId)
+	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, opts.RevisionId)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to build remote changes")
 	}
@@ -68,7 +69,7 @@ func Reset(ws *Workspace, repository *lib.Repository, opts *ResetOptions) error 
 		lib.NewBlockBuf(),
 	}
 	defer merger.restoreDirFileModes() //nolint:errcheck
-	if err := merger.copyRepositoryFiles(remoteRevision.Source, staging, localChanges); err != nil {
+	if err := merger.copyRepositoryFiles(ctx, remoteRevision.Source, staging, localChanges); err != nil {
 		return lib.WrapErrorf(err, "failed to copy remote files")
 	}
 	if err := merger.deleteObsoleteWorkspaceFiles(remoteRevision, staging, localChanges); err != nil {
@@ -77,7 +78,7 @@ func Reset(ws *Workspace, repository *lib.Repository, opts *ResetOptions) error 
 	if err := merger.restoreDirFileModes(); err != nil {
 		return lib.WrapErrorf(err, "failed to restore file mode for directories")
 	}
-	if err := lib.WriteRef(ws.Storage, "head", opts.RevisionId); err != nil {
+	if err := lib.WriteRef(ctx, ws.Storage, "head", opts.RevisionId); err != nil {
 		return lib.WrapErrorf(err, "failed to write workspace head reference - please re-run reset")
 	}
 	return nil

@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"context"
 	"encoding/hex"
 	"io"
 )
@@ -36,13 +37,13 @@ func NewRevisionReader(repository *Repository, revision *Revision) *RevisionRead
 }
 
 // Return `io.EOF` if we are done.
-func (rr *RevisionReader) Read(buf BlockBuf) (*RevisionEntry, error) {
+func (rr *RevisionReader) Read(ctx context.Context, buf BlockBuf) (*RevisionEntry, error) {
 	for rr.current == nil || rr.currentIndex == len(rr.current) {
 		if rr.blockIndex >= len(rr.revision.BlockIds) {
 			return nil, io.EOF
 		}
 		blockId := rr.revision.BlockIds[rr.blockIndex]
-		data, err := rr.repository.ReadBlock(blockId, buf)
+		data, err := rr.repository.ReadBlock(ctx, blockId, buf)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read block %s", blockId)
 		}

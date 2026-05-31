@@ -27,7 +27,7 @@ func TestMerge(t *testing.T) {
 		w.Write("b/e/f.txt", "f")
 		w.Chmod("a.txt", 0o612)
 		w.Chmod("b", 0o734)
-		remoteRev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o612, 1, "a"},
@@ -38,7 +38,7 @@ func TestMerge(t *testing.T) {
 		}, r.RevisionSnapshotFileInfos(remoteRev1, nil))
 
 		// Merge first commit into workspace.
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(remoteRev1, w2.Head())
 		assert.Equal([]lib.TestFileInfo{
@@ -56,7 +56,7 @@ func TestMerge(t *testing.T) {
 		w.Chmod("b/c.txt", 0o400)
 		w.Rm("a.txt")
 		w.Rm("b/e")
-		remoteRev2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"b", 0o734 | fs.ModeDir, 0, ""},
@@ -65,7 +65,7 @@ func TestMerge(t *testing.T) {
 		}, r.RevisionSnapshotFileInfos(remoteRev2, nil))
 
 		// Merge second commit into workspace.
-		localRev, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		localRev, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(remoteRev2, w2.Head())
 		assert.Equal(localRev, w2.Head())
@@ -76,7 +76,7 @@ func TestMerge(t *testing.T) {
 		}, w2.Ls("."))
 
 		// Merging again should not do anything.
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.ErrorIs(err, ErrUpToDate)
 	})
 
@@ -89,11 +89,11 @@ func TestMerge(t *testing.T) {
 
 		// First commit: create a file inside a directory.
 		w.Write("dir/a.txt", "a")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Merge into workspace 2.
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Make the directory non-writable in w2.
@@ -101,14 +101,14 @@ func TestMerge(t *testing.T) {
 
 		// w1: add a new file inside the directory.
 		w.Write("dir/b.txt", "b")
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Merge the remote changes into w2.
 		// The merge should succeed despite `dir` being non-writable,
 		// because `makeDirsWritable` should temporarily make it writable.
 		// After the merge, `dir` should be restored to its original mode (0o500).
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Verify the new file was written.
@@ -131,20 +131,20 @@ func TestMerge(t *testing.T) {
 		w.Write("dir1/a.txt", "a")
 		w.Write("dir1/dir2/b.txt", "b")
 		w.Write("dir1/dir2/dir3/c.txt", "c")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Merge into the second workspace.
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Delete everything in the first workspace.
 		w.Rm("dir1")
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Merge into the second workspace again.
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// The second workspace should be empty.
@@ -159,12 +159,12 @@ func TestMerge(t *testing.T) {
 
 		// Add first commit.
 		w.Write("a.txt", "a")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Add a second commit that changes the metadata only.
 		w.Chmod("a.txt", 0o700)
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o700, 1, "a"},
@@ -184,7 +184,7 @@ func TestMerge(t *testing.T) {
 		w.Write("b.txt", "b")
 		w.Write("c/d.txt", "d")
 		w.Write("c/e.txt", "e")
-		remoteRev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -195,7 +195,7 @@ func TestMerge(t *testing.T) {
 		}, r.RevisionSnapshotFileInfos(remoteRev1, nil))
 
 		// Merge first commit into workspace.
-		localRev1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		localRev1, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(remoteRev1, w2.Head())
 		assert.Equal(localRev1, w2.Head())
@@ -204,7 +204,7 @@ func TestMerge(t *testing.T) {
 		w.Rm("a.txt")
 		w.Write("b.txt", "bb")
 		w.Write("c/f.txt", "f")
-		remoteRev2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"b.txt", 0o600, 2, "bb"},
@@ -220,7 +220,7 @@ func TestMerge(t *testing.T) {
 		w2.Write("c/g/h.txt", "h")
 
 		// Merge second commit into workspace.
-		localRev2, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		localRev2, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(localRev2, w2.Head())
 		// A commit should have been created with the local changes.
@@ -248,7 +248,7 @@ func TestMerge(t *testing.T) {
 		// Add first commit.
 		w.Write("a.txt", "a")
 		w.Write("b/c.txt", "c")
-		remoteRev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -257,14 +257,14 @@ func TestMerge(t *testing.T) {
 		}, r.RevisionSnapshotFileInfos(remoteRev1, nil))
 
 		// Merge first commit into workspace.
-		localRev1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		localRev1, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(remoteRev1, localRev1)
 		assert.Equal(localRev1, w2.Head())
 
 		// Add second commit removing `b/`.
 		w.Rm("b")
-		remoteRev2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -278,7 +278,7 @@ func TestMerge(t *testing.T) {
 		}, w2.Ls("."))
 
 		// Merge second commit into workspace. This should remove `b/`.
-		localRev2, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		localRev2, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(remoteRev2, localRev2)
 		assert.Equal(localRev2, w2.Head())
@@ -298,7 +298,7 @@ func TestMerge(t *testing.T) {
 		// Add first commit.
 		w.Write("a.txt", "a")
 		w.Write("b/c.txt", "c")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -307,14 +307,14 @@ func TestMerge(t *testing.T) {
 		}, r.RevisionSnapshotFileInfos(revId1, nil))
 
 		// Merge first commit into workspace.
-		localRev1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		localRev1, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(revId1, localRev1)
 		assert.Equal(localRev1, w2.Head())
 
 		// Add second commit removing `b/`.
 		w.Rm("b")
-		remoteRev2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -324,7 +324,7 @@ func TestMerge(t *testing.T) {
 		w2.Write("b/d.txt", "d")
 
 		// Merge second commit into workspace.
-		localRev2, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		localRev2, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -351,22 +351,22 @@ func TestMerge(t *testing.T) {
 		// is non-root and we exercise the regular conflict-detection path
 		// (not the attach-non-empty adoption path).
 		w.Write("a.txt", "a")
-		remoteRev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(remoteRev1, w2.Head())
 
 		// `w` commits a divergent change.
 		w.Write("a.txt", "aa")
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// `w2` introduces its own divergent change.
 		w2.Write("a.txt", "aaa")
 
 		// Merging `w2` should detect the conflict.
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.Error(err, "MergeConflictsError")
 		conflicts, ok := err.(MergeConflictsError) //nolint:errorlint
 		assert.Equal(true, ok)
@@ -391,7 +391,7 @@ func TestMerge(t *testing.T) {
 
 		// Add first commit.
 		w.Write("a.txt", "a")
-		remoteRev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -404,7 +404,7 @@ func TestMerge(t *testing.T) {
 		mockMon := &changeRemoteCommitMonitor{TestCommitMonitor{}, r.Repository, t, assert, false}
 		mergeOptions := wstd.MergeOptions()
 		mergeOptions.CommitMonitor = mockMon
-		_, err = Merge(w2.Workspace, r.Repository, mergeOptions)
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, mergeOptions)
 		assert.ErrorIs(err, lib.ErrHeadChanged)
 	})
 
@@ -417,28 +417,28 @@ func TestMerge(t *testing.T) {
 		w2 := wstd.NewTestWorkspaceExtra(t, r.Repository, "", lib.NewMemoryFS(10000000))
 
 		w.Write("a.txt", "a")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		w2revId1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		w2revId1, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(revId1, w2revId1)
 
 		// Change the ownership of `a.txt` in w2.
 		w2.Chown("a.txt", 1234, 5678)
 		w2.Chmod("a.txt", 0o700)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Merge the changes - this should fail because the GUID and/or UID should not exist.
 		opts := wstd.MergeOptions()
 		opts.RestorableMetadataFlag |= lib.RestorableMetadataOwnership
-		_, err = Merge(w.Workspace, r.Repository, opts)
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, opts)
 		assert.Error(err, "failed to restore file owner 1234 and group 5678 for a.txt")
 
 		// Try a second time without `Chown`.
 		opts.RestorableMetadataFlag ^= lib.RestorableMetadataOwnership
-		_, err = Merge(w.Workspace, r.Repository, opts)
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, opts)
 		assert.NoError(err)
 		assert.Equal(fs.FileMode(0o700).Perm(), w.Stat("a.txt").Mode().Perm())
 	})
@@ -452,16 +452,16 @@ func TestMerge(t *testing.T) {
 		w2 := wstd.NewTestWorkspaceExtra(t, r.Repository, "", lib.NewMemoryFS(10000000))
 
 		w.Write("a.txt", "a")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		w2revId1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		w2revId1, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(revId1, w2revId1)
 
 		// Change the ownership of `a.txt` in `w2` and merge.
 		w2.Chown("a.txt", 1234, 5678)
-		w2revId2, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		w2revId2, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Change the ownership of `a.txt` in `w`.
@@ -470,12 +470,12 @@ func TestMerge(t *testing.T) {
 		// Merge should fail if we take ownership into account.
 		opts := wstd.MergeOptions()
 		opts.RestorableMetadataFlag |= lib.RestorableMetadataOwnership
-		_, err = Merge(w.Workspace, r.Repository, opts)
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, opts)
 		assert.Error(err, "MergeConflictsError")
 
 		// Merge should succeed if we ignore ownership.
 		opts.RestorableMetadataFlag ^= lib.RestorableMetadataOwnership
-		revId1, err = Merge(w.Workspace, r.Repository, opts)
+		revId1, err = Merge(t.Context(), w.Workspace, r.Repository, opts)
 		assert.NoError(err)
 		assert.Equal(revId1, w2revId2)
 		// The ownership should not have been changed.
@@ -495,7 +495,7 @@ func TestMerge(t *testing.T) {
 		mon := wstd.CpMonitor()
 		opts := wstd.MergeOptions()
 		opts.CpMonitor = mon
-		_, err := Merge(w.Workspace, r.Repository, opts)
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, opts)
 		assert.NoError(err)
 		assert.Equal(0, len(mon.OnStartCalls))
 		assert.Equal(0, len(mon.OnWriteCalls))
@@ -505,7 +505,7 @@ func TestMerge(t *testing.T) {
 
 		// Create a second workspace and merge. This should trigger the CpMonitor.
 		w2 := wstd.NewTestWorkspace(t, r.Repository)
-		_, err = Merge(w2.Workspace, r.Repository, opts)
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, opts)
 		assert.NoError(err)
 
 		assert.Equal(1, len(mon.OnStartCalls))
@@ -528,27 +528,27 @@ func TestMerge(t *testing.T) {
 		mtime1 := time.Now()
 		w.Write("a.txt", "a")
 		w.Touch("a.txt", mtime1)
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// `w` updates `a.txt` and commits.
 		mtime2 := mtime1.Add(time.Second)
 		w.Write("a.txt", "aa")
 		w.Touch("a.txt", mtime2)
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// `w2` happens to make the identical update locally.
 		w2.Write("a.txt", "aa")
 		w2.Touch("a.txt", mtime2)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.ErrorIs(err, lib.ErrEmptyCommit)
 
 		// But having a different mtime should not be ignored.
 		w2.Touch("a.txt", time.Now())
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.Error(err, "MergeConflictsError")
 	})
 
@@ -571,7 +571,7 @@ func TestMerge(t *testing.T) {
 		w.Touch("match.txt", mtime)
 		w.Write("modified.txt", "old")
 		w.Write("remote-only.txt", "remote")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// `match.txt` is set to the identical mtime so the default flag (which
@@ -582,7 +582,7 @@ func TestMerge(t *testing.T) {
 		w2.Write("local-only.txt", "local")
 		assert.Equal(true, w2.Head().IsRoot())
 
-		newHead, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		newHead, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(newHead, w2.Head())
 
@@ -612,12 +612,12 @@ func TestMerge(t *testing.T) {
 		mtime := time.Now()
 		w.Write("a.txt", "a")
 		w.Touch("a.txt", mtime)
-		remoteRev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		w2.Write("a.txt", "a")
 		w2.Touch("a.txt", mtime)
-		head, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		head, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(remoteRev1, head, "no new revision should be created")
 		assert.Equal(remoteRev1, w2.Head())
@@ -646,7 +646,7 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		rootW.Mkdir("dir1")
 		rootW.Write("dir1/b.txt", "b")
 		rootW.MkdirAll("look/here")
-		_, err := Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), rootW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -657,7 +657,7 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		}, r.RevisionSnapshotFileInfos(rootW.Head(), nil))
 
 		// Merging the commit into the prefixed workspace should not create any files.
-		_, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(0, len(prefixW.Ls(".")))
 		assert.Equal(rootW.Head(), prefixW.Head())
@@ -666,7 +666,7 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		prefixW.Write("c.txt", "c")
 		prefixW.Mkdir("dir2")
 		prefixW.Write("dir2/d.txt", "d")
-		rev, err := Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		rev, err := Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(rev, prefixW.Head())
 		assert.Equal(rev, r.Head())
@@ -687,7 +687,7 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		}, r.RevisionInfos(rev))
 
 		// Merging again should not do anything.
-		_, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.ErrorIs(err, ErrUpToDate)
 		assert.Equal(rev, prefixW.Head())
 	})
@@ -701,7 +701,7 @@ func TestMergeWithPathPrefix(t *testing.T) {
 
 		// Merging the commit into the prefixed workspace should create the path prefix.
 		prefixW.Write("a.txt", "a")
-		rev, err := Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		rev, err := Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"look", 0o700 | fs.ModeDir, 0, ""},
@@ -724,11 +724,11 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		rootW.Write("look/here/b.txt", "b")
 		rootW.Write("look/here/dir1/b.txt", "b")
 		rootW.Write("look/here.txt", "here")
-		_, err := Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), rootW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Merge into the prefixed workspace.
-		rev, err := Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		rev, err := Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(rev, prefixW.Head())
 		assert.Equal(rev, r.Head())
@@ -742,14 +742,14 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		rootW.Write("a.txt", "aa")
 		rootW.Rm("look/here/b.txt")
 		rootW.Write("c.txt", "c")
-		_, err = Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), rootW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Add changes to the prefixed workspace and merge.
 		prefixW.Write("a.txt", "this is a different file")
 		prefixW.Rm("dir1/b.txt")
 
-		rev, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		rev, err = Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(rev, prefixW.Head())
 		assert.Equal(rev, r.Head())
@@ -775,21 +775,21 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		// head is non-root and we exercise the regular conflict-detection
 		// path (not the attach-non-empty adoption path).
 		wRoot.Write("look/here/a.txt", "a")
-		remoteRev1, err := Merge(wRoot.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev1, err := Merge(t.Context(), wRoot.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(wPrefix.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), wPrefix.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(remoteRev1, wPrefix.Head())
 
 		// `wRoot` commits a divergent change.
 		wRoot.Write("look/here/a.txt", "aa")
-		_, err = Merge(wRoot.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), wRoot.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// `wPrefix` introduces its own divergent change.
 		wPrefix.Write("a.txt", "aaa")
 
-		_, err = Merge(wPrefix.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), wPrefix.Workspace, r.Repository, wstd.MergeOptions())
 		assert.Error(err, "MergeConflictsError")
 
 		conflicts, ok := err.(MergeConflictsError) //nolint:errorlint
@@ -820,7 +820,7 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		rootW.Touch("look/here/match.txt", mtime)
 		rootW.Write("look/here/modified.txt", "old")
 		rootW.Write("look/here/remote-only.txt", "remote")
-		_, err := Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), rootW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Prefix workspace (head=root) holds the prefix-relative view.
@@ -830,7 +830,7 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		prefixW.Write("local-only.txt", "local")
 		assert.Equal(true, prefixW.Head().IsRoot())
 
-		newHead, err := Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		newHead, err := Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(newHead, prefixW.Head())
 
@@ -860,7 +860,7 @@ func TestForceCommit(t *testing.T) {
 		w.Write("a.txt", "a")
 		w.Write("b.txt", "b")
 		w.Write("c/d.txt", "d")
-		remoteRev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -870,7 +870,7 @@ func TestForceCommit(t *testing.T) {
 		}, r.RevisionSnapshotFileInfos(remoteRev1, nil))
 
 		// Merge first commit into workspace.
-		localRev, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		localRev, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(remoteRev1, localRev)
 		assert.Equal(localRev, w2.Head())
@@ -880,7 +880,7 @@ func TestForceCommit(t *testing.T) {
 		w.Write("b.txt", "bb")
 		w.Rm("c/d.txt")
 		w.Write("c/f.txt", "f")
-		remoteRev2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		remoteRev2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 2, "aa"},
@@ -893,12 +893,12 @@ func TestForceCommit(t *testing.T) {
 		w2.Write("a.txt", "aaa")
 
 		// Test that a merge would result in a conflict.
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.Error(err, "MergeConflictsError")
 
 		// Force commit local changes.
 		opts := ForceCommitOptions{MergeOptions: *wstd.MergeOptions()}
-		commitRev, err := ForceCommit(w2.Workspace, r.Repository, &opts)
+		commitRev, err := ForceCommit(t.Context(), w2.Workspace, r.Repository, &opts)
 		assert.NoError(err)
 		// Both the remote and local state should be the same.
 		assert.Equal(commitRev, r.Head())
@@ -926,26 +926,31 @@ func TestForceCommit(t *testing.T) {
 		rootW.Write("a.txt", "a")
 		rootW.MkdirAll("look/here")
 		rootW.Write("look/here/b.txt", "b")
-		_, err := Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), rootW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Merge into the prefixed workspace.
-		_, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Add conflicts inside and outside the path prefix.
 		rootW.Write("a.txt", "from root workspace")
 		rootW.Write("look/here/b.txt", "bb")
-		_, err = Merge(rootW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), rootW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		prefixW.Write("b.txt", "from prefixed workspace")
 
 		// Merge should fail.
-		_, err = Merge(prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
 		assert.Error(err, "MergeConflictsError")
 
 		// But force commit should succeed.
-		commitRev, err := ForceCommit(prefixW.Workspace, r.Repository, &ForceCommitOptions{*wstd.MergeOptions()})
+		commitRev, err := ForceCommit(
+			t.Context(),
+			prefixW.Workspace,
+			r.Repository,
+			&ForceCommitOptions{*wstd.MergeOptions()},
+		)
 		assert.NoError(err)
 		assert.Equal(r.Head(), commitRev)
 		assert.Equal(prefixW.Head(), commitRev)
@@ -970,7 +975,7 @@ func TestForceCommit(t *testing.T) {
 		opts := wstd.MergeOptions()
 		opts.CommitMonitor = newCancelCommitMonitor()
 
-		_, err := Merge(w.Workspace, r.Repository, opts)
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, opts)
 		assert.ErrorIs(err, lib.ErrCancel)
 	})
 }
@@ -1000,11 +1005,11 @@ func (m *changeRemoteCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
 		return nil
 	}
 	m.committed = true
-	commit, err := lib.NewCommit(m.repository, td.NewFS(m.t))
+	commit, err := lib.NewCommit(m.t.Context(), m.repository, td.NewFS(m.t))
 	m.assert.NoError(err)
 	err = commit.Add(td.RevisionEntry("update.txt", lib.RevisionEntryKindAdd))
 	m.assert.NoError(err)
-	_, err = commit.Commit(td.CommitInfo())
+	_, err = commit.Commit(m.t.Context(), td.CommitInfo())
 	m.assert.NoError(err)
 	return nil
 }
@@ -1021,10 +1026,10 @@ func TestMergeSymlinks(t *testing.T) {
 
 		w.Write("a.txt", "a")
 		w.Symlink("a.txt", "link")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		assert.Equal("a.txt", w2.ReadLink("link"))
@@ -1043,16 +1048,16 @@ func TestMergeSymlinks(t *testing.T) {
 		w.Write("a.txt", "a")
 		w.Write("b.txt", "b")
 		w.Symlink("a.txt", "link")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		w.Rm("link")
 		w.Symlink("b.txt", "link")
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal("b.txt", w2.ReadLink("link"))
 	})
@@ -1066,11 +1071,11 @@ func TestMergeSymlinks(t *testing.T) {
 		w.Write("outside.txt", "x")
 		w.Write("look/here/a.txt", "a")
 		w.Symlink("../../outside.txt", "look/here/link")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		w2 := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		_, err = w2.Workspace.FS.Stat("link")
@@ -1082,7 +1087,7 @@ func TestMergeSymlinks(t *testing.T) {
 		// A second merge from w2 must not treat the skipped link as a
 		// local delete. Otherwise w2 would commit a DELETE entry and the
 		// link would silently disappear from the repository for everyone.
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.ErrorIs(err, ErrUpToDate)
 	})
 
@@ -1095,11 +1100,11 @@ func TestMergeSymlinks(t *testing.T) {
 		w.Write("outside.txt", "x")
 		w.Write("look/here/a.txt", "a")
 		w.Symlink("../../outside.txt", "look/here/link")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		w2 := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// The link was silently skipped on restore. Now create a regular
@@ -1107,7 +1112,7 @@ func TestMergeSymlinks(t *testing.T) {
 		// not ADD, because the path already exists in the previous
 		// revision (even though w2 couldn't see the original target).
 		w2.Write("link", "newfile")
-		rev, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		rev, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		assert.Equal([]lib.TestRevisionEntryInfo{
@@ -1126,9 +1131,9 @@ func TestMergeSymlinks(t *testing.T) {
 		w.Write("target_dir/inner.txt", "td")
 		w.Symlink("target_file", "linkf")
 		w.Symlink("target_dir", "linkd")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal("target_file", w2.ReadLink("linkf"))
 		assert.Equal("target_dir", w2.ReadLink("linkd"))
@@ -1137,9 +1142,9 @@ func TestMergeSymlinks(t *testing.T) {
 		w.Write("linkf", "now a file")
 		w.Rm("linkd")
 		w.Write("linkd/inside.txt", "inside")
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		linkfInfo, err := w2.Workspace.FS.Stat("linkf")
@@ -1163,18 +1168,18 @@ func TestMergeSymlinks(t *testing.T) {
 
 		w.Write("file_to_dir", "f")
 		w.Write("dir_to_file/inner.txt", "d")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		w.Rm("file_to_dir")
 		w.Write("file_to_dir/inside.txt", "now a dir")
 		w.Rm("dir_to_file")
 		w.Write("dir_to_file", "now a file")
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		info, err := w2.Workspace.FS.Stat("file_to_dir")
@@ -1199,18 +1204,18 @@ func TestMergeSymlinks(t *testing.T) {
 		w.Write("target_dir/inner.txt", "td")
 		w.Write("realf", "f")
 		w.Write("reald/inside.txt", "d")
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		w.Rm("realf")
 		w.Symlink("target_file", "realf")
 		w.Rm("reald")
 		w.Symlink("target_dir", "reald")
-		_, err = Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		assert.Equal("target_file", w2.ReadLink("realf"))
@@ -1232,9 +1237,9 @@ func TestMergeSymlinks(t *testing.T) {
 		linkMtime := time.Unix(1_700_000_000, 123_456_789)
 		assert.NoError(w.Workspace.FS.Chmtime("link", linkMtime))
 
-		_, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		_, err = Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		info, err := w2.Workspace.FS.Stat("link")

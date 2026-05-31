@@ -32,7 +32,7 @@ func TestSyncTargetStore(t *testing.T) {
 		assert := lib.NewAssert(t)
 		w := newSyncTestWorkspace(t)
 
-		targets, err := LoadSyncTargets(w)
+		targets, err := LoadSyncTargets(t.Context(), w)
 		assert.NoError(err)
 		assert.Equal(0, len(targets))
 	})
@@ -42,32 +42,32 @@ func TestSyncTargetStore(t *testing.T) {
 		assert := lib.NewAssert(t)
 		srcPath := t.TempDir()
 		src := td.NewTestRepository(t, lib.NewRealFS(srcPath))
-		w, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
+		w, err := NewWorkspace(t.Context(), td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
 		assert.NoError(err)
 		alpha := cloneRepositoryAt(t, src)
 		beta := cloneRepositoryAt(t, src)
 
-		assert.NoError(AddSyncTarget(w, "alpha", alpha, nil))
-		assert.NoError(AddSyncTarget(w, "beta", beta, nil))
+		assert.NoError(AddSyncTarget(t.Context(), w, "alpha", alpha, nil))
+		assert.NoError(AddSyncTarget(t.Context(), w, "beta", beta, nil))
 
-		targets, err := LoadSyncTargets(w)
+		targets, err := LoadSyncTargets(t.Context(), w)
 		assert.NoError(err)
 		assert.Equal([]SyncTarget{
 			{Name: "alpha", URI: alpha},
 			{Name: "beta", URI: beta},
 		}, targets)
 
-		uri, found, err := GetSyncTarget(w, "alpha")
+		uri, found, err := GetSyncTarget(t.Context(), w, "alpha")
 		assert.NoError(err)
 		assert.Equal(true, found)
 		assert.Equal(alpha, uri)
 
-		_, found, err = GetSyncTarget(w, "ghost")
+		_, found, err = GetSyncTarget(t.Context(), w, "ghost")
 		assert.NoError(err)
 		assert.Equal(false, found)
 
-		assert.NoError(DeleteSyncTarget(w, "alpha"))
-		targets, err = LoadSyncTargets(w)
+		assert.NoError(DeleteSyncTarget(t.Context(), w, "alpha"))
+		targets, err = LoadSyncTargets(t.Context(), w)
 		assert.NoError(err)
 		assert.Equal([]SyncTarget{{Name: "beta", URI: beta}}, targets)
 	})
@@ -77,10 +77,10 @@ func TestSyncTargetStore(t *testing.T) {
 		assert := lib.NewAssert(t)
 		srcPath := t.TempDir()
 		src := td.NewTestRepository(t, lib.NewRealFS(srcPath))
-		w, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
+		w, err := NewWorkspace(t.Context(), td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
 		assert.NoError(err)
 		alpha := cloneRepositoryAt(t, src)
-		assert.Error(AddSyncTarget(w, "with space", alpha, nil), "alphanumeric")
+		assert.Error(AddSyncTarget(t.Context(), w, "with space", alpha, nil), "alphanumeric")
 	})
 
 	t.Run("Add rejects duplicate name", func(t *testing.T) {
@@ -88,12 +88,12 @@ func TestSyncTargetStore(t *testing.T) {
 		assert := lib.NewAssert(t)
 		srcPath := t.TempDir()
 		src := td.NewTestRepository(t, lib.NewRealFS(srcPath))
-		w, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
+		w, err := NewWorkspace(t.Context(), td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
 		assert.NoError(err)
 		alpha := cloneRepositoryAt(t, src)
 		alpha2 := cloneRepositoryAt(t, src)
-		assert.NoError(AddSyncTarget(w, "alpha", alpha, nil))
-		assert.Error(AddSyncTarget(w, "alpha", alpha2, nil), "already exists")
+		assert.NoError(AddSyncTarget(t.Context(), w, "alpha", alpha, nil))
+		assert.Error(AddSyncTarget(t.Context(), w, "alpha", alpha2, nil), "already exists")
 	})
 
 	t.Run("Add rejects mismatched repository config", func(t *testing.T) {
@@ -103,21 +103,21 @@ func TestSyncTargetStore(t *testing.T) {
 		// A repository with its own unrelated config.
 		otherPath := t.TempDir()
 		td.NewTestRepository(t, lib.NewRealFS(otherPath))
-		assert.Error(AddSyncTarget(w, "other", otherPath, nil), "same configuration")
+		assert.Error(AddSyncTarget(t.Context(), w, "other", otherPath, nil), "same configuration")
 	})
 
 	t.Run("Add rejects unreachable URI", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		w := newSyncTestWorkspace(t)
-		assert.Error(AddSyncTarget(w, "ghost", "/nonexistent-cling-sync-target", nil), "storage not found")
+		assert.Error(AddSyncTarget(t.Context(), w, "ghost", "/nonexistent-cling-sync-target", nil), "storage not found")
 	})
 
 	t.Run("Delete rejects unknown name", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		w := newSyncTestWorkspace(t)
-		assert.Error(DeleteSyncTarget(w, "ghost"), "does not exist")
+		assert.Error(DeleteSyncTarget(t.Context(), w, "ghost"), "does not exist")
 	})
 }
 
@@ -129,21 +129,21 @@ func TestRunSync(t *testing.T) {
 		assert := lib.NewAssert(t)
 		srcPath := t.TempDir()
 		src := td.NewTestRepository(t, lib.NewRealFS(srcPath))
-		w, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
+		w, err := NewWorkspace(t.Context(), td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
 		assert.NoError(err)
 		dstPath := cloneRepositoryAt(t, src)
-		assert.NoError(AddSyncTarget(w, "one", dstPath, nil))
+		assert.NoError(AddSyncTarget(t.Context(), w, "one", dstPath, nil))
 
 		entry := td.RevisionEntry("a.txt", lib.RevisionEntryKindAdd)
-		blockId, _, err := src.WriteBlock([]byte("hello"), lib.NewBlockBuf())
+		blockId, _, err := src.WriteBlock(t.Context(), []byte("hello"), lib.NewBlockBuf())
 		assert.NoError(err)
 		entry.Metadata.BlockIds = []lib.BlockId{blockId}
 		entry.Metadata.Size = 5
 		entry.Metadata.FileHash = td.SHA256("hello")
-		commit, err := lib.NewCommit(src.Repository, td.NewFS(t))
+		commit, err := lib.NewCommit(t.Context(), src.Repository, td.NewFS(t))
 		assert.NoError(err)
 		assert.NoError(commit.Add(entry))
-		srcHead, err := commit.Commit(td.CommitInfo())
+		srcHead, err := commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
 		mon := &countingMonitor{}
@@ -151,7 +151,7 @@ func TestRunSync(t *testing.T) {
 
 		dstStorage, err := lib.NewFileStorage(lib.NewRealFS(dstPath), lib.StoragePurposeRepository)
 		assert.NoError(err)
-		dstHead, err := lib.ReadRef(dstStorage, "head")
+		dstHead, err := lib.ReadRef(t.Context(), dstStorage, "head")
 		assert.NoError(err)
 		assert.Equal(srcHead, dstHead)
 		assert.Greater(mon.blocks, 0, "monitor should see blocks copied")
@@ -171,10 +171,10 @@ func TestRunSync(t *testing.T) {
 		assert := lib.NewAssert(t)
 		srcPath := t.TempDir()
 		src := td.NewTestRepository(t, lib.NewRealFS(srcPath))
-		w, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
+		w, err := NewWorkspace(t.Context(), td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
 		assert.NoError(err)
 		dstPath := cloneRepositoryAt(t, src)
-		assert.NoError(AddSyncTarget(w, "one", dstPath, nil))
+		assert.NoError(AddSyncTarget(t.Context(), w, "one", dstPath, nil))
 		assert.NoError(os.RemoveAll(dstPath)) //nolint:forbidigo
 
 		mon := &countingMonitor{}
@@ -188,7 +188,7 @@ func newSyncTestWorkspace(t *testing.T) *Workspace {
 	assert := lib.NewAssert(t)
 	srcPath := t.TempDir()
 	td.NewTestRepository(t, lib.NewRealFS(srcPath))
-	w, err := NewWorkspace(td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
+	w, err := NewWorkspace(t.Context(), td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
 	assert.NoError(err)
 	return w
 }

@@ -48,7 +48,7 @@ func (wstd WorkspaceTestData) NewTestWorkspaceExtra(
 	assert := lib.NewAssert(tb)
 	prefix, err := ValidatePathPrefix(pathPrefix)
 	assert.NoError(err)
-	workspace, err := NewWorkspace(fs, td.NewFS(tb), RemoteRepository("test"), prefix)
+	workspace, err := NewWorkspace(tb.Context(), fs, td.NewFS(tb), RemoteRepository("test"), prefix)
 	assert.NoError(err)
 	return &TestWorkspace{workspace, td.NewTestFS(tb, fs), tb, assert}
 }
@@ -210,7 +210,7 @@ type TestWorkspace struct {
 
 func (w *TestWorkspace) Head() lib.RevisionId {
 	w.t.Helper()
-	head, err := w.Workspace.Head()
+	head, err := w.Workspace.Head(w.t.Context())
 	w.assert.NoError(err)
 	return head
 }

@@ -2,6 +2,7 @@
 package workspace
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -57,8 +58,8 @@ type LogOptions struct {
 	Status     bool
 }
 
-func Log(repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
-	head, err := repository.Head()
+func Log(ctx context.Context, repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
+	head, err := repository.Head(ctx)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get head revision")
 	}
@@ -66,7 +67,7 @@ func Log(repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
 	revisionId := head
 	buf := lib.NewBlockBuf()
 	for !revisionId.IsRoot() {
-		revision, err := repository.ReadRevision(revisionId, buf)
+		revision, err := repository.ReadRevision(ctx, revisionId, buf)
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read revision %s", revisionId)
 		}
@@ -75,7 +76,7 @@ func Log(repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
 		if opts.Status || opts.PathFilter != nil {
 			revisionReader := lib.NewRevisionReader(repository, &revision)
 			for {
-				entry, err := revisionReader.Read(buf)
+				entry, err := revisionReader.Read(ctx, buf)
 				if errors.Is(err, io.EOF) {
 					break
 				}

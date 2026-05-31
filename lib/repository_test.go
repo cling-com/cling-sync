@@ -20,12 +20,12 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert := NewAssert(t)
 		storage, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
 		assert.NoError(err)
-		repo1, err := InitNewRepository(storage, userPassphrase)
+		repo1, err := InitNewRepository(t.Context(), storage, userPassphrase)
 		assert.NoError(err)
-		head, err := repo1.Head()
+		head, err := repo1.Head(t.Context())
 		assert.NoError(err)
 		assert.Equal(true, head.IsRoot())
-		repo2, err := OpenRepository(storage, userPassphrase)
+		repo2, err := OpenRepository(t.Context(), storage, userPassphrase)
 		assert.NoError(err)
 		assert.Equal(repo1.kekCipher, repo2.kekCipher)
 	})
@@ -35,9 +35,9 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert := NewAssert(t)
 		storage, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
 		assert.NoError(err)
-		repo, err := InitNewRepository(storage, userPassphrase)
+		repo, err := InitNewRepository(t.Context(), storage, userPassphrase)
 		assert.NoError(err)
-		toml, err := repo.storage.Open()
+		toml, err := repo.storage.Open(t.Context())
 		assert.NoError(err)
 		masterKeyInfo, err := parseRepositoryConfig(toml)
 		assert.NoError(err)
@@ -80,7 +80,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 
 		configFilePath := filepath.Join(".cling", "repository.txt")
 		r.Chmod(configFilePath, 0o600)
-		toml, err := r.Storage.Open()
+		toml, err := r.Storage.Open(t.Context())
 		assert.NoError(err)
 		masterKeyInfo, err := parseRepositoryConfig(toml)
 		assert.NoError(err)
@@ -95,7 +95,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		err = WriteToml(f, "", toml)
 		assert.NoError(err)
 
-		repo2, err := OpenRepository(r.Storage, []byte(r.Passphrase))
+		repo2, err := OpenRepository(t.Context(), r.Storage, []byte(r.Passphrase))
 		assert.Error(err, "message authentication failed")
 		assert.Nil(repo2)
 	})
@@ -108,7 +108,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 
 			configFilePath := filepath.Join(".cling", "repository.txt")
 			r.Chmod(configFilePath, 0o600)
-			toml, err := r.Storage.Open()
+			toml, err := r.Storage.Open(t.Context())
 			assert.NoError(err)
 			masterKeyInfo, err := parseRepositoryConfig(toml)
 			assert.NoError(err)
@@ -138,7 +138,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 			err = WriteToml(f, "", toml)
 			assert.NoError(err)
 
-			repo2, err := OpenRepository(r.Storage, []byte(r.Passphrase))
+			repo2, err := OpenRepository(t.Context(), r.Storage, []byte(r.Passphrase))
 			assert.Error(err, "message authentication failed")
 			assert.Nil(repo2)
 		})
@@ -153,12 +153,12 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		r := td.NewTestRepository(t, td.NewFS(t))
 
 		writeData := []byte("plaintext")
-		blockId, bytesWritten, err := r.WriteBlock(writeData, NewBlockBuf())
+		blockId, bytesWritten, err := r.WriteBlock(t.Context(), writeData, NewBlockBuf())
 		assert.NoError(err)
 		assert.NotNil(bytesWritten)
 
 		buf := NewBlockBuf()
-		readData, err := r.ReadBlock(blockId, buf)
+		readData, err := r.ReadBlock(t.Context(), blockId, buf)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 	})
@@ -168,7 +168,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		blockId, _, err := r.WriteBlock([]byte("plaintext"), NewBlockBuf())
+		blockId, _, err := r.WriteBlock(t.Context(), []byte("plaintext"), NewBlockBuf())
 		assert.NoError(err)
 
 		// The stored block must serialize field 1 (header) before field 2 (data),
@@ -192,11 +192,11 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		r := td.NewTestRepository(t, td.NewFS(t))
 
 		writeData := []byte("some data")
-		blockId1, bytesWritten1, err := r.WriteBlock(writeData, NewBlockBuf())
+		blockId1, bytesWritten1, err := r.WriteBlock(t.Context(), writeData, NewBlockBuf())
 		assert.NoError(err)
 		assert.NotNil(bytesWritten1)
 
-		blockId2, bytesWritten2, err := r.WriteBlock(writeData, NewBlockBuf())
+		blockId2, bytesWritten2, err := r.WriteBlock(t.Context(), writeData, NewBlockBuf())
 		assert.NoError(err)
 		assert.Equal(blockId1, blockId2)
 		assert.Nil(bytesWritten2)
@@ -213,7 +213,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		_, _ = rand.Read(buf)
 		spare := append([]byte(nil), buf[275:]...)
 
-		_, _, err := r.WriteBlock(buf[:275], NewBlockBuf())
+		_, _, err := r.WriteBlock(t.Context(), buf[:275], NewBlockBuf())
 		assert.NoError(err)
 		assert.Equal(spare, buf[275:])
 	})
@@ -225,12 +225,12 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 
 		// All zeros: highly compressible.
 		data := make([]byte, MaxBlockDataSize)
-		blockId, bytesWritten, err := r.WriteBlock(data, NewBlockBuf())
+		blockId, bytesWritten, err := r.WriteBlock(t.Context(), data, NewBlockBuf())
 		assert.NoError(err)
 		assert.NotNil(bytesWritten)
 		assert.Equal(true, *bytesWritten < MaxBlockDataSize)
 
-		got, err := r.ReadBlock(blockId, NewBlockBuf())
+		got, err := r.ReadBlock(t.Context(), blockId, NewBlockBuf())
 		assert.NoError(err)
 		assert.Equal(data, got)
 	})
@@ -243,12 +243,12 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		// Random: incompressible, so stored at full size with padding.
 		data := make([]byte, MaxBlockDataSize)
 		_, _ = rand.Read(data)
-		blockId, bytesWritten, err := r.WriteBlock(data, NewBlockBuf())
+		blockId, bytesWritten, err := r.WriteBlock(t.Context(), data, NewBlockBuf())
 		assert.NoError(err)
 		assert.NotNil(bytesWritten)
 		assert.Equal(MaxBlockDataSize, *bytesWritten)
 
-		got, err := r.ReadBlock(blockId, NewBlockBuf())
+		got, err := r.ReadBlock(t.Context(), blockId, NewBlockBuf())
 		assert.NoError(err)
 		assert.Equal(data, got)
 	})
@@ -261,7 +261,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		writeData := make([]byte, 275)
 		_, _ = rand.Read(writeData)
 
-		blockId, bytesWritten, err := r.WriteBlock(writeData, NewBlockBuf())
+		blockId, bytesWritten, err := r.WriteBlock(t.Context(), writeData, NewBlockBuf())
 		assert.NoError(err)
 		assert.Equal(len(writeData), *bytesWritten)
 
@@ -281,7 +281,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 				onDisk[prev] ^= 1
 				err = WriteFile(r.Storage.FS, path, onDisk)
 				assert.NoError(err)
-				readData, err := r.ReadBlock(blockId, buf)
+				readData, err := r.ReadBlock(t.Context(), blockId, buf)
 				assert.NoError(err, "after restoring offset %d", prev)
 				assert.Equal(writeData, readData)
 			}
@@ -289,7 +289,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 			onDisk[i] ^= 1
 			err = WriteFile(r.Storage.FS, path, onDisk)
 			assert.NoError(err)
-			_, err = r.ReadBlock(blockId, buf)
+			_, err = r.ReadBlock(t.Context(), blockId, buf)
 			assert.Error(err, "", "offset %d", i)
 			prev = i
 		}
@@ -300,9 +300,9 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		blockIdA, _, err := r.WriteBlock([]byte("block A"), NewBlockBuf())
+		blockIdA, _, err := r.WriteBlock(t.Context(), []byte("block A"), NewBlockBuf())
 		assert.NoError(err)
-		blockIdB, _, err := r.WriteBlock([]byte("block B"), NewBlockBuf())
+		blockIdB, _, err := r.WriteBlock(t.Context(), []byte("block B"), NewBlockBuf())
 		assert.NoError(err)
 
 		// Move block A's file to block B's path so that `blockIdB`'s filename now holds
@@ -315,7 +315,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.NoError(err)
 
 		buf := NewBlockBuf()
-		_, err = r.ReadBlock(blockIdB, buf)
+		_, err = r.ReadBlock(t.Context(), blockIdB, buf)
 		assert.Error(err, "message authentication failed")
 	})
 
@@ -364,11 +364,11 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		// One past the payload: without the bounds check this silently returns
 		// a byte of the AEAD tag as plaintext.
 		writeBlock(uint32(len(plaintext)) + 1)
-		_, err = r.ReadBlock(blockId, buf)
+		_, err = r.ReadBlock(t.Context(), blockId, buf)
 		assert.Error(err, "encrypted data size")
 		// Far past the payload: without the bounds check this panics.
 		writeBlock(1 << 30)
-		_, err = r.ReadBlock(blockId, buf)
+		_, err = r.ReadBlock(t.Context(), blockId, buf)
 		assert.Error(err, "encrypted data size")
 	})
 
@@ -379,10 +379,10 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 
 		writeData := make([]byte, MaxBlockDataSize)
 		_, _ = rand.Read(writeData)
-		blockId, _, err := r.WriteBlock(writeData, NewBlockBuf())
+		blockId, _, err := r.WriteBlock(t.Context(), writeData, NewBlockBuf())
 		assert.NoError(err)
 		buf := NewBlockBuf()
-		readData, err := r.ReadBlock(blockId, buf)
+		readData, err := r.ReadBlock(t.Context(), blockId, buf)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 
@@ -399,7 +399,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		r := td.NewTestRepository(t, td.NewFS(t))
 
 		writeData := make([]byte, MaxBlockDataSize+1)
-		blockId, bytesWritten, err := r.WriteBlock(writeData, NewBlockBuf())
+		blockId, bytesWritten, err := r.WriteBlock(t.Context(), writeData, NewBlockBuf())
 		assert.Error(err, "exceeds maximum block size")
 		assert.Equal(BlockId{}, blockId)
 		assert.Nil(bytesWritten)
@@ -416,13 +416,13 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 			writeData[i] = byte(i % 32)
 		}
 		assert.Equal(true, IsCompressible(writeData))
-		blockId, bytesWritten, err := r.WriteBlock(writeData, NewBlockBuf())
+		blockId, bytesWritten, err := r.WriteBlock(t.Context(), writeData, NewBlockBuf())
 		assert.NoError(err)
 		assert.NotNil(bytesWritten)
 		assert.Less(*bytesWritten, len(writeData)/5, "data should be compressed")
 
 		buf := NewBlockBuf()
-		readData, err := r.ReadBlock(blockId, buf)
+		readData, err := r.ReadBlock(t.Context(), blockId, buf)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 	})
@@ -436,13 +436,13 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		writeData := make([]byte, MaxBlockDataSize)
 		_, _ = rand.Read(writeData)
 		assert.Equal(false, IsCompressible(writeData))
-		blockId, bytesWritten, err := r.WriteBlock(writeData, NewBlockBuf())
+		blockId, bytesWritten, err := r.WriteBlock(t.Context(), writeData, NewBlockBuf())
 		assert.NoError(err)
 		assert.NotNil(bytesWritten)
 		assert.Equal(len(writeData), *bytesWritten)
 
 		buf := NewBlockBuf()
-		readData, err := r.ReadBlock(blockId, buf)
+		readData, err := r.ReadBlock(t.Context(), blockId, buf)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 	})
@@ -460,13 +460,13 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 			writeData[i] = byte(i % 32)
 		}
 		assert.Equal(true, IsCompressible(writeData))
-		blockId, bytesWritten, err := r.WriteBlock(writeData, NewBlockBuf())
+		blockId, bytesWritten, err := r.WriteBlock(t.Context(), writeData, NewBlockBuf())
 		assert.NoError(err)
 		assert.NotNil(bytesWritten)
 		assert.Equal(len(writeData), *bytesWritten)
 
 		buf := NewBlockBuf()
-		readData, err := r.ReadBlock(blockId, buf)
+		readData, err := r.ReadBlock(t.Context(), blockId, buf)
 		assert.NoError(err)
 		assert.Equal(writeData, readData)
 	})
@@ -480,7 +480,7 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		r := td.NewTestRepository(t, td.NewFS(t))
 
 		head := r.Head()
-		blockId, _, err := r.WriteBlock([]byte{1, 2, 3}, NewBlockBuf())
+		blockId, _, err := r.WriteBlock(t.Context(), []byte{1, 2, 3}, NewBlockBuf())
 		assert.NoError(err)
 
 		msg := "test message"
@@ -492,11 +492,11 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 			BlockIds:         []BlockId{blockId},
 			ParentRevisionId: head,
 		}
-		revisionId, err := r.WriteRevision(&revision)
+		revisionId, err := r.WriteRevision(t.Context(), &revision)
 		assert.NoError(err)
 
 		buf := NewBlockBuf()
-		readRevision, err := r.ReadRevision(revisionId, buf)
+		readRevision, err := r.ReadRevision(t.Context(), revisionId, buf)
 		assert.NoError(err)
 		assert.Equal(revision, readRevision)
 	})
@@ -508,7 +508,7 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 
 		// Create a revision that is not based on the current head.
 		revisionId := td.RevisionId("1")
-		blockId, _, err := r.WriteBlock([]byte{1, 2, 3}, NewBlockBuf())
+		blockId, _, err := r.WriteBlock(t.Context(), []byte{1, 2, 3}, NewBlockBuf())
 		assert.NoError(err)
 
 		msg := "test message"
@@ -520,7 +520,7 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 			BlockIds:         []BlockId{blockId},
 			ParentRevisionId: revisionId,
 		}
-		_, err = r.WriteRevision(&revision)
+		_, err = r.WriteRevision(t.Context(), &revision)
 		assert.ErrorIs(err, ErrHeadChanged)
 	})
 
@@ -533,7 +533,7 @@ func TestRepositoryReadWriteRevision(t *testing.T) {
 		assert.Equal(true, head.IsRoot())
 
 		buf := NewBlockBuf()
-		_, err := r.ReadRevision(head, buf)
+		_, err := r.ReadRevision(t.Context(), head, buf)
 		assert.Error(err, "root revision cannot be read")
 	})
 }
@@ -545,7 +545,7 @@ func TestRepositoryConcurrency(t *testing.T) {
 
 	// Seed a block and a revision so the readers have a target.
 	seedData := []byte("seed")
-	seedBlock, _, err := r.WriteBlock(seedData, NewBlockBuf())
+	seedBlock, _, err := r.WriteBlock(t.Context(), seedData, NewBlockBuf())
 	assert.NoError(err)
 	makeRev := func(parent RevisionId) *Revision {
 		msg, author := "m", "a"
@@ -558,9 +558,9 @@ func TestRepositoryConcurrency(t *testing.T) {
 			BlockIds:         []BlockId{seedBlock},
 		}
 	}
-	root, err := r.Repository.Head()
+	root, err := r.Repository.Head(t.Context())
 	assert.NoError(err)
-	seedRev, err := r.WriteRevision(makeRev(root))
+	seedRev, err := r.WriteRevision(t.Context(), makeRev(root))
 	assert.NoError(err)
 
 	// Fresh content per round so writes never dedup. Pool < workers for overlap.
@@ -589,11 +589,11 @@ func TestRepositoryConcurrency(t *testing.T) {
 				_ = r.GearCDCTable()
 
 				want := fmt.Appendf(nil, "data-%d", i)
-				id, _, err := r.WriteBlock(want, buf)
+				id, _, err := r.WriteBlock(t.Context(), want, buf)
 				if err != nil {
 					return err
 				}
-				got, err := r.ReadBlock(id, buf)
+				got, err := r.ReadBlock(t.Context(), id, buf)
 				if err != nil {
 					return err
 				}
@@ -602,18 +602,18 @@ func TestRepositoryConcurrency(t *testing.T) {
 				}
 
 				// Dedup path.
-				if _, _, err := r.WriteBlock(seedData, buf); err != nil {
+				if _, _, err := r.WriteBlock(t.Context(), seedData, buf); err != nil {
 					return err
 				}
 
-				got, err = r.ReadBlock(seedBlock, buf)
+				got, err = r.ReadBlock(t.Context(), seedBlock, buf)
 				if err != nil {
 					return err
 				}
 				if string(got) != string(seedData) {
 					return Errorf("seed block: read %q, want %q", got, seedData)
 				}
-				rev, err := r.ReadRevision(seedRev, buf)
+				rev, err := r.ReadRevision(t.Context(), seedRev, buf)
 				if err != nil {
 					return err
 				}
@@ -624,11 +624,11 @@ func TestRepositoryConcurrency(t *testing.T) {
 				// Stress the write path. Many goroutines write the same fresh block.
 				for round := range rounds {
 					j := mrand.IntN(poolSize)
-					blockID, _, err := r.WriteBlock(poolData[round][j], buf)
+					blockID, _, err := r.WriteBlock(t.Context(), poolData[round][j], buf)
 					if err != nil {
 						return err
 					}
-					got, err := r.ReadBlock(blockID, buf)
+					got, err := r.ReadBlock(t.Context(), blockID, buf)
 					if err != nil {
 						return err
 					}
@@ -639,11 +639,11 @@ func TestRepositoryConcurrency(t *testing.T) {
 
 				// Advance the head. Writers contend on the head lock and CAS.
 				// All but one see a lock-held error or ErrHeadChanged.
-				head, err := r.Repository.Head()
+				head, err := r.Repository.Head(t.Context())
 				if err != nil {
 					return err
 				}
-				_, err = r.WriteRevision(makeRev(head))
+				_, err = r.WriteRevision(t.Context(), makeRev(head))
 				var lockHeld *LockExistsError
 				if err != nil && !errors.Is(err, ErrHeadChanged) && !errors.As(err, &lockHeld) {
 					return err
@@ -705,7 +705,7 @@ func BenchmarkWriteBlock(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				_, bytesWritten, _ := r.WriteBlock(data, buf)
+				_, bytesWritten, _ := r.WriteBlock(b.Context(), data, buf)
 				if bytesWritten == nil {
 					b.Fatal("block already existed")
 				}
@@ -732,13 +732,13 @@ func BenchmarkReadBlock(b *testing.B) {
 				b.Fatal(err)
 			}
 			buf := NewBlockBuf()
-			blockId, _, err := r.WriteBlock(data, buf)
+			blockId, _, err := r.WriteBlock(b.Context(), data, buf)
 			if err != nil {
 				b.Fatal(err)
 			}
 			b.ResetTimer()
 			for b.Loop() {
-				_, err := r.ReadBlock(blockId, buf)
+				_, err := r.ReadBlock(b.Context(), blockId, buf)
 				if err != nil {
 					b.Fatal(err)
 				}

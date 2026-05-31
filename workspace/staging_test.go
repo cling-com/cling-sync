@@ -25,14 +25,14 @@ func TestStaging(t *testing.T) {
 		w.Chmod("b/c.txt", 0o400)
 
 		// Create a remote commit with a modified file, missing files, and a new file.
-		commit, err := lib.NewCommit(r.Repository, td.NewFS(t))
+		commit, err := lib.NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 		assert.NoError(commit.Add(td.RevisionEntryExt("a.txt", lib.RevisionEntryKindAdd, 0o600, "a")))
 		bDirEntry := td.RevisionEntry("b", lib.RevisionEntryKindAdd)
 		bDirEntry.Metadata = *w.PathMetadata("b")
 		assert.NoError(commit.Add(bDirEntry))
 		assert.NoError(commit.Add(td.RevisionEntryExt("b/remote.txt", lib.RevisionEntryKindAdd, 0o123, "rrr")))
-		remoteRev1, err := commit.Commit(td.CommitInfo())
+		remoteRev1, err := commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 		assert.Equal(remoteRev1, r.Head())
 		assert.Equal(false, remoteRev1.IsRoot())
@@ -56,7 +56,7 @@ func TestStaging(t *testing.T) {
 		}, wstd.StagingEntryInfos(finalized))
 
 		// Merge the staging with a snapshot of the remote revision.
-		snapshot, err := lib.NewRevisionSnapshot(r.Repository, remoteRev1, td.NewFS(t))
+		snapshot, err := lib.NewRevisionSnapshot(t.Context(), r.Repository, remoteRev1, td.NewFS(t))
 		assert.NoError(err)
 		merged, err := staging.MergeWithSnapshot(snapshot, lib.RestorableMetadataAll, false)
 		assert.NoError(err)
@@ -84,16 +84,16 @@ func TestStaging(t *testing.T) {
 		w.Write("a.txt", "aa")
 		w.Write("local.txt", "L")
 
-		commit, err := lib.NewCommit(r.Repository, td.NewFS(t))
+		commit, err := lib.NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 		assert.NoError(commit.Add(td.RevisionEntryExt("a.txt", lib.RevisionEntryKindAdd, 0o600, "a")))
 		assert.NoError(commit.Add(td.RevisionEntryExt("b/remote.txt", lib.RevisionEntryKindAdd, 0o600, "r")))
-		remoteRev, err := commit.Commit(td.CommitInfo())
+		remoteRev, err := commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
 		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, false, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
-		snapshot, err := lib.NewRevisionSnapshot(r.Repository, remoteRev, td.NewFS(t))
+		snapshot, err := lib.NewRevisionSnapshot(t.Context(), r.Repository, remoteRev, td.NewFS(t))
 		assert.NoError(err)
 
 		// With suppressDeletes=true the DELETE for `b/remote.txt` is skipped;

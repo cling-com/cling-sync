@@ -39,10 +39,6 @@ func RevisionEntryPathFilter(pathFilter PathFilter) func(e *RevisionEntry) bool 
 	}
 }
 
-type RevisionEntryReader interface {
-	Read(buf BlockBuf) (*RevisionEntry, error)
-}
-
 func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) *TempWriter[*RevisionEntry] {
 	return NewTempWriter[*RevisionEntry](
 		RevisionEntryPathCompare,

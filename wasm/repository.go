@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -18,6 +19,10 @@ import (
 	"github.com/flunderpero/cling-sync/lib"
 	"github.com/flunderpero/cling-sync/workspace"
 )
+
+// wasm runs inside a JS event-loop callback with no cancellation source, so
+// every entry point roots its own background context.
+func wasmContext() context.Context { return context.Background() }
 
 const MaxDownloadSize = 500 * 1024 * 1024
 
@@ -53,7 +58,7 @@ func (r RepositoryAPI) Open(this js.Value, args []js.Value) any {
 			return
 		}
 		storage := clingHTTP.NewS3StorageClient(cfg, &WasmHTTPClient{})
-		repository, err := lib.OpenRepository(storage, passphrase)
+		repository, err := lib.OpenRepository(wasmContext(), storage, passphrase)
 		if err != nil {
 			reject(js.ValueOf(err.Error()))
 			return
@@ -79,7 +84,7 @@ func (r RepositoryAPI) Head(this js.Value, args []js.Value) any {
 			reject(js.ValueOf(fmt.Sprintf("invalid repository handle: %d", handle)))
 			return
 		}
-		revisionId, err := repository.Head()
+		revisionId, err := repository.Head(wasmContext())
 		if err != nil {
 			reject(js.ValueOf(err.Error()))
 			return
@@ -105,7 +110,7 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any {
 			reject(js.ValueOf(fmt.Sprintf("invalid repository handle: %d", handle)))
 			return
 		}
-		revisionId, err := repository.Head()
+		revisionId, err := repository.Head(wasmContext())
 		if err != nil {
 			reject(js.ValueOf(err.Error()))
 			return
@@ -117,7 +122,7 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any {
 			filter = lib.NewPathExclusionFilter(strings.Split(excludes, ","))
 		}
 		opts := &workspace.LsOptions{RevisionId: revisionId, PathFilter: filter, PathPrefix: lib.Path{}}
-		files, err := workspace.Ls(repository, tmpFS, opts)
+		files, err := workspace.Ls(wasmContext(), repository, tmpFS, opts)
 		if err != nil {
 			reject(js.ValueOf(err.Error()))
 			return
@@ -185,7 +190,7 @@ func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:f
 		var revisionId lib.RevisionId
 		if revisionIdArg == "" {
 			var err error
-			revisionId, err = repository.Head()
+			revisionId, err = repository.Head(wasmContext())
 			if err != nil {
 				reject(js.ValueOf(err.Error()))
 				return
@@ -194,7 +199,7 @@ func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:f
 			revisionId = lib.RevisionId([]byte(revisionIdArg))
 		}
 		tmpFS := lib.NewMemoryFS(10000000)
-		snapshot, err := lib.NewRevisionSnapshot(repository, revisionId, tmpFS)
+		snapshot, err := lib.NewRevisionSnapshot(wasmContext(), repository, revisionId, tmpFS)
 		if err != nil {
 			reject(js.ValueOf(err.Error()))
 			return
@@ -222,7 +227,7 @@ func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:f
 		data := bytes.NewBuffer(nil)
 		data.Grow(int(file.Metadata.Size))
 		for _, blockId := range file.Metadata.BlockIds {
-			block, err := repository.ReadBlock(blockId, buf)
+			block, err := repository.ReadBlock(wasmContext(), blockId, buf)
 			if err != nil {
 				reject(js.ValueOf(err.Error()))
 				return

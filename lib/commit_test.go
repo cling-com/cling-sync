@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -14,7 +15,7 @@ func TestCommit(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 		e1 := td.RevisionEntry("a/1.txt", RevisionEntryKindAdd)
 		e2 := td.RevisionEntry("a/2.txt", RevisionEntryKindUpdate)
@@ -23,10 +24,10 @@ func TestCommit(t *testing.T) {
 		assert.NoError(commit.Add(e2))
 		assert.NoError(commit.Add(e1))
 		assert.NoError(commit.Add(e3))
-		revisionId, err := commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+		revisionId, err := commit.Commit(t.Context(), &CommitInfo{Author: "test author", Message: "test message"})
 		assert.NoError(err)
 
-		revision, entries, err := readRevision(r.Repository, revisionId)
+		revision, entries, err := readRevision(t.Context(), r.Repository, revisionId)
 		assert.NoError(err)
 		assert.Equal(true, revision.ParentRevisionId.IsRoot())
 		assert.Equal("test author", *revision.Author)
@@ -34,14 +35,14 @@ func TestCommit(t *testing.T) {
 		assert.Equal([]*RevisionEntry{e1, e2, e3}, entries)
 
 		// Add a second revision.
-		commit2, err := NewCommit(r.Repository, td.NewFS(t))
+		commit2, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 		e4 := td.RevisionEntry("a/1.txt", RevisionEntryKindDelete)
 		assert.NoError(commit2.Add(e4))
-		revisionId2, err := commit2.Commit(&CommitInfo{Author: "test author2", Message: "test message2"})
+		revisionId2, err := commit2.Commit(t.Context(), &CommitInfo{Author: "test author2", Message: "test message2"})
 		assert.NoError(err)
 
-		revision, entries, err = readRevision(r.Repository, revisionId2)
+		revision, entries, err = readRevision(t.Context(), r.Repository, revisionId2)
 		assert.NoError(err)
 		assert.Equal(revisionId, revision.ParentRevisionId)
 		assert.Equal("test author2", *revision.Author)
@@ -54,9 +55,9 @@ func TestCommit(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+		_, err = commit.Commit(t.Context(), &CommitInfo{Author: "test author", Message: "test message"})
 		assert.ErrorIs(err, ErrEmptyCommit)
 	})
 
@@ -66,15 +67,15 @@ func TestCommit(t *testing.T) {
 		r := td.NewTestRepository(t, td.NewFS(t))
 		head := r.Head()
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 
 		// Change the head.
-		blockId, _, err := r.WriteBlock([]byte{1, 2, 3}, NewBlockBuf())
+		blockId, _, err := r.WriteBlock(t.Context(), []byte{1, 2, 3}, NewBlockBuf())
 		assert.NoError(err)
 		msg := "test message"
 		author := "test author"
-		_, err = r.WriteRevision(&Revision{
+		_, err = r.WriteRevision(t.Context(), &Revision{
 			Magic:            RevisionMagic,
 			Timestamp:        Timestamp{Sec: 123456789, Nsec: 1234},
 			Message:          &msg,
@@ -87,7 +88,7 @@ func TestCommit(t *testing.T) {
 		// Try to commit with the head changed.
 		err = commit.Add(td.RevisionEntry("a/1.txt", RevisionEntryKindAdd))
 		assert.NoError(err)
-		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+		_, err = commit.Commit(t.Context(), &CommitInfo{Author: "test author", Message: "test message"})
 		assert.ErrorIs(err, ErrHeadChanged)
 	})
 
@@ -96,13 +97,13 @@ func TestCommit(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 		assert.NoError(commit.Add(td.RevisionEntry("a.txt", RevisionEntryKindAdd)))
-		_, err = commit.Commit(td.CommitInfo())
+		_, err = commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
-		_, err = commit.Commit(td.CommitInfo())
+		_, err = commit.Commit(t.Context(), td.CommitInfo())
 		assert.Error(err, "commit is closed")
 		err = commit.Add(td.RevisionEntry("b.txt", RevisionEntryKindAdd))
 		assert.Error(err, "commit is closed")
@@ -113,12 +114,12 @@ func TestCommit(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
-		_, err = commit.Commit(td.CommitInfo())
+		_, err = commit.Commit(t.Context(), td.CommitInfo())
 		assert.ErrorIs(err, ErrEmptyCommit)
 
-		_, err = commit.Commit(td.CommitInfo())
+		_, err = commit.Commit(t.Context(), td.CommitInfo())
 		assert.Error(err, "commit is closed")
 	})
 }
@@ -127,10 +128,10 @@ func TestCommitEnsureDirExists(t *testing.T) {
 	t.Parallel()
 
 	run := func(r *TestRepository, assert Assert, dir Path) error {
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 
-		snapshot, err := NewRevisionSnapshot(r.Repository, r.Head(), td.NewFS(t))
+		snapshot, err := NewRevisionSnapshot(t.Context(), r.Repository, r.Head(), td.NewFS(t))
 		assert.NoError(err)
 		snapshotCache, err := NewRevisionEntryTempCache(snapshot, 10)
 		assert.NoError(err)
@@ -139,7 +140,7 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+		_, err = commit.Commit(t.Context(), &CommitInfo{Author: "test author", Message: "test message"})
 		return err
 	}
 
@@ -184,7 +185,7 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 
 		entry := td.RevisionEntryExt("a", RevisionEntryKindAdd, 0o700|FileModeDir, "")
@@ -192,7 +193,7 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		err = commit.Add(entry)
 		assert.NoError(err)
 
-		snapshot, err := NewRevisionSnapshot(r.Repository, r.Head(), td.NewFS(t))
+		snapshot, err := NewRevisionSnapshot(t.Context(), r.Repository, r.Head(), td.NewFS(t))
 		assert.NoError(err)
 		snapshotCache, err := NewRevisionEntryTempCache(snapshot, 10)
 		assert.NoError(err)
@@ -200,7 +201,7 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		err = commit.EnsureDirExists(Path{"a"}, snapshotCache, r.Head())
 		assert.NoError(err)
 
-		_, err = commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+		_, err = commit.Commit(t.Context(), &CommitInfo{Author: "test author", Message: "test message"})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionEntryInfo{
 			{"a", RevisionEntryKindAdd, 0o700 | fs.ModeDir, Sha256{}},
@@ -212,12 +213,12 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
 
-		commit, err := NewCommit(r.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 
 		err = commit.Add(td.RevisionEntry("a/b", RevisionEntryKindAdd))
 		assert.NoError(err)
-		_, err = commit.Commit(td.CommitInfo())
+		_, err = commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
 		// Try to ensure a directory at the position.
@@ -235,16 +236,16 @@ func TestCommitEnsureDirExists(t *testing.T) {
 	})
 }
 
-func readRevision(repo *Repository, revisionId RevisionId) (*Revision, []*RevisionEntry, error) {
+func readRevision(ctx context.Context, repo *Repository, revisionId RevisionId) (*Revision, []*RevisionEntry, error) {
 	buf := NewBlockBuf()
-	revision, err := repo.ReadRevision(revisionId, buf)
+	revision, err := repo.ReadRevision(ctx, revisionId, buf)
 	if err != nil {
 		return nil, nil, err
 	}
 	rr := NewRevisionReader(repo, &revision)
 	entries := []*RevisionEntry{}
 	for {
-		entry, err := rr.Read(buf)
+		entry, err := rr.Read(ctx, buf)
 		if errors.Is(err, io.EOF) {
 			break
 		}

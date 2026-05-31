@@ -190,7 +190,7 @@ func (s *S3StorageServer) handleList(w http.ResponseWriter, r *http.Request) {
 		s.listSession = sess
 		go func() {
 			defer close(sess.ch)
-			err := s.Storage.ReadBlockIds(func(blockId lib.BlockId) bool {
+			err := s.Storage.ReadBlockIds(ctx, func(blockId lib.BlockId) bool {
 				select {
 				case sess.ch <- blockId:
 					return true
@@ -274,7 +274,7 @@ func (s *S3StorageServer) writeListResult(
 func (s *S3StorageServer) handleConfig(w http.ResponseWriter, r *http.Request, body []byte) {
 	switch r.Method {
 	case http.MethodHead:
-		_, err := s.Storage.Open()
+		_, err := s.Storage.Open(r.Context())
 		if errors.Is(err, lib.ErrStorageNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -285,7 +285,7 @@ func (s *S3StorageServer) handleConfig(w http.ResponseWriter, r *http.Request, b
 		}
 		w.WriteHeader(http.StatusOK)
 	case http.MethodGet:
-		toml, err := s.Storage.Open()
+		toml, err := s.Storage.Open(r.Context())
 		if errors.Is(err, lib.ErrStorageNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -310,7 +310,7 @@ func (s *S3StorageServer) handleConfig(w http.ResponseWriter, r *http.Request, b
 			s.writeError(w, http.StatusBadRequest, "InvalidRequest", err.Error())
 			return
 		}
-		if err := s.Storage.Init(toml, ""); err != nil {
+		if err := s.Storage.Init(r.Context(), toml, ""); err != nil {
 			if errors.Is(err, lib.ErrStorageAlreadyExists) {
 				// Match the conditional-PUT contract: client sends
 				// If-None-Match: * and reads 412 as "already exists".
@@ -329,7 +329,7 @@ func (s *S3StorageServer) handleConfig(w http.ResponseWriter, r *http.Request, b
 func (s *S3StorageServer) handleBlock(w http.ResponseWriter, r *http.Request, id lib.BlockId, body []byte) {
 	switch r.Method {
 	case http.MethodHead:
-		exists, err := s.Storage.HasBlock(id)
+		exists, err := s.Storage.HasBlock(r.Context(), id)
 		if err != nil {
 			s.internalError(w, err)
 			return
@@ -341,7 +341,7 @@ func (s *S3StorageServer) handleBlock(w http.ResponseWriter, r *http.Request, id
 		w.WriteHeader(http.StatusOK)
 	case http.MethodGet:
 		buf := lib.NewBlockBuf()
-		data, err := s.Storage.ReadBlock(id, buf)
+		data, err := s.Storage.ReadBlock(r.Context(), id, buf)
 		if errors.Is(err, lib.ErrBlockNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -356,7 +356,7 @@ func (s *S3StorageServer) handleBlock(w http.ResponseWriter, r *http.Request, id
 			s.writeError(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "block too large")
 			return
 		}
-		existed, err := s.Storage.WriteBlock(id, body)
+		existed, err := s.Storage.WriteBlock(r.Context(), id, body)
 		if err != nil {
 			s.internalError(w, err)
 			return
@@ -381,7 +381,7 @@ func (s *S3StorageServer) handleControl(
 ) {
 	switch r.Method {
 	case http.MethodHead:
-		ok, err := s.Storage.HasControlFile(section, name)
+		ok, err := s.Storage.HasControlFile(r.Context(), section, name)
 		if err != nil {
 			s.internalError(w, err)
 			return
@@ -392,7 +392,7 @@ func (s *S3StorageServer) handleControl(
 		}
 		w.WriteHeader(http.StatusOK)
 	case http.MethodGet:
-		data, err := s.Storage.ReadControlFile(section, name)
+		data, err := s.Storage.ReadControlFile(r.Context(), section, name)
 		if errors.Is(err, lib.ErrControlFileNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -407,13 +407,13 @@ func (s *S3StorageServer) handleControl(
 			s.writeError(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "control file too large")
 			return
 		}
-		if err := s.Storage.WriteControlFile(section, name, body); err != nil {
+		if err := s.Storage.WriteControlFile(r.Context(), section, name, body); err != nil {
 			s.internalError(w, err)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	case http.MethodDelete:
-		if err := s.Storage.DeleteControlFile(section, name); err != nil {
+		if err := s.Storage.DeleteControlFile(r.Context(), section, name); err != nil {
 			if errors.Is(err, lib.ErrControlFileNotFound) {
 				w.WriteHeader(http.StatusNotFound)
 				return

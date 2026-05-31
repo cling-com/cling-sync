@@ -123,10 +123,10 @@ func NewBlockIdTempWriter(fs FS) *TempWriter[BlockId] {
 
 // ReadSortedBlockIds drains `storage.ReadBlockIds` into a sorted Temp.
 // `inspect`, if non-nil, sees every id before it is added to the writer.
-func ReadSortedBlockIds(storage Storage, fs FS, inspect func(BlockId)) (*Temp[BlockId], error) {
+func ReadSortedBlockIds(ctx context.Context, storage Storage, fs FS, inspect func(BlockId)) (*Temp[BlockId], error) {
 	writer := NewBlockIdTempWriter(fs)
 	var addErr error
-	err := storage.ReadBlockIds(func(id BlockId) bool {
+	err := storage.ReadBlockIds(ctx, func(id BlockId) bool {
 		if inspect != nil {
 			inspect(id)
 		}
@@ -171,28 +171,28 @@ func (e *LockExistsError) Error() string {
 }
 
 type Storage interface {
-	Init(config Toml, headerComment string) error
-	Open() (Toml, error)
-	HasBlock(blockId BlockId) (bool, error)
+	Init(ctx context.Context, config Toml, headerComment string) error
+	Open(ctx context.Context) (Toml, error)
+	HasBlock(ctx context.Context, blockId BlockId) (bool, error)
 
 	// Stream all block ids present in storage. `yield` returns false to stop early.
-	ReadBlockIds(yield func(BlockId) bool) error
+	ReadBlockIds(ctx context.Context, yield func(BlockId) bool) error
 
 	// Return `ErrBlockNotFound` if the block does not exist.
-	ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error)
+	ReadBlock(ctx context.Context, blockId BlockId, buf BlockBuf) ([]byte, error)
 
 	// Write a block and return whether it was written.
 	//
 	// Returns `true` if the block was already present.
-	WriteBlock(blockId BlockId, data []byte) (bool, error)
+	WriteBlock(ctx context.Context, blockId BlockId, data []byte) (bool, error)
 
 	// Return `ErrControlFileNotFound` if the control file does not exist.
-	ReadControlFile(section ControlFileSection, name string) ([]byte, error)
-	WriteControlFile(section ControlFileSection, name string, data []byte) error
-	HasControlFile(section ControlFileSection, name string) (bool, error)
+	ReadControlFile(ctx context.Context, section ControlFileSection, name string) ([]byte, error)
+	WriteControlFile(ctx context.Context, section ControlFileSection, name string, data []byte) error
+	HasControlFile(ctx context.Context, section ControlFileSection, name string) (bool, error)
 
 	// Return `ErrControlFileNotFound` if the control file does not exist.
-	DeleteControlFile(section ControlFileSection, name string) error
+	DeleteControlFile(ctx context.Context, section ControlFileSection, name string) error
 
 	// Create a lock file in `.cling/<purpose>/locks/<name>`. Returns
 	// `*LockExistsError` if the lock is already held by another acquirer.
@@ -201,7 +201,7 @@ type Storage interface {
 	// Forcefully drop a lock regardless of ownership. The caller is responsible
 	// for being sure the previous holder is dead. Returns `ErrLockNotFound` if
 	// there is nothing to release.
-	ForceUnlock(name string) error
+	ForceUnlock(ctx context.Context, name string) error
 }
 
 type FileStorage struct {
@@ -213,7 +213,12 @@ func NewFileStorage(fs FS, purpose StoragePurpose) (*FileStorage, error) {
 	return &FileStorage{FS: fs, Purpose: purpose}, nil
 }
 
-func (s *FileStorage) Init(config Toml, headerComment string) error {
+// FileStorage operates on a local FS, so most operations are fast and do not
+// observe `ctx`. `ReadBlockIds` is the exception: it can walk a large tree, so
+// it honors cancellation.
+var _ Storage = (*FileStorage)(nil)
+
+func (s *FileStorage) Init(_ context.Context, config Toml, headerComment string) error {
 	stat, err := s.FS.Stat(".")
 	if err != nil {
 		return WrapErrorf(err, "failed to stat %s", s.FS)
@@ -263,7 +268,7 @@ func (s *FileStorage) Init(config Toml, headerComment string) error {
 	return nil
 }
 
-func (s *FileStorage) Open() (Toml, error) {
+func (s *FileStorage) Open(_ context.Context) (Toml, error) {
 	f, err := s.FS.OpenRead(s.configFilePath())
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, ErrStorageNotFound
@@ -279,7 +284,7 @@ func (s *FileStorage) Open() (Toml, error) {
 	return toml, nil
 }
 
-func (s *FileStorage) HasBlock(blockId BlockId) (bool, error) {
+func (s *FileStorage) HasBlock(_ context.Context, blockId BlockId) (bool, error) {
 	p := s.blockPath(blockId)
 	_, err := s.FS.Stat(p)
 	if err != nil {
@@ -291,7 +296,7 @@ func (s *FileStorage) HasBlock(blockId BlockId) (bool, error) {
 	return true, nil
 }
 
-func (s *FileStorage) ReadBlockIds(yield func(BlockId) bool) error {
+func (s *FileStorage) ReadBlockIds(ctx context.Context, yield func(BlockId) bool) error {
 	objectsPath := filepath.Join(".cling", string(s.Purpose), "objects")
 	stat, err := s.FS.Stat(objectsPath)
 	if err != nil {
@@ -303,6 +308,9 @@ func (s *FileStorage) ReadBlockIds(yield func(BlockId) bool) error {
 	err = s.FS.WalkDir(objectsPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return WrapErrorf(ctxErr, "block id listing canceled")
 		}
 		if d.IsDir() {
 			return nil
@@ -333,7 +341,7 @@ func (s *FileStorage) ReadBlockIds(yield func(BlockId) bool) error {
 	return nil
 }
 
-func (s *FileStorage) WriteBlock(blockId BlockId, data []byte) (bool, error) {
+func (s *FileStorage) WriteBlock(_ context.Context, blockId BlockId, data []byte) (bool, error) {
 	if len(data) > MaxBlockSize {
 		return false, Errorf("block %s is too large: %d", blockId, len(data))
 	}
@@ -354,7 +362,7 @@ func (s *FileStorage) WriteBlock(blockId BlockId, data []byte) (bool, error) {
 }
 
 // Return `ErrBlockNotFound` if the block does not exist.
-func (s *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
+func (s *FileStorage) ReadBlock(_ context.Context, blockId BlockId, buf BlockBuf) ([]byte, error) {
 	path := s.blockPath(blockId)
 	file, err := s.FS.OpenRead(path)
 	if err != nil {
@@ -371,7 +379,7 @@ func (s *FileStorage) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
 	return data, nil
 }
 
-func (s *FileStorage) WriteControlFile(section ControlFileSection, name string, data []byte) error {
+func (s *FileStorage) WriteControlFile(_ context.Context, section ControlFileSection, name string, data []byte) error {
 	if len(data) > MaxControlFileSize {
 		return Errorf("control file %s/%s is too large: %d", section, name, len(data))
 	}
@@ -388,7 +396,7 @@ func (s *FileStorage) WriteControlFile(section ControlFileSection, name string, 
 	return nil
 }
 
-func (s *FileStorage) ReadControlFile(section ControlFileSection, name string) ([]byte, error) {
+func (s *FileStorage) ReadControlFile(_ context.Context, section ControlFileSection, name string) ([]byte, error) {
 	path, err := s.controlFilePath(section, name)
 	if err != nil {
 		return nil, err
@@ -411,7 +419,7 @@ func (s *FileStorage) ReadControlFile(section ControlFileSection, name string) (
 	return data, nil
 }
 
-func (s *FileStorage) HasControlFile(section ControlFileSection, name string) (bool, error) {
+func (s *FileStorage) HasControlFile(_ context.Context, section ControlFileSection, name string) (bool, error) {
 	path, err := s.controlFilePath(section, name)
 	if err != nil {
 		return false, err
@@ -420,7 +428,7 @@ func (s *FileStorage) HasControlFile(section ControlFileSection, name string) (b
 	return err == nil, nil
 }
 
-func (s *FileStorage) DeleteControlFile(section ControlFileSection, name string) error {
+func (s *FileStorage) DeleteControlFile(_ context.Context, section ControlFileSection, name string) error {
 	path, err := s.controlFilePath(section, name)
 	if err != nil {
 		return err
@@ -452,7 +460,7 @@ func (s *FileStorage) Lock(ctx context.Context, name string) (func() error, erro
 // ForceUnlock removes the lock file. Any process still holding the orphaned
 // flock keeps the kernel-level lock on its open fd until it exits, but a new
 // acquirer opens a fresh file (different inode) and gets its own flock cleanly.
-func (s *FileStorage) ForceUnlock(name string) error {
+func (s *FileStorage) ForceUnlock(_ context.Context, name string) error {
 	if err := ValidateStorageLockName(name); err != nil {
 		return err
 	}

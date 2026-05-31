@@ -32,11 +32,11 @@ func SyncRepository( //nolint:funlen
 	if opts.Workers < 1 {
 		return Errorf("number of workers must be at least 1")
 	}
-	srcToml, err := src.Open()
+	srcToml, err := src.Open(ctx)
 	if err != nil {
 		return WrapErrorf(err, "failed to read src repository config")
 	}
-	dstToml, err := dst.Open()
+	dstToml, err := dst.Open(ctx)
 	if err != nil {
 		return WrapErrorf(err, "failed to read dst repository config")
 	}
@@ -47,11 +47,11 @@ func SyncRepository( //nolint:funlen
 	// guaranteed to be a superset of everything reachable from srcHead.
 	// The other order risks pointing dst at a head whose blocks were not
 	// yet committed when we listed.
-	srcHead, err := ReadRef(src, "head")
+	srcHead, err := ReadRef(ctx, src, "head")
 	if err != nil {
 		return WrapErrorf(err, "failed to read src head")
 	}
-	dstHead, err := ReadRef(dst, "head")
+	dstHead, err := ReadRef(ctx, dst, "head")
 	if err != nil {
 		return WrapErrorf(err, "failed to read dst head")
 	}
@@ -67,7 +67,7 @@ func SyncRepository( //nolint:funlen
 	}
 	srcCount := 0
 	srcSeenHead := false
-	srcTemp, err := ReadSortedBlockIds(src, srcFS, func(id BlockId) {
+	srcTemp, err := ReadSortedBlockIds(ctx, src, srcFS, func(id BlockId) {
 		srcCount++
 		if srcCount%blockIdReadProgressEvery == 0 {
 			opts.Monitor.OnSrcBlockIdsRead(srcCount)
@@ -91,7 +91,7 @@ func SyncRepository( //nolint:funlen
 		return WrapErrorf(err, "failed to create temp dir for dst block ids")
 	}
 	dstCount := 0
-	dstTemp, err := ReadSortedBlockIds(dst, dstFS, func(BlockId) {
+	dstTemp, err := ReadSortedBlockIds(ctx, dst, dstFS, func(BlockId) {
 		dstCount++
 		if dstCount%blockIdReadProgressEvery == 0 {
 			opts.Monitor.OnDstBlockIdsRead(dstCount)
@@ -121,11 +121,11 @@ func SyncRepository( //nolint:funlen
 			// Each worker owns its BlockBuf because ReadBlock returns a slice that aliases it.
 			blockBuf := NewBlockBuf()
 			for id := range ids {
-				data, err := src.ReadBlock(id, blockBuf)
+				data, err := src.ReadBlock(gctx, id, blockBuf)
 				if err != nil {
 					return WrapErrorf(err, "failed to read block %s from src", id)
 				}
-				existed, err := dst.WriteBlock(id, data)
+				existed, err := dst.WriteBlock(gctx, id, data)
 				if err != nil {
 					return WrapErrorf(err, "failed to write block %s to dst", id)
 				}
@@ -173,7 +173,7 @@ func SyncRepository( //nolint:funlen
 		return WrapErrorf(err, "failed to lock dst head")
 	}
 	defer unlock() //nolint:errcheck
-	latestDstHead, err := ReadRef(dst, "head")
+	latestDstHead, err := ReadRef(ctx, dst, "head")
 	if err != nil {
 		return WrapErrorf(err, "failed to re-read dst head")
 	}
@@ -181,7 +181,7 @@ func SyncRepository( //nolint:funlen
 		return Errorf("dst head revision changed during sync")
 	}
 	opts.Monitor.OnBeforeUpdateDstHead(srcHead)
-	if err := WriteRef(dst, "head", srcHead); err != nil {
+	if err := WriteRef(ctx, dst, "head", srcHead); err != nil {
 		return WrapErrorf(err, "failed to write dst head reference")
 	}
 	return nil

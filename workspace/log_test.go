@@ -17,17 +17,17 @@ func TestLog(t *testing.T) {
 
 		// Add three commits.
 		w.Write("a.txt", "a")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		w.Write("b.txt", "b")
-		revId2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		w.Write("c.txt", "c")
-		revId3, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId3, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// List all revisions.
-		logs, err := Log(r.Repository, &LogOptions{nil, false})
+		logs, err := Log(t.Context(), r.Repository, &LogOptions{nil, false})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId3, nil),
@@ -46,18 +46,18 @@ func TestLog(t *testing.T) {
 		w.Write("a.txt", "a")
 		w.Write("b.txt", "b")
 		w.Write("c/d.txt", "d")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Add second commit.
 		w.Write("c/e.txt", "e")
 		w.Rm("a.txt")
 		w.Write("b.txt", "bb")
-		revId2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// List all revisions.
-		logs, err := Log(r.Repository, &LogOptions{nil, true})
+		logs, err := Log(t.Context(), r.Repository, &LogOptions{nil, true})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId2, []TestStatusFile{
@@ -85,18 +85,18 @@ func TestLog(t *testing.T) {
 		w.Write("a.txt", "a")
 		w.Write("b.txt", "b")
 		w.Write("c/d.txt", "d")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		w.Write("c/e.txt", "e")
-		revId2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		w.Rm("a.txt")
-		revId3, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId3, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// PathFilter on `a.txt` without status.
 		filter := lib.NewPathInclusionFilter([]string{"a.txt"})
-		logs, err := Log(r.Repository, &LogOptions{filter, false})
+		logs, err := Log(t.Context(), r.Repository, &LogOptions{filter, false})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId3, nil),
@@ -104,7 +104,7 @@ func TestLog(t *testing.T) {
 		}, newTestRevisionLogs(logs, false))
 
 		// PathFilter on `a.txt` with status.
-		logs, err = Log(r.Repository, &LogOptions{filter, true})
+		logs, err = Log(t.Context(), r.Repository, &LogOptions{filter, true})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId3, []TestStatusFile{{"a.txt", lib.RevisionEntryKindDelete, 1}}),
@@ -113,7 +113,7 @@ func TestLog(t *testing.T) {
 
 		// PathFilter on `c/*` with status.
 		filter = lib.NewPathInclusionFilter([]string{"c/*"})
-		logs, err = Log(r.Repository, &LogOptions{filter, true})
+		logs, err = Log(t.Context(), r.Repository, &LogOptions{filter, true})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId2, []TestStatusFile{{"c/e.txt", lib.RevisionEntryKindAdd, 1}}),
@@ -136,7 +136,7 @@ type TestStatusFile struct {
 
 func revisionLog(t *testing.T, r *lib.TestRepository, revId lib.RevisionId, files []TestStatusFile) TestRevisionLog {
 	t.Helper()
-	revision, err := r.ReadRevision(revId, lib.NewBlockBuf())
+	revision, err := r.ReadRevision(t.Context(), revId, lib.NewBlockBuf())
 	lib.NewAssert(t).NoError(err)
 	return TestRevisionLog{revId, revision, files}
 }

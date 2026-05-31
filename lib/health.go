@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"context"
 	"errors"
 	"io"
 )
@@ -25,7 +26,7 @@ type HealthCheckOptions struct {
 // It always traverses the entire revision chain (head to root), checking that
 // every revision can be read and that every revision's path entries are
 // strictly sorted. Additional checks can be enabled via `opts`.
-func CheckHealth(repository *Repository, tempFS FS, opts HealthCheckOptions) error {
+func CheckHealth(ctx context.Context, repository *Repository, tempFS FS, opts HealthCheckOptions) error {
 	var seenWriter *TempWriter[BlockId]
 	if opts.CheckBlocks || opts.CheckOrphanedBlocks {
 		seenFS, err := tempFS.MkSub("seen")
@@ -34,7 +35,7 @@ func CheckHealth(repository *Repository, tempFS FS, opts HealthCheckOptions) err
 		}
 		seenWriter = NewBlockIdTempWriter(seenFS)
 	}
-	if err := walkRevisions(repository, opts.Monitor, seenWriter); err != nil {
+	if err := walkRevisions(ctx, repository, opts.Monitor, seenWriter); err != nil {
 		return err
 	}
 	if seenWriter == nil {
@@ -46,12 +47,12 @@ func CheckHealth(repository *Repository, tempFS FS, opts HealthCheckOptions) err
 	}
 	defer seen.Remove() //nolint:errcheck
 	if opts.CheckOrphanedBlocks {
-		if err := checkOrphanedBlocks(repository, tempFS, opts.Monitor, seen); err != nil {
+		if err := checkOrphanedBlocks(ctx, repository, tempFS, opts.Monitor, seen); err != nil {
 			return err
 		}
 	}
 	if opts.CheckBlocks {
-		if err := checkBlocks(repository, opts.Monitor, seen); err != nil {
+		if err := checkBlocks(ctx, repository, opts.Monitor, seen); err != nil {
 			return err
 		}
 	}
@@ -59,8 +60,13 @@ func CheckHealth(repository *Repository, tempFS FS, opts HealthCheckOptions) err
 }
 
 //nolint:funlen
-func walkRevisions(repository *Repository, monitor HealthCheckMonitor, seen *TempWriter[BlockId]) error {
-	revisionId, err := repository.Head()
+func walkRevisions(
+	ctx context.Context,
+	repository *Repository,
+	monitor HealthCheckMonitor,
+	seen *TempWriter[BlockId],
+) error {
+	revisionId, err := repository.Head(ctx)
 	if err != nil {
 		return WrapErrorf(err, "failed to get head revision")
 	}
@@ -73,7 +79,7 @@ func walkRevisions(repository *Repository, monitor HealthCheckMonitor, seen *Tem
 				return WrapErrorf(err, "failed to record revision block %s", revisionId)
 			}
 		}
-		revision, err := repository.ReadRevision(revisionId, blockBuf)
+		revision, err := repository.ReadRevision(ctx, revisionId, blockBuf)
 		if err != nil {
 			return WrapErrorf(err, "failed to read revision %s", revisionId)
 		}
@@ -88,7 +94,7 @@ func walkRevisions(repository *Repository, monitor HealthCheckMonitor, seen *Tem
 		var lastEntry *RevisionEntry
 		entryCount := 0
 		for {
-			entry, err := reader.Read(blockBuf)
+			entry, err := reader.Read(ctx, blockBuf)
 			if errors.Is(err, io.EOF) {
 				break
 			}
@@ -124,12 +130,18 @@ func walkRevisions(repository *Repository, monitor HealthCheckMonitor, seen *Tem
 	return nil
 }
 
-func checkOrphanedBlocks(repository *Repository, tempFS FS, monitor HealthCheckMonitor, seen *Temp[BlockId]) error {
+func checkOrphanedBlocks(
+	ctx context.Context,
+	repository *Repository,
+	tempFS FS,
+	monitor HealthCheckMonitor,
+	seen *Temp[BlockId],
+) error {
 	storedFS, err := tempFS.MkSub("stored")
 	if err != nil {
 		return WrapErrorf(err, "failed to create temp directory for stored block ids")
 	}
-	stored, err := ReadSortedBlockIds(repository.storage, storedFS, nil)
+	stored, err := ReadSortedBlockIds(ctx, repository.storage, storedFS, nil)
 	if err != nil {
 		return WrapErrorf(err, "failed to snapshot storage block ids")
 	}
@@ -163,7 +175,7 @@ func checkOrphanedBlocks(repository *Repository, tempFS FS, monitor HealthCheckM
 	return nil
 }
 
-func checkBlocks(repository *Repository, monitor HealthCheckMonitor, seen *Temp[BlockId]) error {
+func checkBlocks(ctx context.Context, repository *Repository, monitor HealthCheckMonitor, seen *Temp[BlockId]) error {
 	reader := seen.Reader(nil)
 	buf := NewBlockBuf()
 	for {
@@ -174,7 +186,7 @@ func checkBlocks(repository *Repository, monitor HealthCheckMonitor, seen *Temp[
 		if err != nil {
 			return WrapErrorf(err, "failed to read seen block id")
 		}
-		data, err := repository.ReadBlock(id, buf)
+		data, err := repository.ReadBlock(ctx, id, buf)
 		if err != nil {
 			return WrapErrorf(err, "failed to verify block %s", id)
 		}

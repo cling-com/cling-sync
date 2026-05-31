@@ -165,7 +165,7 @@ func (td TestData) NewTestRepository(tb testing.TB, fs FS) *TestRepository {
 	passphrase := "testpassphrase"
 	storage, err := NewFileStorage(fs, StoragePurposeRepository)
 	assert.NoError(err)
-	repository, err := InitNewRepository(storage, []byte(passphrase))
+	repository, err := InitNewRepository(tb.Context(), storage, []byte(passphrase))
 	assert.NoError(err)
 	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, tb, assert}
 }
@@ -176,7 +176,7 @@ func (td TestData) OpenRepository(tb testing.TB, fs FS) *TestRepository {
 	passphrase := "testpassphrase"
 	storage, err := NewFileStorage(fs, StoragePurposeRepository)
 	assert.NoError(err)
-	repository, err := OpenRepository(storage, []byte(passphrase))
+	repository, err := OpenRepository(tb.Context(), storage, []byte(passphrase))
 	assert.NoError(err)
 	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, tb, assert}
 }
@@ -447,7 +447,7 @@ type TestRepository struct {
 
 func (r *TestRepository) Head() RevisionId {
 	r.t.Helper()
-	head, err := r.Repository.Head()
+	head, err := r.Repository.Head(r.t.Context())
 	r.assert.NoError(err)
 	return head
 }
@@ -456,7 +456,7 @@ func (r *TestRepository) RevisionSnapshot(revisionId RevisionId, pathFilter Path
 	r.t.Helper()
 	tmpFS := td.NewFS(r.t)
 	defer tmpFS.RemoveAll(".") //nolint:errcheck
-	snapshot, err := NewRevisionSnapshot(r.Repository, revisionId, tmpFS)
+	snapshot, err := NewRevisionSnapshot(r.t.Context(), r.Repository, revisionId, tmpFS)
 	r.assert.NoError(err)
 	defer snapshot.Remove() //nolint:errcheck
 	reader := snapshot.Reader(RevisionEntryPathFilter(pathFilter))
@@ -484,7 +484,7 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 			// Rebuild the content from the repository.
 			buf := bytes.NewBuffer([]byte{})
 			for _, blockId := range entry.Metadata.BlockIds {
-				data, err := r.ReadBlock(blockId, blockBuf)
+				data, err := r.ReadBlock(r.t.Context(), blockId, blockBuf)
 				r.assert.NoError(err)
 				buf.Write(data)
 			}
@@ -500,11 +500,13 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 	return actual
 }
 
-func (r *TestRepository) RevisionEntryReaderInfos(reader RevisionEntryReader) []TestRevisionEntryInfo {
+func (r *TestRepository) RevisionEntryReaderInfos(
+	read func(buf BlockBuf) (*RevisionEntry, error),
+) []TestRevisionEntryInfo {
 	infos := []TestRevisionEntryInfo{}
 	buf := NewBlockBuf()
 	for {
-		entry, err := reader.Read(buf)
+		entry, err := read(buf)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -521,12 +523,15 @@ func (r *TestRepository) RevisionEntryReaderInfos(reader RevisionEntryReader) []
 
 func (r *TestRepository) RevisionInfos(revisionId RevisionId) []TestRevisionEntryInfo {
 	r.t.Helper()
-	revision, err := r.ReadRevision(revisionId, NewBlockBuf())
+	revision, err := r.ReadRevision(r.t.Context(), revisionId, NewBlockBuf())
 	r.assert.NoError(err)
-	return r.RevisionEntryReaderInfos(NewRevisionReader(r.Repository, &revision))
+	reader := NewRevisionReader(r.Repository, &revision)
+	return r.RevisionEntryReaderInfos(func(buf BlockBuf) (*RevisionEntry, error) {
+		return reader.Read(r.t.Context(), buf)
+	})
 }
 
 func (r *TestRepository) RevisionTempInfos(temp *Temp[*RevisionEntry]) []TestRevisionEntryInfo {
 	r.t.Helper()
-	return r.RevisionEntryReaderInfos(temp.Reader(nil))
+	return r.RevisionEntryReaderInfos(temp.Reader(nil).Read)
 }

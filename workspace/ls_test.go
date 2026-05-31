@@ -15,7 +15,7 @@ func TestLs(t *testing.T) {
 		w := wstd.NewTestWorkspace(t, r.Repository)
 
 		// Empty workspace.
-		ls, err := Ls(r.Repository, td.NewFS(t), wstd.LsOptions(r.Head()))
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), wstd.LsOptions(r.Head()))
 		assert.NoError(err)
 		assert.Equal(0, len(ls))
 
@@ -24,17 +24,17 @@ func TestLs(t *testing.T) {
 		w.Write("b.txt", "b")
 		w.Write("c/1.txt", "c1")
 		w.Write("c/d/2.txt", "cd2")
-		rev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		rev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Add a second commit.
 		w.Write("c/d/3.txt", "cd3")
 		w.Write("a.txt", "aa")
 		w.Rm("b.txt")
-		rev2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		rev2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		ls, err = Ls(r.Repository, td.NewFS(t), wstd.LsOptions(rev1))
+		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t), wstd.LsOptions(rev1))
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"a.txt", 0o600, 1},
@@ -45,7 +45,7 @@ func TestLs(t *testing.T) {
 			{"c/d/2.txt", 0o600, 3},
 		}, lsFiles(ls))
 
-		ls, err = Ls(r.Repository, td.NewFS(t), wstd.LsOptions(rev2))
+		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t), wstd.LsOptions(rev2))
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"a.txt", 0o600, 2},
@@ -68,11 +68,11 @@ func TestLs(t *testing.T) {
 		w.Write("b.txt", "b")
 		w.Write("c/1.txt", "c1")
 		w.Write("c/d/2.txt", "cd2")
-		rev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		rev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		filter := lib.NewPathInclusionFilter([]string{"c"})
-		ls, err := Ls(r.Repository, td.NewFS(t), &LsOptions{rev1, filter, lib.Path{}})
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, filter, lib.Path{}})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"c", 0o700 | lib.FileModeDir, 0},
@@ -94,12 +94,12 @@ func TestLs(t *testing.T) {
 		w.Write("b/b1.txt", "b1")
 		w.Write("b/b2.txt", "b2")
 		w.Write("c/c1.txt", "c1")
-		rev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		rev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		prefix, err := lib.NewPath("b")
 		assert.NoError(err)
-		ls, err := Ls(r.Repository, td.NewFS(t), &LsOptions{rev1, nil, prefix})
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, prefix})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"b1.txt", 0o600, 2},
@@ -117,10 +117,10 @@ func TestLs(t *testing.T) {
 		w.Write("a.txt", "a")
 		w.Write("b.txt", "b")
 		w.Write("c.md", "c")
-		rev1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		rev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		ls, err := Ls(r.Repository, td.NewFS(t), &LsOptions{rev1, nil, lib.Path{}})
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, lib.Path{}})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"a.txt", 0o600, 1},
@@ -130,7 +130,7 @@ func TestLs(t *testing.T) {
 
 		// Adding a .clingignore file should not affect existing revisions.
 		w.Write(".clingignore", "*.md")
-		ls, err = Ls(r.Repository, td.NewFS(t), &LsOptions{rev1, nil, lib.Path{}})
+		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, lib.Path{}})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"a.txt", 0o600, 1},

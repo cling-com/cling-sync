@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -90,8 +91,8 @@ type LsOptions struct {
 	PathPrefix lib.Path
 }
 
-func Ls(repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, error) {
-	snapshot, err := lib.NewRevisionSnapshot(repository, opts.RevisionId, tmpFS)
+func Ls(ctx context.Context, repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, error) {
+	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}

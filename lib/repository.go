@@ -80,7 +80,7 @@ type Repository struct {
 	gearCDCTable   GearCDCTable
 }
 
-func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) { //nolint:funlen
+func InitNewRepository(ctx context.Context, storage Storage, passphrase []byte) (*Repository, error) { //nolint:funlen
 	userKeySalt, err := NewSalt()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to generate random user key salt")
@@ -156,21 +156,21 @@ func InitNewRepository(storage Storage, passphrase []byte) (*Repository, error) 
 		EncryptedKey(encryptedGearCDCSeed),
 	}
 	toml, headerComment := createRepositoryConfig(mki)
-	if err := storage.Init(toml, headerComment); err != nil {
+	if err := storage.Init(ctx, toml, headerComment); err != nil {
 		return nil, WrapErrorf(err, "failed to initialize storage")
 	}
 	rootRevisionId := RevisionId{}
 	if !rootRevisionId.IsRoot() {
 		return nil, Errorf("root revision ID is not zero")
 	}
-	if err := WriteRef(storage, "head", rootRevisionId); err != nil {
+	if err := WriteRef(ctx, storage, "head", rootRevisionId); err != nil {
 		return nil, WrapErrorf(err, "failed to write head reference")
 	}
-	return OpenRepository(storage, passphrase)
+	return OpenRepository(ctx, storage, passphrase)
 }
 
-func OpenRepository(storage Storage, passphrase []byte) (*Repository, error) {
-	keys, err := decryptrepositoryKeys(storage, passphrase)
+func OpenRepository(ctx context.Context, storage Storage, passphrase []byte) (*Repository, error) {
+	keys, err := decryptrepositoryKeys(ctx, storage, passphrase)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt repository keys")
 	}
@@ -186,8 +186,8 @@ func OpenRepository(storage Storage, passphrase []byte) (*Repository, error) {
 }
 
 // Read the encrypted keys from the storage config (`repository.toml`) and decrypt them.
-func decryptrepositoryKeys(storage Storage, passphrase []byte) (*repositoryKeys, error) {
-	toml, err := storage.Open()
+func decryptrepositoryKeys(ctx context.Context, storage Storage, passphrase []byte) (*repositoryKeys, error) {
+	toml, err := storage.Open(ctx)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to open storage")
 	}
@@ -252,12 +252,16 @@ func (r *Repository) GearCDCTable() GearCDCTable {
 // the block size (Padmé: https://lbarman.ch/blog/padme).
 //
 //nolint:funlen
-func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (blockId BlockId, dataBytesWritten *int, err error) {
+func (r *Repository) WriteBlock(
+	ctx context.Context,
+	data []byte,
+	buf BlockBuf,
+) (blockId BlockId, dataBytesWritten *int, err error) {
 	if len(data) > MaxBlockDataSize {
 		return BlockId{}, nil, Errorf("data size %d exceeds maximum block size %d", len(data), MaxBlockDataSize)
 	}
 	blockId = BlockId(CalculateHmac(data, r.blockIdHmacKey))
-	ok, err := r.storage.HasBlock(blockId)
+	ok, err := r.storage.HasBlock(ctx, blockId)
 	if ok {
 		return blockId, nil, nil
 	}
@@ -350,7 +354,7 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (blockId BlockId, dat
 		return blockId, nil, WrapErrorf(err, "failed to write block data length for %s", blockId)
 	}
 
-	exists, err := r.storage.WriteBlock(blockId, result)
+	exists, err := r.storage.WriteBlock(ctx, blockId, result)
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to write block %s", blockId)
 	}
@@ -360,8 +364,8 @@ func (r *Repository) WriteBlock(data []byte, buf BlockBuf) (blockId BlockId, dat
 	return blockId, &payloadLen, nil
 }
 
-func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
-	rawBlock, err := r.storage.ReadBlock(blockId, buf)
+func (r *Repository) ReadBlock(ctx context.Context, blockId BlockId, buf BlockBuf) ([]byte, error) {
+	rawBlock, err := r.storage.ReadBlock(ctx, blockId, buf)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read block %s", blockId)
 	}
@@ -410,8 +414,8 @@ func (r *Repository) ReadBlock(blockId BlockId, buf BlockBuf) ([]byte, error) {
 	return data, nil
 }
 
-func (r *Repository) Head() (RevisionId, error) {
-	ref, err := ReadRef(r.storage, "head")
+func (r *Repository) Head(ctx context.Context) (RevisionId, error) {
+	ref, err := ReadRef(ctx, r.storage, "head")
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to read head reference")
 	}
@@ -425,11 +429,11 @@ func (r *Repository) Head() (RevisionId, error) {
 const RevisionMagic = "cling-revision"
 
 // Return `ErrRootRevision` if revisionId is the root revisionId.
-func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision, error) {
+func (r *Repository) ReadRevision(ctx context.Context, revisionId RevisionId, buf BlockBuf) (Revision, error) {
 	if revisionId.IsRoot() {
 		return Revision{}, ErrRootRevision
 	}
-	data, err := r.ReadBlock(BlockId(revisionId), buf)
+	data, err := r.ReadBlock(ctx, BlockId(revisionId), buf)
 	if err != nil {
 		return Revision{}, WrapErrorf(err, "failed to read revision %s", revisionId)
 	}
@@ -451,12 +455,12 @@ func (r *Repository) ReadRevision(revisionId RevisionId, buf BlockBuf) (Revision
 // Write a revision and set it as the current HEAD.
 // A revision can only reference the current head as their parent.
 // Return `ErrHeadChanged` if the head has changed during the commit.
-func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
+func (r *Repository) WriteRevision(ctx context.Context, revision *Revision) (RevisionId, error) {
 	if len(revision.BlockIds) == 0 {
 		return RevisionId{}, Errorf("revision is empty")
 	}
 	for _, blockId := range revision.BlockIds {
-		exists, err := r.storage.HasBlock(blockId)
+		exists, err := r.storage.HasBlock(ctx, blockId)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to check if block %s exists", blockId)
 		}
@@ -464,12 +468,12 @@ func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
 			return RevisionId{}, Errorf("block %s does not exist", blockId)
 		}
 	}
-	unlock, err := r.storage.Lock(context.Background(), UpdateHeadRevisionLockName)
+	unlock, err := r.storage.Lock(ctx, UpdateHeadRevisionLockName)
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to create lock")
 	}
 	defer unlock() //nolint:errcheck
-	head, err := r.Head()
+	head, err := r.Head(ctx)
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to get head revision")
 	}
@@ -487,19 +491,20 @@ func (r *Repository) WriteRevision(revision *Revision) (RevisionId, error) {
 	if err := revision.Marshall(pw); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to marshal revision")
 	}
-	blockId, _, err := r.WriteBlock(pw.Bytes(), NewBlockBuf())
+	blockId, _, err := r.WriteBlock(ctx, pw.Bytes(), NewBlockBuf())
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write revision block")
 	}
 	revisionId := RevisionId(blockId)
-	if err := WriteRef(r.storage, "head", revisionId); err != nil {
+	if err := WriteRef(ctx, r.storage, "head", revisionId); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write head reference")
 	}
 	return revisionId, nil
 }
 
-func WriteRef(storage Storage, name string, revisionId RevisionId) error {
+func WriteRef(ctx context.Context, storage Storage, name string, revisionId RevisionId) error {
 	if err := storage.WriteControlFile(
+		ctx,
 		ControlFileSectionRefs,
 		name,
 		[]byte(hex.EncodeToString(revisionId[:])),
@@ -509,8 +514,8 @@ func WriteRef(storage Storage, name string, revisionId RevisionId) error {
 	return nil
 }
 
-func ReadRef(storage Storage, name string) (RevisionId, error) {
-	data, err := storage.ReadControlFile(ControlFileSectionRefs, name)
+func ReadRef(ctx context.Context, storage Storage, name string) (RevisionId, error) {
+	data, err := storage.ReadControlFile(ctx, ControlFileSectionRefs, name)
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to read reference %s", name)
 	}

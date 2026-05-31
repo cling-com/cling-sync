@@ -34,7 +34,7 @@ func TestSyncRepository(t *testing.T) {
 		)
 		assert.NoError(err)
 
-		dstHead, err := ReadRef(dst.Storage, "head")
+		dstHead, err := ReadRef(t.Context(), dst.Storage, "head")
 		assert.NoError(err)
 		assert.Equal(rev2Id, dstHead)
 		assertSameHistory(t, src, dst)
@@ -105,7 +105,7 @@ func TestSyncRepository(t *testing.T) {
 		)
 		assert.NoError(err)
 
-		dstHead, err := ReadRef(dst.Storage, "head")
+		dstHead, err := ReadRef(t.Context(), dst.Storage, "head")
 		assert.NoError(err)
 		assert.Equal(rev2Id, dstHead)
 
@@ -121,7 +121,7 @@ func TestSyncRepository(t *testing.T) {
 		src := td.NewTestRepository(t, td.NewFS(t))
 		dst := cloneRepository(t, src)
 
-		blockId, _, err := src.WriteBlock([]byte("shared"), NewBlockBuf())
+		blockId, _, err := src.WriteBlock(t.Context(), []byte("shared"), NewBlockBuf())
 		assert.NoError(err)
 		entry1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		entry1.Metadata.BlockIds = []BlockId{blockId}
@@ -131,11 +131,11 @@ func TestSyncRepository(t *testing.T) {
 		entry2.Metadata.BlockIds = []BlockId{blockId}
 		entry2.Metadata.Size = 6
 		entry2.Metadata.FileHash = td.SHA256("shared")
-		commit, err := NewCommit(src.Repository, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), src.Repository, td.NewFS(t))
 		assert.NoError(err)
 		assert.NoError(commit.Add(entry1))
 		assert.NoError(commit.Add(entry2))
-		_, err = commit.Commit(td.CommitInfo())
+		_, err = commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
 		monitor := &TestSyncMonitor{}
@@ -155,7 +155,7 @@ func TestSyncRepository(t *testing.T) {
 		src := td.NewTestRepository(t, td.NewFS(t))
 		dst := cloneRepository(t, src)
 
-		assert.NoError(WriteRef(src.Storage, "head", td.RevisionId("ghost")))
+		assert.NoError(WriteRef(t.Context(), src.Storage, "head", td.RevisionId("ghost")))
 
 		monitor := &TestSyncMonitor{}
 		err := SyncRepository(
@@ -190,7 +190,7 @@ func testEntry(t *testing.T, r *TestRepository, path, content string) (*Revision
 	t.Helper()
 	assert := NewAssert(t)
 	entry := td.RevisionEntry(path, RevisionEntryKindAdd)
-	blockId, _, err := r.WriteBlock([]byte(content), NewBlockBuf())
+	blockId, _, err := r.WriteBlock(t.Context(), []byte(content), NewBlockBuf())
 	assert.NoError(err)
 	entry.Metadata.BlockIds = []BlockId{blockId}
 	entry.Metadata.Size = int64(len(content))
@@ -208,9 +208,9 @@ func assertSameHistory(t *testing.T, src, dst *TestRepository) {
 
 	buf := NewBlockBuf()
 	for !srcRevisionId.IsRoot() {
-		srcRevision, err := src.ReadRevision(srcRevisionId, buf)
+		srcRevision, err := src.ReadRevision(t.Context(), srcRevisionId, buf)
 		assert.NoError(err)
-		dstRevision, err := dst.ReadRevision(dstRevisionId, buf)
+		dstRevision, err := dst.ReadRevision(t.Context(), dstRevisionId, buf)
 		assert.NoError(err)
 		assert.Equal(srcRevision, dstRevision)
 		assert.Equal(src.RevisionInfos(srcRevisionId), dst.RevisionInfos(dstRevisionId))

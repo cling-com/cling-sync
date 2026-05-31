@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -39,8 +40,14 @@ type CpOptions struct {
 	RestorableMetadataFlag lib.RestorableMetadataFlag
 }
 
-func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.FS) error { //nolint:funlen
-	snapshot, err := lib.NewRevisionSnapshot(repository, opts.RevisionId, tmpFS)
+func Cp( //nolint:funlen
+	ctx context.Context,
+	repository *lib.Repository,
+	targetFS lib.FS,
+	opts *CpOptions,
+	tmpFS lib.FS,
+) error {
+	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
@@ -71,7 +78,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 		if err := mon.OnStart(entry, target); err != nil {
 			return lib.WrapErrorf(err, "cp monitor start failed for %s", target)
 		}
-		if err := restore(entry, repository, targetFS, target, buf, mon); err != nil {
+		if err := restore(ctx, entry, repository, targetFS, target, buf, mon); err != nil {
 			return lib.WrapErrorf(err, "failed to copy %s", target)
 		}
 		if err := restoreFileMode(targetFS, target, &entry.Metadata, opts.RestorableMetadataFlag); err != nil {
@@ -111,6 +118,7 @@ func Cp(repository *lib.Repository, targetFS lib.FS, opts *CpOptions, tmpFS lib.
 }
 
 func restore( //nolint:funlen
+	ctx context.Context,
 	entry *lib.RevisionEntry,
 	repository *lib.Repository,
 	targetFS lib.FS,
@@ -197,7 +205,7 @@ func restore( //nolint:funlen
 	}
 	defer f.Close() //nolint:errcheck
 	for _, blockId := range entry.Metadata.BlockIds {
-		data, err := repository.ReadBlock(blockId, buf)
+		data, err := repository.ReadBlock(ctx, blockId, buf)
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {

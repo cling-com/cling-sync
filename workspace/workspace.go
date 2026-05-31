@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	cryptoCipher "crypto/cipher"
 	"errors"
 	"strings"
@@ -21,12 +22,12 @@ type Workspace struct {
 }
 
 // Load the configuration from `<fs>/.cling/workspace.txt`.
-func OpenWorkspace(fs lib.FS, tempFS lib.FS) (*Workspace, error) {
+func OpenWorkspace(ctx context.Context, fs lib.FS, tempFS lib.FS) (*Workspace, error) {
 	storage, err := lib.NewFileStorage(fs, lib.StoragePurposeWorkspace)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create storage for workspace at %s", fs)
 	}
-	toml, err := storage.Open()
+	toml, err := storage.Open(ctx)
 	if err != nil {
 		if errors.Is(err, lib.ErrStorageNotFound) {
 			return nil, lib.ErrStorageNotFound
@@ -49,6 +50,7 @@ func OpenWorkspace(fs lib.FS, tempFS lib.FS) (*Workspace, error) {
 
 // Create a new workspace. Workspaces can be nested, i.e. a workspace can be inside another workspace.
 func NewWorkspace(
+	ctx context.Context,
 	fs lib.FS,
 	tempFS lib.FS,
 	remoteRepository RemoteRepository,
@@ -74,10 +76,10 @@ This file contains the configuration of your cling workspace.
 		}
 		return nil, lib.WrapErrorf(err, "failed to create storage for workspace at %s", fs)
 	}
-	if err := storage.Init(toml, headerComment); err != nil {
+	if err := storage.Init(ctx, toml, headerComment); err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create workspace")
 	}
-	if err := lib.WriteRef(storage, "head", lib.RevisionId{}); err != nil {
+	if err := lib.WriteRef(ctx, storage, "head", lib.RevisionId{}); err != nil {
 		return nil, lib.WrapErrorf(err, "failed to write workspace head reference")
 	}
 	return &Workspace{remoteRepository, pathPrefix, storage, fs, tempFS}, nil
@@ -91,8 +93,8 @@ func (w *Workspace) Close() error {
 	return nil
 }
 
-func (w *Workspace) Head() (lib.RevisionId, error) {
-	ref, err := lib.ReadRef(w.Storage, "head")
+func (w *Workspace) Head(ctx context.Context) (lib.RevisionId, error) {
+	ref, err := lib.ReadRef(ctx, w.Storage, "head")
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read head reference")
 	}
@@ -107,12 +109,13 @@ const savedPassphraseFileName = "encrypted-passphrase"
 // the ciphertext as a workspace control file. The encryption key (which
 // `cipher` was built from) is meant to live in the system keychain; the
 // two-layer scheme means neither alone unlocks the repository.
-func (w *Workspace) WriteSavedPassphrase(passphrase []byte, cipher cryptoCipher.AEAD) error {
+func (w *Workspace) WriteSavedPassphrase(ctx context.Context, passphrase []byte, cipher cryptoCipher.AEAD) error {
 	encrypted := make([]byte, len(passphrase)+lib.TotalCipherOverhead)
 	if _, err := lib.Encrypt(passphrase, cipher, []byte(savedPassphraseFileName), encrypted); err != nil {
 		return lib.WrapErrorf(err, "failed to encrypt saved passphrase")
 	}
 	if err := w.Storage.WriteControlFile(
+		ctx,
 		lib.ControlFileSectionSecurity,
 		savedPassphraseFileName,
 		encrypted,
@@ -122,23 +125,23 @@ func (w *Workspace) WriteSavedPassphrase(passphrase []byte, cipher cryptoCipher.
 	return nil
 }
 
-func (w *Workspace) HasSavedPassphrase() bool {
-	ok, err := w.Storage.HasControlFile(lib.ControlFileSectionSecurity, savedPassphraseFileName)
+func (w *Workspace) HasSavedPassphrase(ctx context.Context) bool {
+	ok, err := w.Storage.HasControlFile(ctx, lib.ControlFileSectionSecurity, savedPassphraseFileName)
 	if err != nil {
 		return false
 	}
 	return ok
 }
 
-func (w *Workspace) ReadSavedPassphrase(cipher cryptoCipher.AEAD) ([]byte, error) {
-	ok, err := w.Storage.HasControlFile(lib.ControlFileSectionSecurity, savedPassphraseFileName)
+func (w *Workspace) ReadSavedPassphrase(ctx context.Context, cipher cryptoCipher.AEAD) ([]byte, error) {
+	ok, err := w.Storage.HasControlFile(ctx, lib.ControlFileSectionSecurity, savedPassphraseFileName)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to check for saved passphrase")
 	}
 	if !ok {
 		return nil, ErrSavedPassphraseNotFound
 	}
-	encrypted, err := w.Storage.ReadControlFile(lib.ControlFileSectionSecurity, savedPassphraseFileName)
+	encrypted, err := w.Storage.ReadControlFile(ctx, lib.ControlFileSectionSecurity, savedPassphraseFileName)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to read saved passphrase")
 	}
@@ -149,8 +152,8 @@ func (w *Workspace) ReadSavedPassphrase(cipher cryptoCipher.AEAD) ([]byte, error
 	return plaintext, nil
 }
 
-func (w *Workspace) DeleteSavedPassphrase() error {
-	if err := w.Storage.DeleteControlFile(lib.ControlFileSectionSecurity, savedPassphraseFileName); err != nil {
+func (w *Workspace) DeleteSavedPassphrase(ctx context.Context) error {
+	if err := w.Storage.DeleteControlFile(ctx, lib.ControlFileSectionSecurity, savedPassphraseFileName); err != nil {
 		if errors.Is(err, lib.ErrControlFileNotFound) {
 			return nil
 		}

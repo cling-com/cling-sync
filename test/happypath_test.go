@@ -295,9 +295,10 @@ func TestSyncRepoHappyPath(t *testing.T) {
 	assert.NoError(err)
 	dstStorage, err := lib.NewFileStorage(lib.NewRealFS(sut.Path("../sync-target")), lib.StoragePurposeRepository)
 	assert.NoError(err)
-	srcRepo, err := lib.OpenRepository(srcStorage, []byte(passphrase))
+	ctx := t.Context()
+	srcRepo, err := lib.OpenRepository(ctx, srcStorage, []byte(passphrase))
 	assert.NoError(err)
-	dstRepo, err := lib.OpenRepository(dstStorage, []byte(passphrase))
+	dstRepo, err := lib.OpenRepository(ctx, dstStorage, []byte(passphrase))
 	assert.NoError(err)
 
 	assert.Equal(sut.RepositoryHead(), headFromRepository(t, dstRepo))
@@ -321,7 +322,7 @@ func TestSyncRepoHappyPath(t *testing.T) {
 
 	dst2Storage, err := lib.NewFileStorage(lib.NewRealFS(sut.Path("../sync-target-2")), lib.StoragePurposeRepository)
 	assert.NoError(err)
-	dst2Repo, err := lib.OpenRepository(dst2Storage, []byte(passphrase))
+	dst2Repo, err := lib.OpenRepository(ctx, dst2Storage, []byte(passphrase))
 	assert.NoError(err)
 
 	t.Log("Add a commit, then sync only backup2 by name (with run-scoped flags before the name)")
@@ -931,12 +932,13 @@ func initServeRepo(t *testing.T) string {
 // by `sync-repo add`).
 func initServeRepoFromSource(t *testing.T, sourceDir string) string {
 	t.Helper()
+	ctx := t.Context()
 	srvDir := t.TempDir()
 	srcStorage, err := lib.NewFileStorage(lib.NewRealFS(sourceDir), lib.StoragePurposeRepository)
 	if err != nil {
 		t.Fatal(err)
 	}
-	toml, err := srcStorage.Open()
+	toml, err := srcStorage.Open(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -944,10 +946,10 @@ func initServeRepoFromSource(t *testing.T, sourceDir string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tgtStorage.Init(toml, ""); err != nil {
+	if err := tgtStorage.Init(ctx, toml, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := lib.WriteRef(tgtStorage, "head", lib.RevisionId{}); err != nil {
+	if err := lib.WriteRef(ctx, tgtStorage, "head", lib.RevisionId{}); err != nil {
 		t.Fatal(err)
 	}
 	writeServeConfFile(t, srvDir)
@@ -1304,7 +1306,7 @@ func gray(s string) string {
 func headFromRepository(t *testing.T, repo *lib.Repository) string {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	head, err := repo.Head()
+	head, err := repo.Head(t.Context())
 	assert.NoError(err)
 	return head.String()
 }
@@ -1312,16 +1314,17 @@ func headFromRepository(t *testing.T, repo *lib.Repository) string {
 func assertSameRepositoryHistory(t *testing.T, src, dst *lib.Repository) {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	srcRevisionId, err := src.Head()
+	ctx := t.Context()
+	srcRevisionId, err := src.Head(ctx)
 	assert.NoError(err)
-	dstRevisionId, err := dst.Head()
+	dstRevisionId, err := dst.Head(ctx)
 	assert.NoError(err)
 	assert.Equal(srcRevisionId, dstRevisionId)
 	buf := lib.NewBlockBuf()
 	for !srcRevisionId.IsRoot() {
-		srcRevision, err := src.ReadRevision(srcRevisionId, buf)
+		srcRevision, err := src.ReadRevision(ctx, srcRevisionId, buf)
 		assert.NoError(err)
-		dstRevision, err := dst.ReadRevision(dstRevisionId, buf)
+		dstRevision, err := dst.ReadRevision(ctx, dstRevisionId, buf)
 		assert.NoError(err)
 		assert.Equal(srcRevision, dstRevision)
 		srcRevisionId = srcRevision.ParentRevisionId

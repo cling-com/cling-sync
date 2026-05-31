@@ -184,7 +184,7 @@ func TestRevisionSnapshot(t *testing.T) {
 
 func testCommit(t *testing.T, repo *Repository, entries ...*RevisionEntry) (RevisionId, error) {
 	t.Helper()
-	commit, err := NewCommit(repo, td.NewFS(t))
+	commit, err := NewCommit(t.Context(), repo, td.NewFS(t))
 	if err != nil {
 		return RevisionId{}, err
 	}
@@ -193,7 +193,7 @@ func testCommit(t *testing.T, repo *Repository, entries ...*RevisionEntry) (Revi
 			return RevisionId{}, err
 		}
 	}
-	return commit.Commit(&CommitInfo{Author: "test author", Message: "test message"})
+	return commit.Commit(t.Context(), &CommitInfo{Author: "test author", Message: "test message"})
 }
 
 func readRevisionSnapshot(
@@ -204,7 +204,7 @@ func readRevisionSnapshot(
 ) []*RevisionEntry {
 	t.Helper()
 	assert := NewAssert(t)
-	snapshot, err := NewRevisionSnapshot(repo, revisionId, td.NewFS(t))
+	snapshot, err := NewRevisionSnapshot(t.Context(), repo, revisionId, td.NewFS(t))
 	assert.NoError(err)
 	defer snapshot.Remove() //nolint:errcheck
 	reader := snapshot.Reader(RevisionEntryPathFilter(pathFilter))

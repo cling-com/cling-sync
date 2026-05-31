@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"context"
 	"errors"
 	"io"
 	"time"
@@ -16,8 +17,8 @@ type Commit struct {
 	ensureDirs   []RevisionEntry
 }
 
-func NewCommit(repository *Repository, tmpFS FS) (*Commit, error) {
-	head, err := repository.Head()
+func NewCommit(ctx context.Context, repository *Repository, tmpFS FS) (*Commit, error) {
+	head, err := repository.Head(ctx)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read head revision")
 	}
@@ -94,7 +95,7 @@ type CommitInfo struct {
 // Return `ErrEmptyCommit` if the commit is empty.
 // A `Commit` is single-use: any call after the first closes it, so further
 // `Add` / `Commit` calls return "commit is closed".
-func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
+func (c *Commit) Commit(ctx context.Context, info *CommitInfo) (RevisionId, error) {
 	if c.tempWriter == nil {
 		return RevisionId{}, Errorf("commit is closed")
 	}
@@ -131,7 +132,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 		if err := chunk.Marshall(pw); err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to marshall revision entry chunk")
 		}
-		blockId, _, err := c.repository.WriteBlock(pw.Bytes(), writeBuf)
+		blockId, _, err := c.repository.WriteBlock(ctx, pw.Bytes(), writeBuf)
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to write revision entry chunk block")
 		}
@@ -144,7 +145,7 @@ func (c *Commit) Commit(info *CommitInfo) (RevisionId, error) {
 		ParentRevisionId: c.BaseRevision,
 		BlockIds:         blockIds,
 	}
-	revisionId, err := c.repository.WriteRevision(revision)
+	revisionId, err := c.repository.WriteRevision(ctx, revision)
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write revision")
 	}

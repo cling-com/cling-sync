@@ -23,15 +23,15 @@ func TestCp(t *testing.T) {
 		w.Write("b.txt", "b")
 		w.Write("c/1.txt", "c")
 		w.Write("c/d/2.txt", "cc")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		w.Write("a.txt", "a")
-		revId2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Copy all from rev1.
-		err = Cp(r.Repository, out.FS, wstd.CpOptions(revId1), td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, wstd.CpOptions(revId1), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -43,7 +43,7 @@ func TestCp(t *testing.T) {
 		}, out.Ls("."))
 
 		// Trying to copy from rev2 should fail, because files already exist.
-		err = Cp(r.Repository, out.FS, wstd.CpOptions(revId2), td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, wstd.CpOptions(revId2), td.NewFS(t))
 		assert.Error(err, "failed to copy")
 		assert.Error(err, "exists")
 	})
@@ -59,7 +59,7 @@ func TestCp(t *testing.T) {
 		w.Write("b.txt", "b")
 		w.Write("c/1.txt", "c")
 		w.Write("c/d/2.txt", "cc")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// We make the file smaller to ensure it is truncated before overwriting.
@@ -68,11 +68,11 @@ func TestCp(t *testing.T) {
 		w.Rm("c/1.txt")
 		w.Write("c/3.txt", "ccc")
 		w.Chmod("b.txt", 0o777)
-		revId2, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Copy all from rev1.
-		err = Cp(r.Repository, out.FS, wstd.CpOptions(revId1), td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, wstd.CpOptions(revId1), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 3, "aaa"},
@@ -86,7 +86,7 @@ func TestCp(t *testing.T) {
 		// Copy all from the rev2 with overwrite.
 		opts := wstd.CpOptions(revId2)
 		opts.Monitor = wstd.CpMonitorOverwrite()
-		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"a.txt", 0o600, 1, "a"},
@@ -109,7 +109,7 @@ func TestCp(t *testing.T) {
 		w.Write("becomes_file", "f")
 		w.Write("becomes_dir/inner.txt", "d")
 		w.Symlink("target.txt", "becomes_symlink")
-		revId, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		out := td.NewTestFS(t, td.NewFS(t))
@@ -119,7 +119,7 @@ func TestCp(t *testing.T) {
 
 		opts := wstd.CpOptions(revId)
 		opts.Monitor = wstd.CpMonitorOverwrite()
-		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 
 		fileInfo, err := out.FS.Stat("becomes_file")
@@ -144,13 +144,13 @@ func TestCp(t *testing.T) {
 		w := wstd.NewTestWorkspace(t, r.Repository)
 
 		w.Write("file.txt", "F")
-		revId, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		out := td.NewTestFS(t, td.NewFS(t))
 		out.Write("file.txt/inside.txt", "old dir")
 
-		err = Cp(r.Repository, out.FS, wstd.CpOptions(revId), td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, wstd.CpOptions(revId), td.NewFS(t))
 		assert.Error(err, "different kind")
 	})
 
@@ -162,12 +162,12 @@ func TestCp(t *testing.T) {
 		w := wstd.NewTestWorkspace(t, r.Repository)
 
 		w.Write("a.txt", "hello")
-		revID, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revID, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		opts := wstd.CpOptions(revID)
 		opts.Monitor = newCancelCpMonitor()
-		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, opts, td.NewFS(t))
 		assert.ErrorIs(err, lib.ErrCancel)
 	})
 
@@ -181,28 +181,28 @@ func TestCp(t *testing.T) {
 		w2 := wstd.NewTestWorkspaceExtra(t, r.Repository, "", lib.NewMemoryFS(10000000))
 
 		w.Write("a.txt", "a")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		w2revId1, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		w2revId1, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 		assert.Equal(revId1, w2revId1)
 
 		// Change the ownership of `a.txt` in w2.
 		w2.Chown("a.txt", 1234, 5678)
 		w2.Chmod("a.txt", 0o700)
-		revId2, err := Merge(w2.Workspace, r.Repository, wstd.MergeOptions())
+		revId2, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Try to copy the file with `Chown` enabled.
 		opts := wstd.CpOptions(revId2)
 		opts.Monitor = wstd.CpMonitorOverwrite()
-		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, opts, td.NewFS(t))
 		assert.Error(err, "failed to restore file owner 1234 and group 5678 for a.txt")
 
 		// Try a second time without `Chown`.
 		opts.RestorableMetadataFlag ^= lib.RestorableMetadataOwnership
-		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal(fs.FileMode(0o700).Perm(), out.Stat("a.txt").Mode().Perm())
 	})
@@ -218,11 +218,11 @@ func TestCp(t *testing.T) {
 		w.Write("c/1.txt", "c1")
 		w.Chmod("c", 0o500)
 
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		err = Cp(r.Repository, out, wstd.CpOptions(revId1), td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out, wstd.CpOptions(revId1), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"c", 0o500 | fs.ModeDir, 0, ""},
@@ -242,13 +242,13 @@ func TestCp(t *testing.T) {
 		w.Write("b.txt", "b")
 		w.Write("c/1.txt", "c1")
 		w.Write("c/d/2.txt", "c2")
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		filter := lib.NewPathInclusionFilter([]string{"c/**/*"})
 		opts := wstd.CpOptions(revId1)
 		opts.PathFilter = filter
-		err = Cp(r.Repository, out.FS, opts, td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
 			{"c", 0o700 | fs.ModeDir, 0, ""},
@@ -289,11 +289,11 @@ func TestCp(t *testing.T) {
 		w.Chmod("a.txt", 0o777|fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)
 
 		// Commit.
-		revId1, err := Merge(w.Workspace, r.Repository, wstd.MergeOptions())
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		// Copy all from the rev1.
-		err = Cp(r.Repository, out.FS, wstd.CpOptions(revId1), td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, wstd.CpOptions(revId1), td.NewFS(t))
 		assert.NoError(err)
 
 		stat := w.Stat("a.txt")
