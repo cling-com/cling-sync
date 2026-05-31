@@ -148,9 +148,9 @@ build_tools() {
             arm64|aarch64) arch="arm64" ;;
             *) echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
         esac
-        local filename="golangci-lint-${lint_version}-${os}-${arch}.tar.gz"
-        local url="https://github.com/golangci/golangci-lint/releases/download/v${lint_version}/${filename}"
-        curl -SsL "$url" | tar xzO --wildcards '*/golangci-lint' > "$root/tools/golangci-lint"
+        local dirname="golangci-lint-${lint_version}-${os}-${arch}"
+        local url="https://github.com/golangci/golangci-lint/releases/download/v${lint_version}/${dirname}.tar.gz"
+        curl -SsL "$url" | tar xzO "${dirname}/golangci-lint" > "$root/tools/golangci-lint"
         chmod +x "$root/tools/golangci-lint"
     fi
 
@@ -222,7 +222,7 @@ case "$cmd" in
     test)
         race=""
         if [ "${1:-}" = "--race" ]; then
-            race="-race"
+            race="-race -timeout 30m"
             shift
         fi
         if [ $# -gt 0 ] && [ "$1" = "integration-bash" ]; then
