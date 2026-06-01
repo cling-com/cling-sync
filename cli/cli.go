@@ -12,11 +12,9 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/flunderpero/cling-sync/cli/keychain"
@@ -1643,24 +1641,10 @@ func ServeCmd(ctx context.Context, argv []string) error { //nolint:funlen
 		appName, confPath, args.Address,
 	)
 	fmt.Printf("Serving %s at s3+http://%s\n", repositoryPath, args.Address)
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- server.ListenAndServe() }()
-	select {
-	case err := <-serveErr:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return lib.WrapErrorf(err, "failed to serve repository")
-		}
-		return nil
-	case <-ctx.Done():
-		// Shutdown needs a fresh context: the signal-cancelled ctx would give
-		// in-flight requests no grace period to drain.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck
-			return lib.WrapErrorf(err, "failed to shut down server")
-		}
-		return nil
+	if err := server.ListenAndServe(); err != nil {
+		return lib.WrapErrorf(err, "failed to serve repository")
 	}
+	return nil
 }
 
 func revisionId(ctx context.Context, repository *lib.Repository, revision string) (lib.RevisionId, error) {
@@ -1950,10 +1934,7 @@ func run() int { //nolint:funlen
 	}
 	argv := flag.Args()[1:]
 	cmd := flag.Arg(0)
-	// A single signal-rooted context flows through every command so an
-	// interrupt cancels in-flight storage and repository operations.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx := context.Background()
 	var err error
 	switch cmd {
 	case "attach":
