@@ -112,8 +112,7 @@ func TestFileStorageOpen(t *testing.T) {
 	})
 }
 
-func TestFileStorageMultiPurpose(t *testing.T) {
-	t.Parallel()
+func TestFileStorageMultiPurpose(t *testing.T) { //nolint:paralleltest
 	assert := NewAssert(t)
 	commonFS := td.NewFS(t)
 	repo, err := NewFileStorage(commonFS, StoragePurposeRepository)
@@ -128,54 +127,19 @@ func TestFileStorageMultiPurpose(t *testing.T) {
 		assert.NoError(err)
 	})
 
-	t.Run("Control files", func(t *testing.T) { //nolint:paralleltest
-		hasControlFile, err := repo.HasControlFile(t.Context(), ControlFileSectionRefs, "head")
-		assert.NoError(err)
-		assert.Equal(false, hasControlFile)
-
+	t.Run("Control files are isolated per purpose", func(t *testing.T) { //nolint:paralleltest
+		// Same section and name in two purposes sharing one FS must not clobber each other.
 		err = repo.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", []byte("1234"))
 		assert.NoError(err)
-		hasControlFile, err = repo.HasControlFile(t.Context(), ControlFileSectionRefs, "head")
-		assert.NoError(err)
-		assert.Equal(true, hasControlFile)
 		err = workspace.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", []byte("5678"))
 		assert.NoError(err)
 
-		// Verify permissions.
-		stat, err := commonFS.Stat(filepath.Join(".cling", "repository", "refs", "head"))
+		repoContent, err := repo.ReadControlFile(t.Context(), ControlFileSectionRefs, "head")
 		assert.NoError(err)
-		assert.Equal(fs.FileMode(0o600), stat.Mode().Perm())
-
-		repoCtrlContent, err := repo.ReadControlFile(t.Context(), ControlFileSectionRefs, "head")
+		assert.Equal([]byte("1234"), repoContent)
+		workspaceContent, err := workspace.ReadControlFile(t.Context(), ControlFileSectionRefs, "head")
 		assert.NoError(err)
-		assert.Equal([]byte("1234"), repoCtrlContent)
-		workspaceCtrlContent, err := workspace.ReadControlFile(t.Context(), ControlFileSectionRefs, "head")
-		assert.NoError(err)
-		assert.Equal([]byte("5678"), workspaceCtrlContent)
-
-		err = repo.DeleteControlFile(t.Context(), ControlFileSectionRefs, "head")
-		assert.NoError(err)
-		hasControlFile, err = repo.HasControlFile(t.Context(), ControlFileSectionRefs, "head")
-		assert.NoError(err)
-		assert.Equal(false, hasControlFile)
-	})
-
-	t.Run("ReadControlFile should return ErrControlFileNotFound", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		_, err = sut.ReadControlFile(t.Context(), ControlFileSectionRefs, "head")
-		assert.ErrorIs(err, ErrControlFileNotFound)
-	})
-
-	t.Run("DeleteControlFile should return ErrControlFileNotFound", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		err = sut.DeleteControlFile(t.Context(), ControlFileSectionRefs, "head")
-		assert.ErrorIs(err, ErrControlFileNotFound)
+		assert.Equal([]byte("5678"), workspaceContent)
 	})
 
 	t.Run("Read and write block", func(t *testing.T) { //nolint:paralleltest
@@ -200,6 +164,121 @@ func TestFileStorageMultiPurpose(t *testing.T) {
 		data, err = workspace.ReadBlock(t.Context(), blockId, buf)
 		assert.NoError(err)
 		assert.Equal(workspaceBlock, data)
+	})
+}
+
+func TestControlFiles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
+		assert.NoError(err)
+		assert.NoError(sut.Init(t.Context(), nil, ""))
+
+		has, err := sut.HasControlFile(t.Context(), ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal(false, has)
+
+		err = sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", []byte("1234"))
+		assert.NoError(err)
+
+		has, err = sut.HasControlFile(t.Context(), ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal(true, has)
+
+		content, err := sut.ReadControlFile(t.Context(), ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal([]byte("1234"), content)
+
+		err = sut.DeleteControlFile(t.Context(), ControlFileSectionRefs, "head")
+		assert.NoError(err)
+
+		has, err = sut.HasControlFile(t.Context(), ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal(false, has)
+	})
+
+	t.Run("Every section is written user-only (0o600)", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
+		assert.NoError(err)
+		assert.NoError(sut.Init(t.Context(), nil, ""))
+
+		// Control files may hold secrets (e.g. the saved passphrase in the security
+		// section), so they must never be group- or world-readable.
+		sections := []ControlFileSection{ControlFileSectionRefs, ControlFileSectionSecurity, ControlFileSectionConf}
+		for _, section := range sections {
+			err = sut.WriteControlFile(t.Context(), section, "head", []byte("secret"))
+			assert.NoError(err)
+			path, err := sut.controlFilePath(section, "head")
+			assert.NoError(err)
+			stat, err := sut.FS.Stat(path)
+			assert.NoError(err)
+			assert.Equal(fs.FileMode(0o600), stat.Mode().Perm())
+		}
+	})
+
+	t.Run("ReadControlFile should return ErrControlFileNotFound", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
+		assert.NoError(err)
+		_, err = sut.ReadControlFile(t.Context(), ControlFileSectionRefs, "head")
+		assert.ErrorIs(err, ErrControlFileNotFound)
+	})
+
+	t.Run("DeleteControlFile should return ErrControlFileNotFound", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
+		assert.NoError(err)
+		err = sut.DeleteControlFile(t.Context(), ControlFileSectionRefs, "head")
+		assert.ErrorIs(err, ErrControlFileNotFound)
+	})
+
+	t.Run("ReadControlFile enforces the MaxControlFileSize boundary", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
+		assert.NoError(err)
+		err = sut.Init(t.Context(), nil, "")
+		assert.NoError(err)
+		// Write a file at the limit through the regular API and confirm it reads back.
+		err = sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", make([]byte, MaxControlFileSize))
+		assert.NoError(err)
+		data, err := sut.ReadControlFile(t.Context(), ControlFileSectionRefs, "head")
+		assert.NoError(err)
+		assert.Equal(MaxControlFileSize, len(data))
+		// Simulate a hostile backend by writing one byte over the limit directly.
+		path, err := sut.controlFilePath(ControlFileSectionRefs, "head2")
+		assert.NoError(err)
+		err = sut.FS.MkdirAll(filepath.Dir(path))
+		assert.NoError(err)
+		err = WriteFile(sut.FS, path, make([]byte, MaxControlFileSize+1))
+		assert.NoError(err)
+		_, err = sut.ReadControlFile(t.Context(), ControlFileSectionRefs, "head2")
+		assert.Error(err, "exceeds maximum control file size")
+	})
+
+	t.Run("WriteControlFile enforces the MaxControlFileSize boundary", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
+		assert.NoError(err)
+		err = sut.Init(t.Context(), nil, "")
+		assert.NoError(err)
+		// Exactly MaxControlFileSize must be accepted.
+		err = sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", make([]byte, MaxControlFileSize))
+		assert.NoError(err)
+		// One byte over must be rejected, and must not leave a half-written file.
+		err = sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head2", make([]byte, MaxControlFileSize+1))
+		assert.Error(err, "is too large")
+		has, err := sut.HasControlFile(t.Context(), ControlFileSectionRefs, "head2")
+		assert.NoError(err)
+		assert.Equal(false, has)
 	})
 }
 
@@ -315,48 +394,6 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.Error(err, "is too large")
 		_, err = sut.FS.Stat(sut.blockPath(blockId))
 		assert.ErrorIs(err, fs.ErrNotExist)
-	})
-
-	t.Run("ReadControlFile enforces the MaxControlFileSize boundary", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		err = sut.Init(t.Context(), nil, "")
-		assert.NoError(err)
-		// Write a file at the limit through the regular API and confirm it reads back.
-		err = sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", make([]byte, MaxControlFileSize))
-		assert.NoError(err)
-		data, err := sut.ReadControlFile(t.Context(), ControlFileSectionRefs, "head")
-		assert.NoError(err)
-		assert.Equal(MaxControlFileSize, len(data))
-		// Simulate a hostile backend by writing one byte over the limit directly.
-		path, err := sut.controlFilePath(ControlFileSectionRefs, "head2")
-		assert.NoError(err)
-		err = sut.FS.MkdirAll(filepath.Dir(path))
-		assert.NoError(err)
-		err = WriteFile(sut.FS, path, make([]byte, MaxControlFileSize+1))
-		assert.NoError(err)
-		_, err = sut.ReadControlFile(t.Context(), ControlFileSectionRefs, "head2")
-		assert.Error(err, "exceeds maximum control file size")
-	})
-
-	t.Run("WriteControlFile enforces the MaxControlFileSize boundary", func(t *testing.T) {
-		t.Parallel()
-		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		err = sut.Init(t.Context(), nil, "")
-		assert.NoError(err)
-		// Exactly MaxControlFileSize must be accepted.
-		err = sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", make([]byte, MaxControlFileSize))
-		assert.NoError(err)
-		// One byte over must be rejected, and must not leave a half-written file.
-		err = sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head2", make([]byte, MaxControlFileSize+1))
-		assert.Error(err, "is too large")
-		has, err := sut.HasControlFile(t.Context(), ControlFileSectionRefs, "head2")
-		assert.NoError(err)
-		assert.Equal(false, has)
 	})
 }
 
