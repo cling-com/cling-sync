@@ -181,6 +181,14 @@ func (td TestData) OpenRepository(tb testing.TB, fs FS) *TestRepository {
 	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, tb, assert}
 }
 
+func (td TestData) RevisionChain(tb testing.TB, r *TestRepository) RevisionChain {
+	tb.Helper()
+	assert := NewAssert(tb)
+	chain, err := ReadRevisionChain(tb.Context(), r.Repository)
+	assert.NoError(err)
+	return chain
+}
+
 // Return the column at `column` for every line in `s`.
 // A bit like the command `cut -f`.
 func (td TestData) Column(s string, column int) string {

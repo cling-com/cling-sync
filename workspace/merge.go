@@ -91,6 +91,15 @@ func Merge(ctx context.Context, ws *Workspace, repository *lib.Repository, opts 
 	if head == wsHead && localChanges.Source.Chunks() == 0 {
 		return lib.RevisionId{}, ErrUpToDate
 	}
+	if !wsHead.IsRoot() {
+		chain, err := lib.ReadRevisionChain(ctx, repository)
+		if err != nil {
+			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read repository revision chain")
+		}
+		if !slices.Contains(chain, wsHead) {
+			return lib.RevisionId{}, lib.Errorf("workspace head %s is not in the repository's revision chain", wsHead)
+		}
+	}
 	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, head)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
@@ -137,7 +146,7 @@ type ForceCommitOptions struct {
 // Commit all local changes ignoring possible conflicts.
 // Afterwards, merge the repository into the workspace.
 // Return a `lib.EmptyCommit` error if there are no local changes.
-func ForceCommit(
+func ForceCommit( //nolint:funlen
 	ctx context.Context,
 	ws *Workspace,
 	repository *lib.Repository,
@@ -154,6 +163,15 @@ func ForceCommit(
 	}
 	if localChanges.Source.Chunks() == 0 {
 		return lib.RevisionId{}, lib.ErrEmptyCommit
+	}
+	if !wsHead.IsRoot() {
+		chain, err := lib.ReadRevisionChain(ctx, repository)
+		if err != nil {
+			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read repository revision chain")
+		}
+		if !slices.Contains(chain, wsHead) {
+			return lib.RevisionId{}, lib.Errorf("workspace head %s is not in the repository's revision chain", wsHead)
+		}
 	}
 	head, err := repository.Head(ctx)
 	if err != nil {

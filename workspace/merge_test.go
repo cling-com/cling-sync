@@ -623,6 +623,33 @@ func TestMerge(t *testing.T) {
 		assert.Equal(remoteRev1, w2.Head())
 	})
 
+	t.Run("Workspace head not in repository chain should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		rev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		w.Write("b.txt", "b")
+		rev2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal(rev2, w.Head())
+
+		// Rewind the repository head so the workspace head (rev2) is no longer
+		// reachable from it.
+		assert.NoError(lib.WriteRef(t.Context(), r.Storage, "head", rev1))
+
+		w.Write("c.txt", "c")
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.Error(err, "is not in the repository's revision chain")
+
+		opts := ForceCommitOptions{MergeOptions: *wstd.MergeOptions()}
+		_, err = ForceCommit(t.Context(), w.Workspace, r.Repository, &opts)
+		assert.Error(err, "is not in the repository's revision chain")
+	})
+
 	// todo: implement
 	// t.Run("MTime is restored", func(t *testing.T) {
 	// 	// Make sure that mtime is restored even for directories.

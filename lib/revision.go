@@ -16,6 +16,29 @@ func (id RevisionId) IsRoot() bool {
 	return id == (RevisionId)(BlockId{})
 }
 
+// RevisionChain is a list of revision ids, head first, ending at the revision
+// whose parent is the root (so, the root revision is excluded).
+type RevisionChain = []RevisionId
+
+// ReadRevisionChain returns the repository's revision chain, head first.
+func ReadRevisionChain(ctx context.Context, repository *Repository) (RevisionChain, error) {
+	id, err := repository.Head(ctx)
+	if err != nil {
+		return nil, WrapErrorf(err, "failed to read head")
+	}
+	chain := RevisionChain{}
+	buf := NewBlockBuf()
+	for !id.IsRoot() {
+		chain = append(chain, id)
+		revision, err := repository.ReadRevision(ctx, id, buf)
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to read revision %s", id)
+		}
+		id = revision.ParentRevisionId
+	}
+	return chain, nil
+}
+
 type RevisionReader struct {
 	revision     *Revision
 	repository   *Repository

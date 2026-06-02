@@ -1219,16 +1219,19 @@ func SyncRepoCmd(ctx context.Context, argv []string, passphraseFromStdin bool) e
 		return nil
 	case "run":
 		runArgs := struct { //nolint:exhaustruct
-			Help       bool
-			Verbose    bool
-			NoProgress bool
-			Workers    int
+			Help          bool
+			Verbose       bool
+			NoProgress    bool
+			Workers       int
+			SkipHeadCheck bool
 		}{}
 		runFlags := flag.NewFlagSet("sync-repo run", flag.ExitOnError)
 		runFlags.BoolVar(&runArgs.Help, "help", false, "Show help message")
 		runFlags.BoolVar(&runArgs.Verbose, "verbose", false, "Show detailed progress")
 		runFlags.BoolVar(&runArgs.NoProgress, "no-progress", false, "Do not show progress")
 		runFlags.IntVar(&runArgs.Workers, "workers", 2, "Number of blocks to copy in parallel")
+		runFlags.BoolVar(&runArgs.SkipHeadCheck, "skip-head-check", false,
+			"Skip verifying that the target's head is an ancestor of the source's head")
 		runFlags.Usage = func() {
 			fmt.Fprintf(os.Stderr, "Usage: %s sync-repo run [flags] [name]\n\n", appName)
 			fmt.Fprint(os.Stderr, "Sync to every registered target, or to a single named target.\n")
@@ -1262,9 +1265,9 @@ func SyncRepoCmd(ctx context.Context, argv []string, passphraseFromStdin bool) e
 		default:
 			return lib.Errorf("usage: sync-repo run [flags] [name]")
 		}
-		// Determine if any source or target URI is S3, in which case we need
-		// the workspace passphrase to decrypt it.
-		needPassphrase := clingHTTP.IsS3StorageURI(string(workspace.RemoteRepository))
+		// The passphrase is needed to decrypt any S3 URI, and to open the source
+		// repository for the head check (unless it is skipped).
+		needPassphrase := !runArgs.SkipHeadCheck || clingHTTP.IsS3StorageURI(string(workspace.RemoteRepository))
 		if !needPassphrase {
 			targets, err := ws.LoadSyncTargets(ctx, workspace)
 			if err != nil {
@@ -1285,10 +1288,31 @@ func SyncRepoCmd(ctx context.Context, argv []string, passphraseFromStdin bool) e
 				return err
 			}
 		}
+		// The chain comes from the source repository and is the same for every
+		// target, so read it once.
+		var chain lib.RevisionChain
+		if !runArgs.SkipHeadCheck {
+			storage, err := ws.OpenStorage(string(workspace.RemoteRepository), passphrase)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to open source storage")
+			}
+			repository, err := lib.OpenRepository(ctx, storage, passphrase)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to open source repository")
+			}
+			chain, err = lib.ReadRevisionChain(ctx, repository)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to read source revision chain")
+			}
+		}
 		mode := CLIMonitorMode(runArgs.Verbose, runArgs.NoProgress)
 		for _, name := range names {
 			mon := NewSyncRepoMonitor(name, mode)
-			err := ws.RunSync(ctx, workspace, name, mon, passphrase, runArgs.Workers)
+			err := ws.RunSync(ctx, workspace, name, passphrase, chain, ws.RunSyncOpts{
+				Monitor:       mon,
+				Workers:       runArgs.Workers,
+				SkipHeadCheck: runArgs.SkipHeadCheck,
+			})
 			mon.done(err)
 			if err != nil {
 				return err //nolint:wrapcheck

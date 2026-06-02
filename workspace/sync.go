@@ -171,15 +171,22 @@ func writeSyncTargets(ctx context.Context, w *Workspace, targets []SyncTarget) e
 	return nil
 }
 
+// RunSyncOpts holds the tunable options for `RunSync`.
+type RunSyncOpts struct {
+	Monitor       lib.RepositorySyncMonitor
+	Workers       int
+	SkipHeadCheck bool
+}
+
 // RunSync syncs the workspace's repository to the registered target named
 // `name`. The caller drives multi-target iteration and aggregation.
 func RunSync(
 	ctx context.Context,
 	w *Workspace,
 	name string,
-	monitor lib.RepositorySyncMonitor,
 	passphrase []byte,
-	workers int,
+	srcRevisionChain lib.RevisionChain,
+	opts RunSyncOpts,
 ) error {
 	uri, found, err := GetSyncTarget(ctx, w, name)
 	if err != nil {
@@ -201,8 +208,12 @@ func RunSync(
 		return lib.WrapErrorf(err, "failed to create temp directory for sync")
 	}
 	defer tempFS.RemoveAll(".") //nolint:errcheck
-	opts := lib.RepositorySyncOptions{Monitor: monitor, Workers: workers}
-	if err := lib.SyncRepository(ctx, src, dst, tempFS, opts); err != nil {
+	repoOpts := lib.RepositorySyncOptions{
+		Monitor:       opts.Monitor,
+		Workers:       opts.Workers,
+		SkipHeadCheck: opts.SkipHeadCheck,
+	}
+	if err := lib.SyncRepository(ctx, src, dst, tempFS, srcRevisionChain, repoOpts); err != nil {
 		return lib.WrapErrorf(err, "sync to %q failed", name)
 	}
 	return nil

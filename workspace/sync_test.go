@@ -4,7 +4,6 @@
 package workspace
 
 import (
-	"context"
 	"os"
 	"testing"
 
@@ -147,7 +146,9 @@ func TestRunSync(t *testing.T) {
 		assert.NoError(err)
 
 		mon := &countingMonitor{}
-		assert.NoError(RunSync(context.Background(), w, "one", mon, nil, 8))
+		assert.NoError(RunSync(t.Context(), w, "one", nil, td.RevisionChain(t, src), RunSyncOpts{
+			Monitor: mon, Workers: 8,
+		}))
 
 		dstStorage, err := lib.NewFileStorage(lib.NewRealFS(dstPath), lib.StoragePurposeRepository)
 		assert.NoError(err)
@@ -162,7 +163,14 @@ func TestRunSync(t *testing.T) {
 		assert := lib.NewAssert(t)
 		w := newSyncTestWorkspace(t)
 		mon := &countingMonitor{}
-		err := RunSync(context.Background(), w, "ghost", mon, nil, 8)
+		err := RunSync(
+			t.Context(),
+			w,
+			"ghost",
+			nil,
+			nil,
+			RunSyncOpts{Monitor: mon, Workers: 8, SkipHeadCheck: true},
+		)
 		assert.Error(err, `no sync target named "ghost"`)
 	})
 
@@ -178,8 +186,43 @@ func TestRunSync(t *testing.T) {
 		assert.NoError(os.RemoveAll(dstPath)) //nolint:forbidigo
 
 		mon := &countingMonitor{}
-		err = RunSync(context.Background(), w, "one", mon, nil, 8)
+		err = RunSync(
+			t.Context(),
+			w,
+			"one",
+			nil,
+			nil,
+			RunSyncOpts{Monitor: mon, Workers: 8, SkipHeadCheck: true},
+		)
 		assert.Error(err, "storage not found")
+	})
+
+	t.Run("Target head outside the source chain should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		srcPath := t.TempDir()
+		src := td.NewTestRepository(t, lib.NewRealFS(srcPath))
+		w, err := NewWorkspace(t.Context(), td.NewFS(t), td.NewFS(t), RemoteRepository(srcPath), lib.Path{})
+		assert.NoError(err)
+		dstPath := cloneRepositoryAt(t, src)
+		assert.NoError(AddSyncTarget(t.Context(), w, "one", dstPath, nil))
+
+		commitFile(t, src, "hello")
+		// The target has its own divergent revision, so its head is not part
+		// of the source's chain.
+		dst := td.OpenRepository(t, lib.NewRealFS(dstPath))
+		commitFile(t, dst, "world")
+
+		mon := &countingMonitor{}
+		err = RunSync(
+			t.Context(),
+			w,
+			"one",
+			nil,
+			td.RevisionChain(t, src),
+			RunSyncOpts{Monitor: mon, Workers: 8},
+		)
+		assert.Error(err, "is not in src's revision chain")
 	})
 }
 
@@ -202,6 +245,25 @@ func cloneRepositoryAt(t *testing.T, src *lib.TestRepository) string {
 	assert.NoError(err)
 	assert.NoError(lib.WriteFile(dst.FS, ".cling/repository.txt", configData))
 	return dstPath
+}
+
+// commitFile commits a single file with `content` to the repository and
+// returns the new head revision.
+func commitFile(t *testing.T, repo *lib.TestRepository, content string) lib.RevisionId {
+	t.Helper()
+	assert := lib.NewAssert(t)
+	entry := td.RevisionEntry("a.txt", lib.RevisionEntryKindAdd)
+	blockId, _, err := repo.WriteBlock(t.Context(), []byte(content), lib.NewBlockBuf())
+	assert.NoError(err)
+	entry.Metadata.BlockIds = []lib.BlockId{blockId}
+	entry.Metadata.Size = int64(len(content))
+	entry.Metadata.FileHash = td.SHA256(content)
+	commit, err := lib.NewCommit(t.Context(), repo.Repository, td.NewFS(t))
+	assert.NoError(err)
+	assert.NoError(commit.Add(entry))
+	head, err := commit.Commit(t.Context(), td.CommitInfo())
+	assert.NoError(err)
+	return head
 }
 
 type countingMonitor struct {

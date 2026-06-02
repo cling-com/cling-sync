@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
@@ -18,16 +19,19 @@ type RepositorySyncMonitor interface {
 }
 
 type RepositorySyncOptions struct {
-	Monitor RepositorySyncMonitor
-	Workers int
+	Monitor       RepositorySyncMonitor
+	Workers       int
+	SkipHeadCheck bool
 }
 
 const blockIdReadProgressEvery = 1000
 
 // Sync new blocks from src to dst, then advance dst's head to src's.
 // Both storages must share the exact same repository config.
+// The dst head revision must be in the in the srcRevisionChain
+// unless `opts.SkipHeadCheck` is true.
 func SyncRepository( //nolint:funlen
-	ctx context.Context, src, dst Storage, tempFS FS, opts RepositorySyncOptions,
+	ctx context.Context, src, dst Storage, tempFS FS, srcRevisionChain RevisionChain, opts RepositorySyncOptions,
 ) error {
 	if opts.Workers < 1 {
 		return Errorf("number of workers must be at least 1")
@@ -55,11 +59,16 @@ func SyncRepository( //nolint:funlen
 	if err != nil {
 		return WrapErrorf(err, "failed to read dst head")
 	}
-	if srcHead == dstHead {
-		return nil
-	}
 	if srcHead.IsRoot() {
 		return Errorf("src has no committed revisions")
+	}
+	if !opts.SkipHeadCheck {
+		if len(srcRevisionChain) == 0 || srcRevisionChain[0] != srcHead {
+			return Errorf("src head %s is not the first revision in the provided src's revision chain", srcHead)
+		}
+		if !dstHead.IsRoot() && !slices.Contains(srcRevisionChain, dstHead) {
+			return Errorf("dst head %s is not in src's revision chain", dstHead)
+		}
 	}
 	srcFS, err := tempFS.MkSub("src")
 	if err != nil {
@@ -67,6 +76,9 @@ func SyncRepository( //nolint:funlen
 	}
 	srcCount := 0
 	srcSeenHead := false
+	// A revision id is a block id, so dst's head must exist as a block in src
+	// before we can advance dst's head to src's. The root has no block.
+	dstSeenInSrc := dstHead.IsRoot()
 	srcTemp, err := ReadSortedBlockIds(ctx, src, srcFS, func(id BlockId) {
 		srcCount++
 		if srcCount%blockIdReadProgressEvery == 0 {
@@ -74,6 +86,9 @@ func SyncRepository( //nolint:funlen
 		}
 		if id == BlockId(srcHead) {
 			srcSeenHead = true
+		}
+		if id == BlockId(dstHead) {
+			dstSeenInSrc = true
 		}
 	})
 	if err != nil {
@@ -85,6 +100,9 @@ func SyncRepository( //nolint:funlen
 	}
 	if !srcSeenHead {
 		return Errorf("src head %s is not present in src storage", srcHead)
+	}
+	if !dstSeenInSrc {
+		return Errorf("dst head %s is not present in src storage", dstHead)
 	}
 	dstFS, err := tempFS.MkSub("dst")
 	if err != nil {

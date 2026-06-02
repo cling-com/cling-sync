@@ -2,7 +2,6 @@ package lib
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"io/fs"
 	mrand "math/rand/v2"
@@ -487,7 +486,7 @@ func TestFileStorageConcurrency(t *testing.T) {
 				}
 
 				// Acquire, then drop via ForceUnlock so both run.
-				if _, err := sut.Lock(context.Background(), lockName); err != nil {
+				if _, err := sut.Lock(t.Context(), lockName); err != nil {
 					return err
 				}
 				return sut.ForceUnlock(t.Context(), lockName)

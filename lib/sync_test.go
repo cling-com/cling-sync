@@ -2,7 +2,6 @@
 package lib
 
 import (
-	"context"
 	"io/fs"
 	"slices"
 	"testing"
@@ -29,7 +28,7 @@ func TestSyncRepository(t *testing.T) {
 		assert.NoError(err)
 
 		err = SyncRepository(
-			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t), td.RevisionChain(t, src),
 			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.NoError(err)
@@ -48,32 +47,44 @@ func TestSyncRepository(t *testing.T) {
 		assert.Equal(7, monitor.CountCalls("OnCopyBlock"))
 	})
 
-	t.Run("Noop when heads match", func(t *testing.T) {
+	t.Run("Syncs missing blocks even when heads match", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		src := td.NewTestRepository(t, td.NewFS(t))
 		dst := cloneRepository(t, src)
 
-		entry, _ := testEntry(t, src, "a.txt", "abc")
-		_, err := testCommit(t, src.Repository, entry)
+		entry, blockId := testEntry(t, src, "a.txt", "abc")
+		revId, err := testCommit(t, src.Repository, entry)
 		assert.NoError(err)
-		assert.NoError(
-			SyncRepository(
-				context.Background(),
-				src.Storage,
-				dst.Storage,
-				td.NewFS(t),
-				RepositorySyncOptions{Monitor: &TestSyncMonitor{}, Workers: 8},
-			),
-		)
+
+		// Mirror src into dst but skip one data block, then point dst at src's
+		// head. Matching heads must not be taken as proof that dst already holds
+		// every block, so the sync still has to copy the missing one.
+		buf := NewBlockBuf()
+		err = src.Storage.ReadBlockIds(t.Context(), func(id BlockId) bool {
+			if id == blockId {
+				return true
+			}
+			data, err := src.Storage.ReadBlock(t.Context(), id, buf)
+			assert.NoError(err)
+			_, err = dst.Storage.WriteBlock(t.Context(), id, data)
+			assert.NoError(err)
+			return true
+		})
+		assert.NoError(err)
+		assert.NoError(WriteRef(t.Context(), dst.Storage, "head", revId))
 
 		monitor := &TestSyncMonitor{}
 		err = SyncRepository(
-			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t), td.RevisionChain(t, src),
 			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.NoError(err)
-		assert.Calls([]MockCall{}, monitor.Calls)
+
+		assert.Call(NewMockCall("OnCopyBlock", blockId, false, assert.Any), monitor.Calls)
+		assert.Equal(1, monitor.CountCalls("OnCopyBlock"))
+		assert.Call(NewMockCall("OnBeforeUpdateDstHead", revId), monitor.Calls)
+		assertSameHistory(t, src, dst)
 	})
 
 	t.Run("Copies only missing blocks", func(t *testing.T) {
@@ -87,10 +98,11 @@ func TestSyncRepository(t *testing.T) {
 		assert.NoError(err)
 		assert.NoError(
 			SyncRepository(
-				context.Background(),
+				t.Context(),
 				src.Storage,
 				dst.Storage,
 				td.NewFS(t),
+				td.RevisionChain(t, src),
 				RepositorySyncOptions{Monitor: &TestSyncMonitor{}, Workers: 8},
 			),
 		)
@@ -100,7 +112,7 @@ func TestSyncRepository(t *testing.T) {
 
 		monitor := &TestSyncMonitor{}
 		err = SyncRepository(
-			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t), td.RevisionChain(t, src),
 			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.NoError(err)
@@ -140,7 +152,7 @@ func TestSyncRepository(t *testing.T) {
 
 		monitor := &TestSyncMonitor{}
 		err = SyncRepository(
-			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t), td.RevisionChain(t, src),
 			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.NoError(err)
@@ -159,8 +171,8 @@ func TestSyncRepository(t *testing.T) {
 
 		monitor := &TestSyncMonitor{}
 		err := SyncRepository(
-			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
-			RepositorySyncOptions{Monitor: monitor, Workers: 8},
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t), nil,
+			RepositorySyncOptions{Monitor: monitor, Workers: 8, SkipHeadCheck: true},
 		)
 		assert.Error(err, "not present in src storage")
 		assert.Calls([]MockCall{}, monitor.Calls)
@@ -178,11 +190,102 @@ func TestSyncRepository(t *testing.T) {
 
 		monitor := &TestSyncMonitor{}
 		err = SyncRepository(
-			context.Background(), src.Storage, dst.Storage, td.NewFS(t),
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t), td.RevisionChain(t, src),
 			RepositorySyncOptions{Monitor: monitor, Workers: 8},
 		)
 		assert.Error(err, "config")
 		assert.Calls([]MockCall{}, monitor.Calls)
+	})
+
+	t.Run("Src head not first in chain should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		src := td.NewTestRepository(t, td.NewFS(t))
+		dst := cloneRepository(t, src)
+
+		entry, _ := testEntry(t, src, "a.txt", "abc")
+		_, err := testCommit(t, src.Repository, entry)
+		assert.NoError(err)
+
+		monitor := &TestSyncMonitor{}
+		err = SyncRepository(
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t),
+			RevisionChain{td.RevisionId("bogus")},
+			RepositorySyncOptions{Monitor: monitor, Workers: 8},
+		)
+		assert.Error(err, "is not the first revision")
+		assert.Calls([]MockCall{}, monitor.Calls)
+	})
+
+	t.Run("Dst head not in chain should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		src := td.NewTestRepository(t, td.NewFS(t))
+		dst := cloneRepository(t, src)
+
+		entry1, _ := testEntry(t, src, "a.txt", "abc")
+		_, err := testCommit(t, src.Repository, entry1)
+		assert.NoError(err)
+		assert.NoError(SyncRepository(
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t),
+			td.RevisionChain(t, src), RepositorySyncOptions{Monitor: &TestSyncMonitor{}, Workers: 8},
+		))
+		entry2, _ := testEntry(t, src, "b.txt", "def")
+		rev2Id, err := testCommit(t, src.Repository, entry2)
+		assert.NoError(err)
+
+		// The chain omits dst's head (the first revision).
+		monitor := &TestSyncMonitor{}
+		err = SyncRepository(
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t),
+			RevisionChain{rev2Id},
+			RepositorySyncOptions{Monitor: monitor, Workers: 8},
+		)
+		assert.Error(err, "is not in src's revision chain")
+		assert.Calls([]MockCall{}, monitor.Calls)
+	})
+
+	t.Run("Dst head missing from src storage should fail even when head check is skipped", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		src := td.NewTestRepository(t, td.NewFS(t))
+		dst := cloneRepository(t, src)
+
+		srcEntry, _ := testEntry(t, src, "a.txt", "abc")
+		_, err := testCommit(t, src.Repository, srcEntry)
+		assert.NoError(err)
+
+		// A revision committed only to dst so its block is absent from src.
+		dstEntry, _ := testEntry(t, dst, "b.txt", "def")
+		_, err = testCommit(t, dst.Repository, dstEntry)
+		assert.NoError(err)
+
+		err = SyncRepository(
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t), nil,
+			RepositorySyncOptions{Monitor: &TestSyncMonitor{}, Workers: 8, SkipHeadCheck: true},
+		)
+		assert.Error(err, "dst head")
+	})
+
+	t.Run("SkipHeadCheck skips chain validation", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		src := td.NewTestRepository(t, td.NewFS(t))
+		dst := cloneRepository(t, src)
+
+		entry, _ := testEntry(t, src, "a.txt", "abc")
+		srcHead, err := testCommit(t, src.Repository, entry)
+		assert.NoError(err)
+
+		// A nil chain would fail the head check, but it is skipped.
+		err = SyncRepository(
+			t.Context(), src.Storage, dst.Storage, td.NewFS(t), nil,
+			RepositorySyncOptions{Monitor: &TestSyncMonitor{}, Workers: 8, SkipHeadCheck: true},
+		)
+		assert.NoError(err)
+		dstHead, err := ReadRef(t.Context(), dst.Storage, "head")
+		assert.NoError(err)
+		assert.Equal(srcHead, dstHead)
 	})
 }
 
