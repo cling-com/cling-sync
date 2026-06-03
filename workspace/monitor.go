@@ -561,16 +561,18 @@ func (m *DefaultHealthCheckMonitor) emitProgress() {
 
 type DefaultSyncRepoMonitor struct {
 	defaultMonitorBase
-	StartTime time.Time
-	SrcBlocks int
-	DstBlocks int
-	Blocks    int
-	Bytes     int64
+	TargetName string
+	StartTime  time.Time
+	SrcBlocks  int
+	DstBlocks  int
+	Blocks     int
+	Bytes      int64
 }
 
-func NewDefaultSyncRepoMonitor(mode DefaultMonitorMode, emit MonitorEmit) *DefaultSyncRepoMonitor {
+func NewDefaultSyncRepoMonitor(mode DefaultMonitorMode, emit MonitorEmit, targetName string) *DefaultSyncRepoMonitor {
 	return &DefaultSyncRepoMonitor{
 		defaultMonitorBase: newDefaultMonitorBase(mode, nil, emit),
+		TargetName:         targetName,
 		StartTime:          time.Time{},
 		SrcBlocks:          0,
 		DstBlocks:          0,
@@ -583,14 +585,14 @@ func (m *DefaultSyncRepoMonitor) OnSrcBlockIdsRead(blocksTotal int) {
 	if m.Mode != DefaultMonitorModeProgress {
 		return
 	}
-	m.emit(fmt.Sprintf("Read %d source blocks", blocksTotal))
+	m.emitWithTargetPrefix(fmt.Sprintf("read %d source blocks", blocksTotal))
 }
 
 func (m *DefaultSyncRepoMonitor) OnDstBlockIdsRead(blocksTotal int) {
 	if m.Mode != DefaultMonitorModeProgress {
 		return
 	}
-	m.emit(fmt.Sprintf("Read %d target blocks", blocksTotal))
+	m.emitWithTargetPrefix(fmt.Sprintf("read %d target blocks", blocksTotal))
 }
 
 func (m *DefaultSyncRepoMonitor) OnBeforeCopy(srcBlocks, dstBlocks int) {
@@ -599,11 +601,11 @@ func (m *DefaultSyncRepoMonitor) OnBeforeCopy(srcBlocks, dstBlocks int) {
 	m.DstBlocks = dstBlocks
 	m.Blocks = 0
 	m.Bytes = 0
-	m.emit(fmt.Sprintf("Source has %d blocks, target has %d", srcBlocks, dstBlocks))
+	m.emitWithTargetPrefix(fmt.Sprintf("source has %d blocks, target has %d", srcBlocks, dstBlocks))
 }
 
 func (m *DefaultSyncRepoMonitor) OnBeforeUpdateDstHead(newHead lib.RevisionId) {
-	m.emit(fmt.Sprintf("Updating target repository head to %s", newHead))
+	m.emitWithTargetPrefix(fmt.Sprintf("updating target repository head to %s", newHead))
 }
 
 func (m *DefaultSyncRepoMonitor) OnCopyBlock(blockID lib.BlockId, existed bool, length int) {
@@ -613,7 +615,7 @@ func (m *DefaultSyncRepoMonitor) OnCopyBlock(blockID lib.BlockId, existed bool, 
 	}
 	m.emitProgress()
 	if m.Mode == DefaultMonitorModeVerbose {
-		m.emit("  block " + blockID.String())
+		m.emitWithTargetPrefix("block " + blockID.String())
 	}
 }
 
@@ -625,7 +627,7 @@ func (m *DefaultSyncRepoMonitor) emitProgress() {
 	if elapsed <= 0 {
 		elapsed = 1
 	}
-	m.emit(
+	m.emitWithTargetPrefix(
 		fmt.Sprintf(
 			"%d/%d blocks copied, %s at %s/s",
 			m.Blocks,
@@ -634,4 +636,8 @@ func (m *DefaultSyncRepoMonitor) emitProgress() {
 			FormatBytes(int64(float64(m.Bytes)/elapsed)),
 		),
 	)
+}
+
+func (m *DefaultSyncRepoMonitor) emitWithTargetPrefix(text string) {
+	m.emit(m.TargetName + ": " + text)
 }

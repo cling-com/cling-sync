@@ -83,7 +83,7 @@ func NewHeathCheckMonitor(mode ws.DefaultMonitorMode) *cliHealthCheckMonitor {
 
 func NewSyncRepoMonitor(targetName string, mode ws.DefaultMonitorMode) *cliSyncRepoMonitor {
 	monitor := &cliSyncRepoMonitor{DefaultSyncRepoMonitor: nil, targetName: targetName, emitPlain: false}
-	monitor.DefaultSyncRepoMonitor = ws.NewDefaultSyncRepoMonitor(mode, monitor.emit)
+	monitor.DefaultSyncRepoMonitor = ws.NewDefaultSyncRepoMonitor(mode, monitor.emit, targetName)
 	return monitor
 }
 
@@ -162,10 +162,10 @@ func (m *cliSyncRepoMonitor) done(err error) {
 	m.emitPlain = true
 	defer func() { m.emitPlain = false }()
 	if err != nil {
-		m.emit(fmt.Sprintf("Failed to sync to %s: %s", m.targetName, err))
+		m.emit(fmt.Sprintf("%s: failed to sync: %s", m.targetName, err))
 		return
 	}
-	m.emit(fmt.Sprintf("Synced %d blocks to %s", m.Blocks, m.targetName))
+	m.emit(fmt.Sprintf("%s: synced %d blocks", m.targetName, m.Blocks))
 }
 
 func (m *cliSyncRepoMonitor) emit(text string) {
