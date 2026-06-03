@@ -458,6 +458,8 @@ func (m *Merger) applyRemoteChanges(
 }
 
 // Copy all remote files that are not part of the local changes.
+// If a remote file would be exclude by a .clingignore or .gitignore file, it will
+// not be copied.
 func (m *Merger) copyRepositoryFiles( //nolint:funlen
 	ctx context.Context,
 	remoteRevision *lib.Temp[*lib.RevisionEntry],
@@ -465,6 +467,10 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 	localChanges *lib.TempCache[*lib.RevisionEntry],
 ) error {
 	r := remoteRevision.Reader(lib.RevisionEntryPathFilter(m.ws.PathPrefix.AsFilter()))
+	ignorePatterns, err := lib.CollectIgnorePatterns(m.ws.FS, ".")
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to collect ignore patterns")
+	}
 	for {
 		remoteEntry, err := r.Read(m.blockBuf)
 		if errors.Is(err, io.EOF) {
@@ -481,6 +487,10 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		}
 		localPath, _ := remoteEntry.Path.TrimBase(m.ws.PathPrefix)
 		targetPath := localPath.String()
+		// A repository entry the workspace ignores must never be materialized.
+		if ignorePatterns.Match(targetPath, remoteEntry.Metadata.FileMode.IsDir()) {
+			continue
+		}
 		if err := m.makeDirsWritable(targetPath); err != nil {
 			return lib.WrapErrorf(err, "failed to make directories writable for %s", remoteEntry.Path)
 		}

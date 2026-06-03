@@ -327,6 +327,10 @@ ones.
 cling-sync respects `.gitignore` and `.clingignore`. The syntax is the
 [Git syntax](https://git-scm.com/docs/gitignore).
 
+During `merge`, a repository entry whose path matches a workspace ignore
+pattern is not written into the workspace. The entry stays in the
+repository, so another workspace without that pattern still receives it.
+
 > [!NOTE]
 > One difference from Git. Adding a pattern that matches existing
 > tracked files and then running `merge` marks those paths as deleted

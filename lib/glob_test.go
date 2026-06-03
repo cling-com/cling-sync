@@ -553,6 +553,40 @@ func TestGlobIgnorePatterns(t *testing.T) {
 	assert.Equal(true, patterns.Match("TODO.md", false))
 }
 
+func TestCollectIgnorePatterns(t *testing.T) {
+	t.Parallel()
+	assert := NewAssert(t)
+	td := TestData{}
+	fs := td.NewTestFS(t, td.NewFS(t))
+	fs.Write(".clingignore", "*.png")
+	fs.Write(".gitignore", "vendor/")
+	fs.Write("sub/.gitignore", "*.log\nbuild/")
+	fs.Write("sub/keep.txt", "k")
+	fs.MkdirAll("sub/build")
+	// `vendor` is ignored at the root, so its own ignore file must not be
+	// collected - nothing below an excluded directory can be re-included.
+	fs.Write("vendor/.clingignore", "!*.png")
+
+	patterns, err := CollectIgnorePatterns(fs.FS, ".")
+	assert.NoError(err)
+
+	// A root pattern reaches down into nested directories.
+	assert.Equal(true, patterns.Match("top.png", false))
+	assert.Equal(true, patterns.Match("sub/deep/nested.png", false))
+	// A nested ignore file applies only within its own subtree.
+	assert.Equal(true, patterns.Match("sub/app.log", false))
+	assert.Equal(false, patterns.Match("app.log", false))
+	assert.Equal(true, patterns.Match("sub/build", true))
+	assert.Equal(true, patterns.Match("sub/build/out.txt", false))
+	// Paths matched by no pattern are kept.
+	assert.Equal(false, patterns.Match("keep.txt", false))
+	assert.Equal(false, patterns.Match("sub/keep.txt", false))
+	// The ignore file inside `vendor` was not collected, so `vendor` and its
+	// contents stay ignored despite the negation.
+	assert.Equal(true, patterns.Match("vendor", true))
+	assert.Equal(true, patterns.Match("vendor/lib.png", false))
+}
+
 func TestWalkDirIgnore(t *testing.T) {
 	var g globTester
 	dir := t.TempDir()

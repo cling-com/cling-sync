@@ -431,6 +431,23 @@ func (i ExtendedGlobPatterns) Match(path string, isDir bool) bool {
 	return matched
 }
 
+// Read and parse the `.gitignore` and `.clingignore` files located directly in `dir`.
+func readIgnoreFiles(fs FS, dir string) (ExtendedGlobPatterns, error) {
+	patterns := ExtendedGlobPatterns{}
+	for _, ignoreFileName := range ignoreFileNames {
+		ignoreFilePath := filepath.Join(dir, ignoreFileName)
+		content, err := ReadFile(fs, ignoreFilePath)
+		if err != nil {
+			if !errors.Is(err, iofs.ErrNotExist) {
+				return nil, WrapErrorf(err, "Failed to read ignore file %s", ignoreFilePath)
+			}
+			continue
+		}
+		patterns = append(patterns, ParseGlobIgnoreFile(dir, strings.Split(string(content), "\n"))...)
+	}
+	return patterns, nil
+}
+
 // Same as `fs.WalkDir`, but will respect all `.gitignore` and `.clingignore` files along the way.
 func WalkDirIgnore(fs FS, dir string, f iofs.WalkDirFunc) error {
 	ignorePatterns := ExtendedGlobPatterns{}
@@ -439,19 +456,11 @@ func WalkDirIgnore(fs FS, dir string, f iofs.WalkDirFunc) error {
 			return err
 		}
 		if d.IsDir() {
-			// Actively search for ignore files.
-			for _, ignoreFileName := range ignoreFileNames {
-				ignoreFilePath := filepath.Join(path, ignoreFileName)
-				content, err := ReadFile(fs, ignoreFilePath)
-				if err != nil {
-					if !errors.Is(err, iofs.ErrNotExist) {
-						return WrapErrorf(err, "Failed to read ignore file %s", ignoreFilePath)
-					}
-				} else {
-					parsed := ParseGlobIgnoreFile(path, strings.Split(string(content), "\n"))
-					ignorePatterns = append(ignorePatterns, parsed...)
-				}
+			parsed, err := readIgnoreFiles(fs, path)
+			if err != nil {
+				return err
 			}
+			ignorePatterns = append(ignorePatterns, parsed...)
 		}
 		ignored := ignorePatterns.Match(path, d.IsDir())
 		if ignored {
@@ -464,6 +473,31 @@ func WalkDirIgnore(fs FS, dir string, f iofs.WalkDirFunc) error {
 		}
 		return f(path, d, nil)
 	})
+}
+
+// Walk `dir` and collect every ignore pattern from the `.gitignore` and `.clingignore`
+// files found along the way, respecting nested ignores (an ignored directory's
+// contents are not visited).
+func CollectIgnorePatterns(fs FS, dir string) (ExtendedGlobPatterns, error) {
+	ignorePatterns := ExtendedGlobPatterns{}
+	err := fs.WalkDir(dir, func(path string, d iofs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if ignorePatterns.Match(path, true) {
+			return filepath.SkipDir
+		}
+		parsed, err := readIgnoreFiles(fs, path)
+		if err != nil {
+			return err
+		}
+		ignorePatterns = append(ignorePatterns, parsed...)
+		return nil
+	})
+	return ignorePatterns, err //nolint:wrapcheck
 }
 
 func IsAlnum(c byte) bool {

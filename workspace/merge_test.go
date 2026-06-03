@@ -650,6 +650,59 @@ func TestMerge(t *testing.T) {
 		assert.Error(err, "is not in the repository's revision chain")
 	})
 
+	t.Run("Ignored files and directories are not copied from the repository", func(t *testing.T) {
+		// Local `.clingignore` and `.gitignore` must be respected when copying files
+		// and directories from the repository during a merge, at every level up
+		// to the workspace root: a root pattern reaches into nested directories,
+		// and a nested ignore file governs its own subtree.
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w2 := wstd.NewTestWorkspace(t, r.Repository)
+
+		// `w` has no ignore files, so it commits all paths to the repository.
+		// `sub` is pinned to a fixed mtime so that `w2`'s identical local `sub`
+		// is not seen as a change (keeping the merge commit to the ignore files).
+		subMtime := time.Unix(1_700_000_000, 0)
+		w.Write("keep.txt", "keep")
+		w.Write("top.png", "p")
+		w.Write("sub/keep.txt", "sk")
+		w.Write("sub/nested.png", "p")
+		w.Write("sub/debug.log", "l")
+		w.Write("sub/build/out.txt", "o")
+		w.Write("sub/deep/keep.txt", "dk")
+		w.Touch("sub", subMtime)
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// `w2` has a local ignore policy: `*.png` at the root and, under `sub/`,
+		// `*.log` and the whole `build/` directory.
+		w2.Write(".clingignore", "*.png")
+		w2.Write("sub/.gitignore", "*.log\nbuild/")
+		w2.Touch("sub", subMtime)
+
+		// Merging pulls the non-ignored files but skips every ignored path:
+		// `top.png` and `sub/nested.png` (root `*.png`), `sub/debug.log` and
+		// `sub/build/` (the nested `.gitignore`).
+		rev, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		// The merge commit holds only `w2`'s local changes, not the repository files it pulled.
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{".clingignore", lib.RevisionEntryKindAdd, 0o600, td.SHA256("*.png")},
+			{"sub/.gitignore", lib.RevisionEntryKindAdd, 0o600, td.SHA256("*.log\nbuild/")},
+		}, r.RevisionInfos(rev))
+		assert.Equal([]lib.TestFileInfo{
+			{".clingignore", 0o600, 5, "*.png"},
+			{"keep.txt", 0o600, 4, "keep"},
+			{"sub", 0o700 | fs.ModeDir, 0, ""},
+			{"sub/.gitignore", 0o600, 12, "*.log\nbuild/"},
+			{"sub/deep", 0o700 | fs.ModeDir, 0, ""},
+			{"sub/deep/keep.txt", 0o600, 2, "dk"},
+			{"sub/keep.txt", 0o600, 2, "sk"},
+		}, w2.Ls("."))
+	})
+
 	// todo: implement
 	// t.Run("MTime is restored", func(t *testing.T) {
 	// 	// Make sure that mtime is restored even for directories.
