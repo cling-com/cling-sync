@@ -42,6 +42,14 @@ func newDefaultMonitorBase(
 	return defaultMonitorBase{Mode: mode, cancel: cancel, emit: emit}
 }
 
+// Preparing emits a placeholder while an operation stays silent before its first real output.
+func (m *defaultMonitorBase) Preparing() {
+	if m.Mode == DefaultMonitorModeSilent {
+		return
+	}
+	m.emit("preparing...")
+}
+
 type DefaultCommitMonitor struct {
 	defaultMonitorBase
 	StartTime            time.Time
@@ -617,6 +625,13 @@ func (m *DefaultSyncRepoMonitor) OnCopyBlock(blockID lib.BlockId, existed bool, 
 	if m.Mode == DefaultMonitorModeVerbose {
 		m.emitWithTargetPrefix("block " + blockID.String())
 	}
+}
+
+func (m *DefaultSyncRepoMonitor) Preparing() {
+	if m.Mode == DefaultMonitorModeSilent {
+		return
+	}
+	m.emitWithTargetPrefix("preparing...")
 }
 
 func (m *DefaultSyncRepoMonitor) emitProgress() {

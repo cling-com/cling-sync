@@ -379,6 +379,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
+	mon.Preparing()
 	err = ws.Cp(ctx, repository, lib.NewRealFS(flags.Arg(1)), opts, tmpFS)
 	mon.close()
 	if args.IgnoreErrors && mon.Errors > 0 {
@@ -465,6 +466,7 @@ func ResetCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		RestorableMetadataFlag: restorableMetadataFlag,
 		UseStagingCache:        args.FastScan,
 	}
+	stagingMonitor.Preparing()
 	if err := ws.Reset(ctx, workspace, repository, opts); err != nil {
 		stagingMonitor.close()
 		cpMonitor.close()
@@ -559,6 +561,7 @@ func MergeCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		RestorableMetadataFlag: restorableMetadataFlag,
 		UseStagingCache:        args.FastScan,
 	}
+	stagingMonitor.Preparing()
 	var revisionId lib.RevisionId
 	if args.AcceptLocal {
 		revisionId, err = ws.ForceCommit(ctx, workspace, repository, &ws.ForceCommitOptions{MergeOptions: *opts})
@@ -706,6 +709,7 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 		RestorableMetadataFlag: restorableMetadataFlag,
 		UseStagingCache:        args.FastScan,
 	}
+	mon.Preparing()
 	result, err := ws.Status(ctx, workspace, repository, opts, tmpFS)
 	mon.close()
 	if err != nil {
@@ -999,6 +1003,7 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	}
 	defer tempFS.RemoveAll(".") //nolint:errcheck
 	monitor := NewHeathCheckMonitor(CLIMonitorMode(args.Verbose, args.NoProgress))
+	monitor.Preparing()
 	err = lib.CheckHealth(ctx, repository, tempFS, lib.HealthCheckOptions{
 		Monitor:             monitor,
 		CheckBlocks:         args.Data,
@@ -1308,6 +1313,7 @@ func SyncRepoCmd(ctx context.Context, argv []string, passphraseFromStdin bool) e
 		mode := CLIMonitorMode(runArgs.Verbose, runArgs.NoProgress)
 		for _, name := range names {
 			mon := NewSyncRepoMonitor(name, mode)
+			mon.Preparing()
 			err := ws.RunSync(ctx, workspace, name, passphrase, chain, ws.RunSyncOpts{
 				Monitor:       mon,
 				Workers:       runArgs.Workers,
