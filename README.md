@@ -87,6 +87,11 @@ find the revision id, then:
 All commands operate on the current directory's workspace unless noted.
 Run `cling-sync <command> --help` for the full flag list.
 
+The commands that only read a repository (`check`, `cp`, `ls`, `log`,
+`serve`) accept `--repository <path-or-uri>` to operate on a repository
+directly, bypassing the workspace. The argument is a local path or an
+`s3+...` URI, opened the same way as `attach`.
+
 ### `init <repository-path>`
 
 Create a new repository at the given path and attach the current
@@ -150,6 +155,8 @@ paths per revision.
 ### `ls [<pattern>]`
 
 List paths in the current revision. Accepts a glob pattern.
+`--path-prefix <dir>/` limits the listing to a subtree, overriding the
+workspace prefix or setting one when used with `--repository`.
 
 ### `cp <pattern> <target>`
 
@@ -167,7 +174,8 @@ the current head revision.
 
 Verify repository integrity. Walks the revision chain and confirms every
 referenced block decrypts. With `--data`, additionally reads and
-decrypts the file data inside each revision.
+decrypts the file data inside each revision. The report is written to the
+current directory or `--report-dir <dir>` redirects it.
 
 ### `security save-passphrase`
 
@@ -224,9 +232,10 @@ or `-`.
   ones. No passphrase needed because the operation works purely at
   the storage layer.
 
-### `serve --address <addr> <repository-path>`
+### `serve --address <addr>`
 
-Expose a local repository as an S3 endpoint. See
+Expose the workspace repository as an S3 endpoint. Pass
+`--repository <path-or-uri>` to serve a repository directly instead. See
 [Running your own S3 server](#running-your-own-s3-server).
 
 ## Remote repositories
@@ -302,10 +311,11 @@ protect.
 
 ### Running your own S3 server
 
-`cling-sync serve` exposes a local repository as an S3 endpoint.
+`cling-sync serve` exposes the workspace repository as an S3 endpoint.
+Pass `--repository` to serve a repository directly, without a workspace.
 
     cling-sync init /path/to/repo
-    cling-sync serve --address 127.0.0.1:9000 /path/to/repo
+    cling-sync serve --address 127.0.0.1:9000 --repository /path/to/repo
 
 On first run, `serve` generates random S3 credentials and writes them
 into the repository at `.cling/repository/conf/serve`. The same file
@@ -771,7 +781,7 @@ cling-sync compiles to WebAssembly. A sample page lives in `wasm/`.
 
 Serve a repository, build the Wasm example, then open it:
 
-    cling-sync serve --cors-allow-all --address 127.0.0.1:4242 /path/to/repo
+    cling-sync serve --cors-allow-all --address 127.0.0.1:4242 --repository /path/to/repo
     ./build.sh wasm dev
     open http://127.0.0.1:8000/example.html
 

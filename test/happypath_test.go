@@ -266,6 +266,50 @@ func TestHappyPath(t *testing.T) {
 			"Files of head should match the workspace")
 		assert.Equal("No changes", sut.ClingSync("status", "--chtime"), "After merge, no local changes should remain")
 	}
+
+	t.Log("Run repository commands with --repository and no workspace (log, ls, check, cp)")
+	{
+		// Capture reference output produced via the workspace, then remove the
+		// workspace so the same commands must reach the repository directly.
+		wsLog := sut.ClingSync("log", "--short")
+		wsLs := sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction")
+		wsB := sut.Cat("b.txt")
+		err := os.RemoveAll(sut.Path(".cling"))
+		assert.NoError(err, "failed to remove workspace")
+
+		// Without --repository and no workspace, the command fails.
+		stderr := sut.ClingSyncError("log", "--short")
+		assert.Contains(stderr, "failed to open workspace")
+
+		// With --repository, the same commands operate on the bare repository.
+		repoLog := sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin",
+			"log", "--short", "--repository", "../repository")
+		assert.Equal(wsLog, repoLog, "log via --repository should match the workspace")
+
+		repoLs := sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin",
+			"ls", "--short-file-mode", "--timestamp-format", "unix-fraction", "--repository", "../repository")
+		assert.Equal(wsLs, repoLs, "ls via --repository should match the workspace")
+		// --path-prefix scopes the listing to a subtree when there is no workspace.
+		repoLsPrefix := sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "ls",
+			"--repository", "../repository", "--path-prefix", "dir1/",
+			"--short-file-mode", "--timestamp-format", "unix-fraction")
+		assert.Equal("d.txt", td.Column(repoLsPrefix, 4), "ls --path-prefix should list only the subtree")
+
+		check := sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin",
+			"check", "--no-progress", "--repository", "../repository")
+		assert.Contains(check, "Repository is healthy")
+		// The report drops into the cwd; check must not recreate a .cling here.
+		_, statErr := os.Stat(sut.Path("health-check.txt"))
+		assert.NoError(statErr, "check should write the report into the current directory")
+		_, statErr = os.Stat(sut.Path(".cling"))
+		assert.Equal(true, os.IsNotExist(statErr), "check --repository must not recreate a .cling directory")
+
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin",
+			"cp", "--no-progress", "--repository", "../repository", "b.txt", "../cp-out")
+		got, err := os.ReadFile(sut.Path("../cp-out/b.txt"))
+		assert.NoError(err, "failed to read copied b.txt")
+		assert.Equal(wsB, string(got), "cp via --repository should copy the repository content")
+	}
 }
 
 func TestSyncRepoHappyPath(t *testing.T) {
@@ -597,6 +641,13 @@ func TestPathPrefix(t *testing.T) {
 			dir2/
 			dir2/d.txt
 		`), td.Column(ls, 4))
+	}
+
+	t.Log("`ls --path-prefix` overrides the workspace prefix")
+	{
+		// workspace2 has prefix look/here/, but --path-prefix points elsewhere.
+		ls := sut.ClingSync("ls", "--path-prefix", "dir1/", "--short-file-mode", "--timestamp-format", "unix-fraction")
+		assert.Equal("b.txt", td.Column(ls, 4))
 	}
 
 	t.Log("Run `status` in workspace with path prefix")
@@ -973,7 +1024,7 @@ func writeServeConfFile(t *testing.T, srvDir string) {
 // repository and waits for the listener to accept connections.
 func startClingSyncServer(t *testing.T, addr, srvDir string) {
 	t.Helper()
-	srv := exec.Command(clingSyncBin, "serve", "--address", addr, srvDir)
+	srv := exec.Command(clingSyncBin, "serve", "--address", addr, "--repository", srvDir)
 	srv.Stdout = os.Stdout
 	srv.Stderr = os.Stderr
 	srv.Env = append(os.Environ(), "CLING_SYNC_MOCK_KEYCHAIN_FILE="+filepath.Join(t.TempDir(), "kc.json"))

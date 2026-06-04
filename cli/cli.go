@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	appName                 = "cling-sync"
-	fastScanFlagDescription = "Speed up scanning by skipping file hash comparisons.\nFile changes are detected by trusting file metadata (size, ctime, inode).\nWARNING: May miss some changes, especially on network or FUSE file-systems.\nWhen in doubt, run without this flag for thorough verification."
+	appName                   = "cling-sync"
+	fastScanFlagDescription   = "Speed up scanning by skipping file hash comparisons.\nFile changes are detected by trusting file metadata (size, ctime, inode).\nWARNING: May miss some changes, especially on network or FUSE file-systems.\nWhen in doubt, run without this flag for thorough verification."
+	repositoryFlagDescription = "Use this repository (local path or s3+... URI) instead of the workspace repository"
 )
 
 func AttachCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
@@ -96,39 +97,18 @@ func AttachCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	if err := clingHTTP.RejectBareHTTPURI(repositoryURI); err != nil {
 		return err //nolint:wrapcheck
 	}
-	var storage lib.Storage
-	switch {
-	case clingHTTP.IsS3StorageURI(repositoryURI):
-		passphrase, err := readPassphrase(passphraseFromStdin)
-		if err != nil {
-			return err
-		}
-		encryptedURI, err := resolveS3URI(repositoryURI, passphrase, passphraseFromStdin)
-		if err != nil {
-			return err
-		}
-		cfg, _, err := clingHTTP.DecodeS3URI(encryptedURI, passphrase)
-		if err != nil {
-			return lib.WrapErrorf(err, "failed to decode S3 URI")
-		}
-		storage = clingHTTP.NewS3StorageClient(cfg, clingHTTP.NewDefaultHTTPClient(nil))
-		if _, err := lib.OpenRepository(ctx, storage, passphrase); err != nil {
-			return lib.WrapErrorf(err, "failed to open repository")
-		}
-		repositoryURI = encryptedURI
-	default:
-		repositoryURI, err = filepath.Abs(repositoryURI)
-		if err != nil {
-			return lib.WrapErrorf(err, "failed to get absolute path for %s", repositoryURI)
-		}
-		storage, err = lib.NewFileStorage(lib.NewRealFS(repositoryURI), lib.StoragePurposeRepository)
-		if err != nil {
-			return lib.WrapErrorf(err, "failed to connect to repository storage")
-		}
-		if _, err := openRepositoryWithPassphrase(ctx, storage, passphraseFromStdin); err != nil {
-			return err
-		}
+	passphrase, err := readPassphrase(passphraseFromStdin)
+	if err != nil {
+		return err
 	}
+	storage, resolvedURI, err := openStorage(repositoryURI, passphrase, passphraseFromStdin)
+	if err != nil {
+		return err
+	}
+	if _, err := lib.OpenRepository(ctx, storage, passphrase); err != nil {
+		return lib.WrapErrorf(err, "failed to open repository")
+	}
+	repositoryURI = resolvedURI
 	// We know the repository exists, so let's create the workspace.
 	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-workspace")
 	if err != nil {
@@ -295,12 +275,7 @@ func InitCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error
 }
 
 func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
-	workspace, err := openWorkspace(ctx)
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to open workspace")
-	}
-	defer workspace.Close() //nolint:errcheck
-	args := struct {        //nolint:exhaustruct
+	args := struct { //nolint:exhaustruct
 		Help         bool
 		Revision     string
 		IgnoreErrors bool
@@ -308,6 +283,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		NoProgress   bool
 		Overwrite    bool
 		Chown        bool
+		Repository   string
 		Exclude      lib.ExtendedGlobPatterns
 	}{}
 	flags := flag.NewFlagSet("cp", flag.ExitOnError)
@@ -318,6 +294,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Chown, "chown", false, "Restore file ownership from the repository.")
 	flags.BoolVar(&args.Overwrite, "overwrite", false, "Overwrite existing files")
+	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
 	globPatternFlag(
 		flags,
 		"exclude",
@@ -349,9 +326,26 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if len(flags.Args()) != 2 {
 		return lib.Errorf("two positional arguments are required: <pattern> <target>")
 	}
-	repository, err := openRepository(ctx, workspace, passphraseFromStdin)
-	if err != nil {
-		return err
+	var (
+		repository *lib.Repository
+		err        error
+	)
+	if args.Repository != "" {
+		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+	} else {
+		var workspace *ws.Workspace
+		workspace, err = openWorkspace(ctx)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to open workspace")
+		}
+		defer workspace.Close() //nolint:errcheck
+		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		if err != nil {
+			return err
+		}
 	}
 	pathFilter := &lib.AllPathFilter{Filters: []lib.PathFilter{
 		lib.NewPathInclusionFilter([]string{flags.Arg(0)}),
@@ -375,10 +369,11 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if !args.Chown {
 		opts.RestorableMetadataFlag ^= lib.RestorableMetadataOwnership
 	}
-	tmpFS, err := workspace.TempFS.MkSub("cp")
+	tmpFS, cleanup, err := newTempFS("cp")
 	if err != nil {
-		return err //nolint:wrapcheck
+		return err
 	}
+	defer cleanup()
 	mon.Preparing()
 	err = ws.Cp(ctx, repository, lib.NewRealFS(flags.Arg(1)), opts, tmpFS)
 	mon.close()
@@ -439,7 +434,7 @@ func ResetCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	if len(flags.Args()) != 1 {
 		return lib.Errorf("one positional argument is required: <revision-id>")
 	}
-	repository, err := openRepository(ctx, workspace, passphraseFromStdin)
+	repository, err := openRepository(ctx, workspace, "", passphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -535,7 +530,7 @@ func MergeCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("no positional arguments allowed")
 	}
-	repository, err := openRepository(ctx, workspace, passphraseFromStdin)
+	repository, err := openRepository(ctx, workspace, "", passphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -684,7 +679,7 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 			pathFilter = exclusionFilter
 		}
 	}
-	repository, err := openRepository(ctx, workspace, passphraseFromStdin)
+	repository, err := openRepository(ctx, workspace, "", passphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -729,12 +724,7 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 }
 
 func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
-	workspace, err := openWorkspace(ctx)
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to open workspace")
-	}
-	defer workspace.Close() //nolint:errcheck
-	args := struct {        //nolint:exhaustruct
+	args := struct { //nolint:exhaustruct
 		Help            bool
 		Revision        string
 		Short           bool
@@ -742,12 +732,17 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		TimestampFormat string
 		ShortFileMode   bool
 		FileHash        bool
+		Repository      string
+		PathPrefix      string
 	}{
 		TimestampFormat: time.RFC3339,
 	}
 	flags := flag.NewFlagSet("ls", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
+	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
+	flags.StringVar(&args.PathPrefix, "path-prefix", "",
+		"List only this subtree of the repository, e.g. `dir/` (overrides the workspace path prefix)")
 	flags.BoolVar(&args.Short, "short", false, "Show short listing (same as --timestamp-format=relative)")
 	flags.BoolVar(&args.FileHash, "file-hash", false, "Show file hash")
 	flags.BoolVar(
@@ -799,19 +794,45 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if len(flags.Args()) > 1 {
 		return lib.Errorf("too many positional arguments")
 	}
-	repository, err := openRepository(ctx, workspace, passphraseFromStdin)
-	if err != nil {
-		return err
+	var (
+		repository *lib.Repository
+		pathPrefix lib.Path
+		err        error
+	)
+	if args.Repository != "" {
+		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+	} else {
+		var workspace *ws.Workspace
+		workspace, err = openWorkspace(ctx)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to open workspace")
+		}
+		defer workspace.Close() //nolint:errcheck
+		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+		pathPrefix = workspace.PathPrefix
+	}
+	if args.PathPrefix != "" {
+		pathPrefix, err = ws.ValidatePathPrefix(args.PathPrefix)
+		if err != nil {
+			return lib.WrapErrorf(err, "invalid path prefix %q", args.PathPrefix)
+		}
 	}
 	revisionId, err := revisionId(ctx, repository, args.Revision)
 	if err != nil {
 		return err
 	}
-	opts := &ws.LsOptions{RevisionId: revisionId, PathFilter: pathFilter, PathPrefix: workspace.PathPrefix}
-	tmpFS, err := workspace.TempFS.MkSub("ls")
+	opts := &ws.LsOptions{RevisionId: revisionId, PathFilter: pathFilter, PathPrefix: pathPrefix}
+	tmpFS, cleanup, err := newTempFS("ls")
 	if err != nil {
-		return err //nolint:wrapcheck
+		return err
 	}
+	defer cleanup()
 	files, err := ws.Ls(ctx, repository, tmpFS, opts)
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -841,20 +862,17 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 }
 
 func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
-	workspace, err := openWorkspace(ctx)
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to open workspace")
-	}
-	defer workspace.Close() //nolint:errcheck
-	args := struct {        //nolint:exhaustruct
-		Help   bool
-		Short  bool
-		Status bool
+	args := struct { //nolint:exhaustruct
+		Help       bool
+		Short      bool
+		Status     bool
+		Repository string
 	}{}
 	flags := flag.NewFlagSet("log", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Show short log")
 	flags.BoolVar(&args.Status, "status", false, "Show status of paths affected in a revision")
+	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s log [pattern]\n\n", appName)
 		fmt.Fprint(os.Stderr, "Show revision log.\n")
@@ -879,9 +897,26 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 	if len(flags.Args()) == 1 {
 		pathFilter = lib.NewPathInclusionFilter([]string{flags.Arg(0)})
 	}
-	repository, err := openRepository(ctx, workspace, passphraseFromStdin)
-	if err != nil {
-		return err
+	var (
+		repository *lib.Repository
+		err        error
+	)
+	if args.Repository != "" {
+		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+	} else {
+		var workspace *ws.Workspace
+		workspace, err = openWorkspace(ctx)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to open workspace")
+		}
+		defer workspace.Close() //nolint:errcheck
+		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		if err != nil {
+			return err
+		}
 	}
 	opts := &ws.LogOptions{PathFilter: pathFilter, Status: args.Status}
 	logs, err := ws.Log(ctx, repository, opts)
@@ -915,18 +950,12 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 }
 
 const (
-	healthCheckReportDir          = ".cling/report"
 	healthCheckReportFile         = "health-check.txt"
 	healthCheckOrphanedBlocksFile = "health-check-orphaned-blocks.txt"
 )
 
-func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen,gocognit
-	workspace, err := openWorkspace(ctx)
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to open workspace")
-	}
-	defer workspace.Close() //nolint:errcheck
-	args := struct {        //nolint:exhaustruct
+func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
+	args := struct { //nolint:exhaustruct
 		Help           bool
 		Verbose        bool
 		NoProgress     bool
@@ -934,6 +963,7 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		OrphanedBlocks bool
 		Full           bool
 		Repository     string
+		ReportDir      string
 	}{}
 	flags := flag.NewFlagSet("check", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
@@ -943,7 +973,8 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	flags.BoolVar(&args.OrphanedBlocks, "orphaned-blocks", false,
 		"Detect blocks in storage that are not referenced by any revision")
 	flags.BoolVar(&args.Full, "full", false, "Run all checks (implies --data and --orphaned-blocks)")
-	flags.StringVar(&args.Repository, "repository", "", "Check this repository instead of the workspace repository")
+	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
+	flags.StringVar(&args.ReportDir, "report-dir", "", "Directory to write the report to (default: current directory)")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s check\n\n", appName)
 		fmt.Fprint(os.Stderr, "Check the health of a repository.\n")
@@ -964,44 +995,32 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		args.Data = true
 		args.OrphanedBlocks = true
 	}
-	var repository *lib.Repository
+	var (
+		repository *lib.Repository
+		err        error
+	)
 	if args.Repository != "" {
-		if err := clingHTTP.RejectBareHTTPURI(args.Repository); err != nil {
-			return err //nolint:wrapcheck
-		}
-		var passphrase []byte
-		if clingHTTP.IsS3StorageURI(args.Repository) {
-			passphrase, err = readPassphrase(passphraseFromStdin)
-			if err != nil {
-				return err
-			}
-		}
-		storage, err := ws.OpenStorage(args.Repository, passphrase)
+		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
 		if err != nil {
-			return lib.WrapErrorf(err, "failed to open repository storage")
-		}
-		if passphrase != nil {
-			repository, err = lib.OpenRepository(ctx, storage, passphrase)
-			if err != nil {
-				return lib.WrapErrorf(err, "failed to open repository")
-			}
-		} else {
-			repository, err = openRepositoryWithPassphrase(ctx, storage, passphraseFromStdin)
-			if err != nil {
-				return err
-			}
+			return err
 		}
 	} else {
-		repository, err = openRepository(ctx, workspace, passphraseFromStdin)
+		var workspace *ws.Workspace
+		workspace, err = openWorkspace(ctx)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to open workspace")
+		}
+		defer workspace.Close() //nolint:errcheck
+		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
 		if err != nil {
 			return err
 		}
 	}
-	tempFS, err := workspace.TempFS.MkSub("check")
+	tempFS, cleanup, err := newTempFS("check")
 	if err != nil {
-		return lib.WrapErrorf(err, "failed to create temp directory for health check")
+		return err
 	}
-	defer tempFS.RemoveAll(".") //nolint:errcheck
+	defer cleanup()
 	monitor := NewHeathCheckMonitor(CLIMonitorMode(args.Verbose, args.NoProgress))
 	monitor.Preparing()
 	err = lib.CheckHealth(ctx, repository, tempFS, lib.HealthCheckOptions{
@@ -1014,11 +1033,15 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	if err := os.MkdirAll(healthCheckReportDir, 0o700); err != nil {
-		return lib.WrapErrorf(err, "failed to create %s", healthCheckReportDir)
+	reportDir := args.ReportDir
+	if reportDir == "" {
+		reportDir = "."
 	}
-	reportPath := filepath.Join(healthCheckReportDir, healthCheckReportFile)
-	orphansPath := filepath.Join(healthCheckReportDir, healthCheckOrphanedBlocksFile)
+	if err := os.MkdirAll(reportDir, 0o700); err != nil {
+		return lib.WrapErrorf(err, "failed to create %s", reportDir)
+	}
+	reportPath := filepath.Join(reportDir, healthCheckReportFile)
+	orphansPath := filepath.Join(reportDir, healthCheckOrphanedBlocksFile)
 	report, err := monitor.Report(args.Data, args.OrphanedBlocks, orphansPath)
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -1090,7 +1113,7 @@ func SyncRepoCmd(ctx context.Context, argv []string, passphraseFromStdin bool) e
 		if err != nil {
 			return err
 		}
-		src, err := openRepositoryStorage(workspace, passphrase)
+		src, _, err := openStorage(string(workspace.RemoteRepository), passphrase, passphraseFromStdin)
 		if err != nil {
 			return err
 		}
@@ -1428,7 +1451,7 @@ func securityPassphraseCmd(ctx context.Context, op string, positional []string, 
 	if err != nil {
 		return err
 	}
-	repositoryStorage, err := openRepositoryStorage(workspace, passphrase)
+	repositoryStorage, _, err := openStorage(string(workspace.RemoteRepository), passphrase, passphraseFromStdin)
 	if err != nil {
 		return err
 	}
@@ -1553,7 +1576,7 @@ func securityEncryptS3URLCmd(ctx context.Context, argv []string, passphraseFromS
 	return nil
 }
 
-func ServeCmd(ctx context.Context, argv []string) error { //nolint:funlen
+func ServeCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
 		Address      string
 		LogRequests  bool
@@ -1561,6 +1584,7 @@ func ServeCmd(ctx context.Context, argv []string) error { //nolint:funlen
 		ReadTimeout  time.Duration
 		WriteTimeout time.Duration
 		Region       string
+		Repository   string
 		Help         bool
 	}{}
 	flags := flag.NewFlagSet("serve", flag.ExitOnError)
@@ -1571,14 +1595,12 @@ func ServeCmd(ctx context.Context, argv []string) error { //nolint:funlen
 	flags.DurationVar(&args.ReadTimeout, "read-timeout", 10*time.Second, "Timeout for reading a response")
 	flags.DurationVar(&args.WriteTimeout, "write-timeout", 10*time.Second, "Timeout for writing a response")
 	flags.StringVar(&args.Region, "region", "us-east-1", "Region for SigV4 verification")
+	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s serve <repository-path>\n\n", appName)
-		fmt.Fprint(os.Stderr, "Serve an existing local repository as an S3-compatible bucket.\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s serve\n\n", appName)
+		fmt.Fprint(os.Stderr, "Serve the workspace repository as an S3-compatible bucket.\n")
 		fmt.Fprint(os.Stderr, "Credentials live in the repository's `conf/serve` control file and\n")
 		fmt.Fprint(os.Stderr, "are auto-generated on first run.\n")
-		fmt.Fprint(os.Stderr, "\nArguments:\n")
-		fmt.Fprint(os.Stderr, "  repository-path\n")
-		fmt.Fprint(os.Stderr, "        Path to the local repository to serve\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -1589,21 +1611,49 @@ func ServeCmd(ctx context.Context, argv []string) error { //nolint:funlen
 		flags.Usage()
 		return nil
 	}
-	if len(flags.Args()) != 1 {
-		return lib.Errorf("one positional argument is required: <path-to-repository>")
+	if len(flags.Args()) != 0 {
+		return lib.Errorf("no positional arguments allowed")
 	}
-	repositoryPath, err := filepath.Abs(flags.Arg(0))
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to get absolute path for %s", flags.Arg(0))
-	}
-	storage, err := lib.NewFileStorage(lib.NewRealFS(repositoryPath), lib.StoragePurposeRepository)
-	if err != nil {
-		return lib.WrapErrorf(err, "failed to open storage")
+	var (
+		storage         lib.Storage
+		repositoryLabel string
+		err             error
+	)
+	if args.Repository != "" {
+		var passphrase []byte
+		if clingHTTP.IsS3StorageURI(args.Repository) {
+			passphrase, err = readPassphrase(passphraseFromStdin)
+			if err != nil {
+				return err
+			}
+		}
+		storage, repositoryLabel, err = openStorage(args.Repository, passphrase, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+	} else {
+		var workspace *ws.Workspace
+		workspace, err = openWorkspace(ctx)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to open workspace")
+		}
+		defer workspace.Close() //nolint:errcheck
+		repositoryLabel = string(workspace.RemoteRepository)
+		var passphrase []byte
+		if clingHTTP.IsS3StorageURI(repositoryLabel) {
+			passphrase, err = readWorkspaceRepositoryPassphrase(ctx, workspace, passphraseFromStdin)
+			if err != nil {
+				return err
+			}
+		}
+		storage, repositoryLabel, err = openStorage(repositoryLabel, passphrase, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
 	}
 	if _, err := storage.Open(ctx); err != nil {
 		return lib.WrapErrorf(err, "failed to open repository")
 	}
-	confPath := filepath.Join(repositoryPath, ".cling", "repository", "conf", "serve")
 	var ak, sk string
 	created := false
 	data, err := storage.ReadControlFile(ctx, lib.ControlFileSectionConf, "serve")
@@ -1661,16 +1711,25 @@ func ServeCmd(ctx context.Context, argv []string) error { //nolint:funlen
 		ReadTimeout:  args.ReadTimeout,
 		WriteTimeout: args.WriteTimeout,
 	}
-	if created {
-		fmt.Printf("First run - new credentials created at %s\n", confPath)
+	if clingHTTP.IsS3StorageURI(repositoryLabel) {
+		if created {
+			fmt.Println("First run - new serve credentials created in conf/serve")
+		} else {
+			fmt.Println("Read serve credentials from conf/serve")
+		}
 	} else {
-		fmt.Printf("Read credentials from %s\n", confPath)
+		confPath := filepath.Join(repositoryLabel, ".cling", "repository", "conf", "serve")
+		if created {
+			fmt.Printf("First run - new credentials created at %s\n", confPath)
+		} else {
+			fmt.Printf("Read credentials from %s\n", confPath)
+		}
+		fmt.Printf(
+			"Get an authenticated URL with:\n  %s security encrypt-s3-url --credentials-file %s s3+http://%s\n",
+			appName, confPath, args.Address,
+		)
 	}
-	fmt.Printf(
-		"Get an authenticated URL with:\n  %s security encrypt-s3-url --credentials-file %s s3+http://%s\n",
-		appName, confPath, args.Address,
-	)
-	fmt.Printf("Serving %s at s3+http://%s\n", repositoryPath, args.Address)
+	fmt.Printf("Serving %s at s3+http://%s\n", repositoryLabel, args.Address)
 	if err := server.ListenAndServe(); err != nil {
 		return lib.WrapErrorf(err, "failed to serve repository")
 	}
@@ -1704,6 +1763,17 @@ func openWorkspace(ctx context.Context) (*ws.Workspace, error) {
 		return nil, lib.WrapErrorf(err, "failed to create temporary directory")
 	}
 	return ws.OpenWorkspace(ctx, lib.NewRealFS(path), lib.NewRealFS(tmpDir)) //nolint:wrapcheck
+}
+
+// newTempFS creates a scratch FS under the system temp dir and returns it with
+// a cleanup function to defer.
+func newTempFS(name string) (lib.FS, func(), error) { //nolint:ireturn
+	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-"+name)
+	if err != nil {
+		return nil, nil, lib.WrapErrorf(err, "failed to create temporary directory")
+	}
+	cleanup := func() { os.RemoveAll(tmpDir) } //nolint:errcheck,gosec
+	return lib.NewRealFS(tmpDir), cleanup, nil
 }
 
 // readWorkspaceRepositoryPassphrase returns the repository passphrase for the
@@ -1742,28 +1812,63 @@ func readWorkspaceRepositoryPassphrase(
 	return readPassphrase(passphraseFromStdin)
 }
 
-func openRepository(ctx context.Context, workspace *ws.Workspace, passphraseFromStdin bool) (*lib.Repository, error) {
-	passphrase, err := readWorkspaceRepositoryPassphrase(ctx, workspace, passphraseFromStdin)
-	if err != nil {
-		return nil, err
+func openStorage(
+	uri string,
+	passphrase []byte,
+	passphraseFromStdin bool,
+) (lib.Storage, string, error) { //nolint:ireturn
+	if err := clingHTTP.RejectBareHTTPURI(uri); err != nil {
+		return nil, "", err //nolint:wrapcheck
 	}
-	storage, err := openRepositoryStorage(workspace, passphrase)
-	if err != nil {
-		return nil, err
+	if clingHTTP.IsS3StorageURI(uri) {
+		encryptedURI, err := resolveS3URI(uri, passphrase, passphraseFromStdin)
+		if err != nil {
+			return nil, "", err
+		}
+		storage, err := ws.OpenStorage(encryptedURI, passphrase)
+		if err != nil {
+			return nil, "", lib.WrapErrorf(err, "failed to open repository storage")
+		}
+		return storage, encryptedURI, nil
 	}
-	repository, err := lib.OpenRepository(ctx, storage, passphrase)
+	abs, err := filepath.Abs(uri)
 	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to open repository")
+		return nil, "", lib.WrapErrorf(err, "failed to get absolute path for %s", uri)
 	}
-	return repository, nil
+	storage, err := ws.OpenStorage(abs, nil)
+	if err != nil {
+		return nil, "", lib.WrapErrorf(err, "failed to open repository storage")
+	}
+	return storage, abs, nil
 }
 
-func openRepositoryWithPassphrase(
+// openRepository opens a repository. With a workspace it uses the workspace's
+// URI and saved passphrase; with a nil workspace it opens `uri` and reads the
+// passphrase from the terminal or stdin.
+func openRepository(
 	ctx context.Context,
-	storage lib.Storage,
+	workspace *ws.Workspace,
+	uri string,
 	passphraseFromStdin bool,
 ) (*lib.Repository, error) {
-	passphrase, err := readPassphrase(passphraseFromStdin)
+	if workspace != nil && uri != "" {
+		panic("openRepository: workspace and uri are mutually exclusive")
+	}
+	if workspace == nil && uri == "" {
+		panic("openRepository: either workspace or uri must be set")
+	}
+	var passphrase []byte
+	var err error
+	if workspace != nil {
+		uri = string(workspace.RemoteRepository)
+		passphrase, err = readWorkspaceRepositoryPassphrase(ctx, workspace, passphraseFromStdin)
+	} else {
+		passphrase, err = readPassphrase(passphraseFromStdin)
+	}
+	if err != nil {
+		return nil, err
+	}
+	storage, _, err := openStorage(uri, passphrase, passphraseFromStdin)
 	if err != nil {
 		return nil, err
 	}
@@ -1880,14 +1985,6 @@ func readPassphrase(passphraseFromStdin bool) ([]byte, error) {
 	return passphrase, nil
 }
 
-func openRepositoryStorage(workspace *ws.Workspace, passphrase []byte) (lib.Storage, error) { //nolint:ireturn
-	storage, err := ws.OpenStorage(string(workspace.RemoteRepository), passphrase)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to open repository storage")
-	}
-	return storage, nil
-}
-
 func globPatternDescription(indent string) string {
 	// todo: Explain more and add examples
 	return indent + strings.ReplaceAll(strings.TrimSpace(`
@@ -1938,7 +2035,7 @@ func run() int { //nolint:funlen
 		fmt.Fprint(os.Stderr, "  merge        Merge changes from the repository and the workspace\n")
 		fmt.Fprint(os.Stderr, "  reset        Reset the workspace to a specific revision\n")
 		fmt.Fprint(os.Stderr, "  security     Configure security settings (saved passphrase, encrypted S3 URIs)\n")
-		fmt.Fprint(os.Stderr, "  serve        Serve a local repository as an S3-compatible bucket\n")
+		fmt.Fprint(os.Stderr, "  serve        Serve the workspace repository as an S3-compatible bucket\n")
 		fmt.Fprint(os.Stderr, "  status       Show repository status\n")
 		fmt.Fprint(os.Stderr, "  sync-repo    Sync repository to another repository")
 		fmt.Fprint(os.Stderr, "\nGlobal flags:\n")
@@ -1986,7 +2083,7 @@ func run() int { //nolint:funlen
 	case "security":
 		err = SecurityCmd(ctx, argv, args.PassphraseFromStdin)
 	case "serve":
-		err = ServeCmd(ctx, argv)
+		err = ServeCmd(ctx, argv, args.PassphraseFromStdin)
 	case "status":
 		err = StatusCmd(ctx, argv, args.PassphraseFromStdin)
 	case "sync-repo":
