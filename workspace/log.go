@@ -56,17 +56,30 @@ func derefString(s *string) string {
 type LogOptions struct {
 	PathFilter lib.PathFilter
 	Status     bool
+	// Range is not validated against the repository:
+	// a Range.Until not in the repository fails when its revision is read,
+	// and a Range.Since not in the repository is never reached, so the log
+	// runs to the root.
+	Range lib.RevisionRange
 }
 
 func Log(ctx context.Context, repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
-	head, err := repository.Head(ctx)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to get head revision")
+	var revisionId lib.RevisionId
+	if opts.Range.Until != nil {
+		revisionId = *opts.Range.Until
+	} else {
+		head, err := repository.Head(ctx)
+		if err != nil {
+			return nil, lib.WrapErrorf(err, "failed to get head revision")
+		}
+		revisionId = head
 	}
 	logs := []RevisionLog{}
-	revisionId := head
 	buf := lib.NewBlockBuf()
 	for !revisionId.IsRoot() {
+		if opts.Range.Since != nil && revisionId == *opts.Range.Since {
+			break
+		}
 		revision, err := repository.ReadRevision(ctx, revisionId, buf)
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read revision %s", revisionId)

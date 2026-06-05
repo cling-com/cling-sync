@@ -27,10 +27,34 @@ func TestLog(t *testing.T) {
 		assert.NoError(err)
 
 		// List all revisions.
-		logs, err := Log(t.Context(), r.Repository, &LogOptions{nil, false})
+		logs, err := Log(t.Context(), r.Repository, &LogOptions{nil, false, lib.RevisionRange{nil, nil}})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId3, nil),
+			revisionLog(t, r, revId2, nil),
+			revisionLog(t, r, revId1, nil),
+		}, newTestRevisionLogs(logs, false))
+
+		// A range walks from Until back to (but excluding) Since.
+		logs, err = Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{nil, false, lib.RevisionRange{Since: &revId1, Until: &revId3}},
+		)
+		assert.NoError(err)
+		assert.Equal([]TestRevisionLog{
+			revisionLog(t, r, revId3, nil),
+			revisionLog(t, r, revId2, nil),
+		}, newTestRevisionLogs(logs, false))
+
+		// A nil Since walks from Until back to the root.
+		logs, err = Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{nil, false, lib.RevisionRange{Since: nil, Until: &revId2}},
+		)
+		assert.NoError(err)
+		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId2, nil),
 			revisionLog(t, r, revId1, nil),
 		}, newTestRevisionLogs(logs, false))
@@ -57,7 +81,7 @@ func TestLog(t *testing.T) {
 		assert.NoError(err)
 
 		// List all revisions.
-		logs, err := Log(t.Context(), r.Repository, &LogOptions{nil, true})
+		logs, err := Log(t.Context(), r.Repository, &LogOptions{nil, true, lib.RevisionRange{nil, nil}})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId2, []TestStatusFile{
@@ -96,7 +120,7 @@ func TestLog(t *testing.T) {
 
 		// PathFilter on `a.txt` without status.
 		filter := lib.NewPathInclusionFilter([]string{"a.txt"})
-		logs, err := Log(t.Context(), r.Repository, &LogOptions{filter, false})
+		logs, err := Log(t.Context(), r.Repository, &LogOptions{filter, false, lib.RevisionRange{nil, nil}})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId3, nil),
@@ -104,7 +128,7 @@ func TestLog(t *testing.T) {
 		}, newTestRevisionLogs(logs, false))
 
 		// PathFilter on `a.txt` with status.
-		logs, err = Log(t.Context(), r.Repository, &LogOptions{filter, true})
+		logs, err = Log(t.Context(), r.Repository, &LogOptions{filter, true, lib.RevisionRange{nil, nil}})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId3, []TestStatusFile{{"a.txt", lib.RevisionEntryKindDelete, 1}}),
@@ -113,7 +137,7 @@ func TestLog(t *testing.T) {
 
 		// PathFilter on `c/*` with status.
 		filter = lib.NewPathInclusionFilter([]string{"c/*"})
-		logs, err = Log(t.Context(), r.Repository, &LogOptions{filter, true})
+		logs, err = Log(t.Context(), r.Repository, &LogOptions{filter, true, lib.RevisionRange{nil, nil}})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId2, []TestStatusFile{{"c/e.txt", lib.RevisionEntryKindAdd, 1}}),

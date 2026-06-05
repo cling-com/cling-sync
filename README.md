@@ -146,17 +146,20 @@ back from the repository.
 
 Show which workspace paths differ from the head revision.
 
-### `log [<pattern>] [--status]`
+### `log [--pattern <pattern>] [--revision <id>[..<id>]] [--status]`
 
-Show the revision chain. With a pattern, restrict to revisions that
-touched a matching path. With `--status`, show added/updated/deleted
-paths per revision.
+Show the revision chain. `--pattern` restricts to revisions that
+touched a matching path. `--revision <id>` starts the log at a
+revision instead of the head. A range `<old>..<new>` excludes `<old>`,
+like git. `--status` shows added, updated, and deleted paths per
+revision.
 
 ### `ls [<pattern>]`
 
-List paths in the current revision. Accepts a glob pattern.
-`--path-prefix <dir>/` limits the listing to a subtree, overriding the
-workspace prefix or setting one when used with `--repository`.
+List paths in a revision, the head by default. Accepts a glob pattern.
+`--revision <id>` lists a non-head revision. `--path-prefix <dir>/`
+limits the listing to a subtree, overriding the workspace prefix or
+setting one when used with `--repository`.
 
 ### `cp <pattern> <target>`
 

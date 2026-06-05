@@ -867,21 +867,23 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		Short      bool
 		Status     bool
 		Repository string
+		Pattern    string
+		Revision   string
 	}{}
 	flags := flag.NewFlagSet("log", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Short, "short", false, "Show short log")
 	flags.BoolVar(&args.Status, "status", false, "Show status of paths affected in a revision")
 	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
+	flags.StringVar(&args.Pattern, "pattern", "", "Show log only for paths matching the given pattern")
+	flags.StringVar(&args.Revision, "revision", "",
+		"Revision to show, or a range `<old>..<new>` which excludes `<old>` (like git). Defaults to the head revision.")
 	flags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s log [pattern]\n\n", appName)
+		fmt.Fprintf(os.Stderr, "Usage: %s log\n\n", appName)
 		fmt.Fprint(os.Stderr, "Show revision log.\n")
-		fmt.Fprint(os.Stderr, "\nArguments:\n")
-		fmt.Fprint(os.Stderr, "  pattern (optional)\n")
-		fmt.Fprint(os.Stderr, "        Show log only for paths matching the given pattern.\n")
-		fmt.Fprint(os.Stderr, globPatternDescription("        "))
-		fmt.Fprint(os.Stderr, "\n\nFlags:\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
+		fmt.Fprint(os.Stderr, "\n"+globPatternDescription("")+"\n")
 	}
 	if err := flags.Parse(argv); err != nil {
 		return err //nolint:wrapcheck
@@ -890,12 +892,12 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		flags.Usage()
 		return nil
 	}
-	if len(flags.Args()) > 1 {
+	if len(flags.Args()) > 0 {
 		return lib.Errorf("too many positional arguments")
 	}
 	var pathFilter lib.PathFilter
-	if len(flags.Args()) == 1 {
-		pathFilter = lib.NewPathInclusionFilter([]string{flags.Arg(0)})
+	if args.Pattern != "" {
+		pathFilter = lib.NewPathInclusionFilter([]string{args.Pattern})
 	}
 	var (
 		repository *lib.Repository
@@ -918,7 +920,21 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 			return err
 		}
 	}
-	opts := &ws.LogOptions{PathFilter: pathFilter, Status: args.Status}
+	var revisionRange lib.RevisionRange
+	if args.Revision != "" {
+		revisionRange, err = lib.NewRevisionRangeFromString(args.Revision)
+		if err != nil {
+			return err //nolint:wrapcheck
+		}
+		var chain lib.RevisionChain
+		if chain, err = lib.ReadRevisionChain(ctx, repository); err != nil {
+			return err //nolint:wrapcheck
+		}
+		if !revisionRange.IsInChain(chain) {
+			return lib.Errorf("revision not found in repository: %s", args.Revision)
+		}
+	}
+	opts := &ws.LogOptions{PathFilter: pathFilter, Status: args.Status, Range: revisionRange}
 	logs, err := ws.Log(ctx, repository, opts)
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -1737,20 +1753,25 @@ func ServeCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 }
 
 func revisionId(ctx context.Context, repository *lib.Repository, revision string) (lib.RevisionId, error) {
-	var revisionId lib.RevisionId
 	if strings.ToLower(revision) == "head" {
-		revisionId, err := repository.Head(ctx)
+		head, err := repository.Head(ctx)
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read head revision")
 		}
-		return revisionId, nil
+		return head, nil
 	}
-	b, err := hex.DecodeString(revision)
+	id, err := lib.NewRevisionIdFromString(revision)
 	if err != nil {
 		return lib.RevisionId{}, lib.Errorf("invalid revision id: %s", revision)
 	}
-	revisionId = lib.RevisionId(b)
-	return revisionId, nil
+	chain, err := lib.ReadRevisionChain(ctx, repository)
+	if err != nil {
+		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read revision chain")
+	}
+	if !id.IsInChain(chain) {
+		return lib.RevisionId{}, lib.Errorf("revision not found in repository: %s", revision)
+	}
+	return id, nil
 }
 
 func openWorkspace(ctx context.Context) (*ws.Workspace, error) {

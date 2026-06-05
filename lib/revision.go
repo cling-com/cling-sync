@@ -4,9 +4,20 @@ import (
 	"context"
 	"encoding/hex"
 	"io"
+	"slices"
+	"strings"
 )
 
 type RevisionId BlockId
+
+// NewRevisionIdFromString parses a hex-encoded RevisionId.
+func NewRevisionIdFromString(s string) (RevisionId, error) {
+	id, err := NewBlockIdFromString(s)
+	if err != nil {
+		return RevisionId{}, WrapErrorf(err, "invalid revision id")
+	}
+	return RevisionId(id), nil
+}
 
 func (id RevisionId) String() string {
 	return hex.EncodeToString(id[:])
@@ -14,6 +25,10 @@ func (id RevisionId) String() string {
 
 func (id RevisionId) IsRoot() bool {
 	return id == (RevisionId)(BlockId{})
+}
+
+func (id RevisionId) IsInChain(chain RevisionChain) bool {
+	return slices.Contains(chain, id)
 }
 
 // RevisionChain is a list of revision ids, head first, ending at the revision
@@ -37,6 +52,69 @@ func ReadRevisionChain(ctx context.Context, repository *Repository) (RevisionCha
 		id = revision.ParentRevisionId
 	}
 	return chain, nil
+}
+
+// RevisionRange is a span of the revision chain. Until is the included revision
+// and Since is the excluded one, like git's `Since..Until`. A nil Until means
+// the head. A nil Since means the root.
+type RevisionRange struct {
+	Since *RevisionId
+	Until *RevisionId
+}
+
+// NewRevisionRangeFromString parses the text format:
+//
+//	<until>           <until> back to the root (a single revision)
+//	<since>..<until>  excludes <since>, like git's `since..until`
+//	<since>..         after <since> up to the head
+//	..<until>         the root up to <until> (same as `<until>`)
+//	(empty)           the whole chain
+func NewRevisionRangeFromString(s string) (RevisionRange, error) {
+	var r RevisionRange
+	since, until, isRange := strings.Cut(s, "..")
+	if !isRange {
+		since, until = "", since
+	}
+	if since != "" {
+		id, err := NewRevisionIdFromString(since)
+		if err != nil {
+			return r, WrapErrorf(err, "invalid range since %q", since)
+		}
+		r.Since = &id
+	}
+	if until != "" {
+		id, err := NewRevisionIdFromString(until)
+		if err != nil {
+			return r, WrapErrorf(err, "invalid range until %q", until)
+		}
+		r.Until = &id
+	}
+	return r, nil
+}
+
+func (r RevisionRange) String() string {
+	switch {
+	case r.Since == nil && r.Until == nil:
+		return ""
+	case r.Since == nil:
+		return r.Until.String()
+	case r.Until == nil:
+		return r.Since.String() + ".."
+	default:
+		return r.Since.String() + ".." + r.Until.String()
+	}
+}
+
+// IsInChain reports whether every bound of the range is part of the chain. A
+// nil bound (the head or the root) is always considered valid.
+func (r RevisionRange) IsInChain(chain RevisionChain) bool {
+	if r.Since != nil && !r.Since.IsInChain(chain) {
+		return false
+	}
+	if r.Until != nil && !r.Until.IsInChain(chain) {
+		return false
+	}
+	return true
 }
 
 type RevisionReader struct {

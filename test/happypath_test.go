@@ -92,9 +92,16 @@ func TestHappyPath(t *testing.T) {
 			sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction", "--revision", rev1Id),
 			"Listing the first revision should match",
 		)
+		// A well-formed but unknown revision id is rejected by the CLI.
+		unknownRev := strings.Repeat("0", 63) + "1"
+		assert.Contains(
+			sut.ClingSyncError("ls", "--revision", unknownRev),
+			"revision not found in repository",
+			"ls should reject an unknown revision",
+		)
 	}
 
-	t.Log("Log revision history (log)")
+	t.Log("Log revision history (log, --revision, --pattern)")
 	{
 		assert.Equal(td.Dedent(fmt.Sprintf(`
             %s %s second commit
@@ -113,6 +120,36 @@ func TestHappyPath(t *testing.T) {
 			`, rev2Id, rev2Date, rev1Id, rev1Date)),
 			sut.ClingSync("log", "--short", "--status"),
 			"Log should contain the two revisions")
+
+		// `--revision <id>` logs from that revision back to the root.
+		assert.Equal(
+			fmt.Sprintf("%s %s first commit", rev1Id, rev1Date),
+			sut.ClingSync("log", "--short", "--revision", rev1Id),
+			"Logging the first revision should show only it",
+		)
+
+		// `--revision <old>..<new>` is a range that excludes <old> (git-style).
+		assert.Equal(
+			fmt.Sprintf("%s %s second commit", rev2Id, rev2Date),
+			sut.ClingSync("log", "--short", "--revision", rev1Id+".."+rev2Id),
+			"A range should exclude the older revision",
+		)
+
+		// `--pattern` restricts the log to revisions touching a matching path.
+		assert.Equal(
+			fmt.Sprintf("%s %s second commit", rev2Id, rev2Date),
+			sut.ClingSync("log", "--short", "--pattern", "c.txt"),
+			"Only the revision that added c.txt should match",
+		)
+		assert.Equal(2, td.Wc("-l", sut.ClingSync("log", "--short", "--pattern", "a.txt")),
+			"Both revisions touched a.txt")
+
+		// An unknown revision id in a range is rejected by the CLI.
+		assert.Contains(
+			sut.ClingSyncError("log", "--short", "--revision", rev1Id+".."+strings.Repeat("0", 63)+"1"),
+			"revision not found in repository",
+			"log should reject an unknown revision in a range",
+		)
 	}
 
 	t.Log("Copy a file from an older revision (cp, status)")
