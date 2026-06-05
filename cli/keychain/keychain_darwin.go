@@ -21,6 +21,9 @@ import (
 var (
 	ErrKeychainEntryNotFound      = lib.Errorf("keychain entry not found")
 	ErrKeychainEntryAlreadyExists = lib.Errorf("keychain entry already exists")
+	ErrKeychainLocked             = lib.Errorf(
+		"macOS keychain is locked, unlock it by running: security unlock-keychain",
+	)
 )
 
 // createCFString is a helper to convert a Go string to a CFStringRef.
@@ -71,7 +74,7 @@ func AddKeychainEntry(ctx context.Context, service, account, secret string) erro
 		return ErrKeychainEntryAlreadyExists
 	}
 	if addStatus != C.errSecSuccess {
-		return lib.Errorf("failed to add keychain entry: %d", addStatus)
+		return keychainError(int32(addStatus), "store")
 	}
 	return nil
 }
@@ -90,7 +93,7 @@ func GetKeychainEntry(ctx context.Context, service, account string) (string, err
 		return "", ErrKeychainEntryNotFound
 	}
 	if status != C.errSecSuccess {
-		return "", lib.Errorf("failed to get keychain entry: %d", status)
+		return "", keychainError(int32(status), "lookup")
 	}
 	defer C.CFRelease(result)
 
@@ -108,7 +111,47 @@ func DeleteKeychainEntry(ctx context.Context, service, account string) error {
 
 	status := C.SecItemDelete(C.CFDictionaryRef(query))
 	if status != C.errSecSuccess && status != C.errSecItemNotFound {
-		return lib.Errorf("failed to delete keychain entry: %d", status)
+		return keychainError(int32(status), "delete")
 	}
 	return nil
+}
+
+const (
+	errSecInteractionNotAllowed = int32(C.errSecInteractionNotAllowed)
+	errSecInteractionRequired   = int32(C.errSecInteractionRequired)
+)
+
+// keychainError translates a macOS OSStatus into a readable error. It takes int32, not the
+// natural C.OSStatus, so the mapping stays testable: Go forbids cgo in _test.go files.
+// SecCopyErrorMessageString supplies Apple's own description for any code we do not special-case.
+func keychainError(status int32, operation string) error {
+	// errSecInteractionNotAllowed (-25308) and errSecInteractionRequired (-25315) both mean
+	// the keychain needed unlocking but no prompt could be shown, which from a CLI almost
+	// always means it is locked.
+	if status == errSecInteractionNotAllowed || status == errSecInteractionRequired {
+		return ErrKeychainLocked
+	}
+	if msg := secErrorMessage(status); msg != "" {
+		return lib.Errorf("failed to %s keychain entry: %s (%d)", operation, msg, status)
+	}
+	return lib.Errorf("failed to %s keychain entry: %d", operation, status)
+}
+
+func secErrorMessage(status int32) string {
+	cMsg := C.SecCopyErrorMessageString(C.OSStatus(status), nil)
+	if cMsg == 0 {
+		return ""
+	}
+	defer C.CFRelease(C.CFTypeRef(cMsg))
+	if ptr := C.CFStringGetCStringPtr(cMsg, C.kCFStringEncodingUTF8); ptr != nil {
+		return C.GoString(ptr)
+	}
+	length := C.CFStringGetLength(cMsg)
+	maxSize := C.CFStringGetMaximumSizeForEncoding(length, C.kCFStringEncodingUTF8) + 1
+	buf := (*C.char)(C.malloc(C.size_t(maxSize)))
+	defer C.free(unsafe.Pointer(buf))
+	if C.CFStringGetCString(cMsg, buf, maxSize, C.kCFStringEncodingUTF8) != 0 {
+		return C.GoString(buf)
+	}
+	return ""
 }
