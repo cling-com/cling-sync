@@ -1,2 +1,2 @@
-golangci-lint
-protoc/
+*
+!.gitignore

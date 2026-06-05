@@ -16,6 +16,6 @@ Run the Bash tests from this directory:
 
     ./test.sh
 
-Run the tests (Go and Bash) in a Docker container:
+Run the tests on Linux:
 
-    ./docker.sh
+    ./test_linux.sh

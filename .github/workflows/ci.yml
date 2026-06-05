@@ -33,5 +33,9 @@ jobs:
     - name: Test race
       run: ./build.sh test --race
 
+    - name: Test on Linux
+      if: runner.os != 'Linux'
+      run: ./test/test_linux.sh
+
     - name: Bench
       run: ./build.sh bench

@@ -46,6 +46,18 @@ fi
 
 projects="lib workspace http cli wasm test"
 
+# Per-platform tool cache (<os>-<arch>, matching Go's GOOS-GOARCH so the protoc
+# test helpers resolve it).
+case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64|Darwin-aarch64) tools_platform="darwin-arm64" ;;
+    Darwin-x86_64)               tools_platform="darwin-amd64" ;;
+    Linux-arm64|Linux-aarch64)   tools_platform="linux-arm64" ;;
+    Linux-x86_64)                tools_platform="linux-amd64" ;;
+    *) echo "Unsupported platform: $(uname -s)-$(uname -m)"; exit 1 ;;
+esac
+tools_dir="$root/tools/$tools_platform"
+export CLING_GOLANGCI_LINT="$tools_dir/golangci-lint"
+
 # Reformat raw `go test -bench` output into an aligned table with humanized
 # units (ns/us/ms/s, B/KB/MB/GB) and comma-separated counters. Non-benchmark
 # lines are dropped so the file diffs cleanly run-to-run.
@@ -132,8 +144,8 @@ build_tools() {
     # Install golangci-lint.
     local lint_version="2.11.2"
     local lint_current=""
-    if [ -f tools/golangci-lint ]; then
-        lint_current=$(tools/golangci-lint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+    if [ -f "$tools_dir/golangci-lint" ]; then
+        lint_current=$("$tools_dir/golangci-lint" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
     fi
     if [ "$lint_current" != "$lint_version" ]; then
         echo ">>> Downloading golangci-lint v$lint_version"
@@ -150,15 +162,16 @@ build_tools() {
         esac
         local dirname="golangci-lint-${lint_version}-${os}-${arch}"
         local url="https://github.com/golangci/golangci-lint/releases/download/v${lint_version}/${dirname}.tar.gz"
-        curl -SsL "$url" | tar xzO "${dirname}/golangci-lint" > "$root/tools/golangci-lint"
-        chmod +x "$root/tools/golangci-lint"
+        mkdir -p "$tools_dir"
+        curl -SsL "$url" | tar xzO "${dirname}/golangci-lint" > "$tools_dir/golangci-lint"
+        chmod +x "$tools_dir/golangci-lint"
     fi
 
     # Install protoc.
     local protoc_version="29.3"
     local protoc_current=""
-    if [ -x tools/protoc/bin/protoc ]; then
-        protoc_current=$(tools/protoc/bin/protoc --version 2>/dev/null | awk '{print $2}')
+    if [ -x "$tools_dir/protoc/bin/protoc" ]; then
+        protoc_current=$("$tools_dir/protoc/bin/protoc" --version 2>/dev/null | awk '{print $2}')
     fi
     if [ "$protoc_current" != "$protoc_version" ]; then
         echo ">>> Downloading protoc v$protoc_version"
@@ -175,11 +188,11 @@ build_tools() {
         esac
         local filename="protoc-${protoc_version}-${os}-${arch}.zip"
         local url="https://github.com/protocolbuffers/protobuf/releases/download/v${protoc_version}/${filename}"
-        rm -rf "$root/tools/protoc"
-        mkdir -p "$root/tools/protoc"
+        rm -rf "$tools_dir/protoc"
+        mkdir -p "$tools_dir/protoc"
         local zip=$(mktemp)
         curl -SsL "$url" -o "$zip"
-        unzip -q "$zip" -d "$root/tools/protoc"
+        unzip -q "$zip" -d "$tools_dir/protoc"
         rm -f "$zip"
     fi
 }
@@ -204,7 +217,7 @@ case "$cmd" in
         else
             build_tools
             echo ">>> Formatting code"
-            run_project_cmd "$root/tools/golangci-lint fmt" "$@"
+            run_project_cmd "$tools_dir/golangci-lint fmt" "$@"
             bash wasm/build.sh fmt
         fi
         ;;
@@ -215,7 +228,7 @@ case "$cmd" in
         else
             build_tools
             echo ">>> Linting code"
-            run_project_cmd "$root/tools/golangci-lint run" "$@"
+            run_project_cmd "$tools_dir/golangci-lint run" "$@"
             bash wasm/build.sh lint
         fi
         ;;

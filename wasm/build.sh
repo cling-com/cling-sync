@@ -103,7 +103,15 @@ case "$cmd" in
         ;;
     lint)
         echo ">>> Linting wasm code"
-        GOOS=js GOARCH=wasm ../tools/golangci-lint run --build-tags=wasm
+        case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64|Darwin-aarch64) p="darwin-arm64" ;;
+            Darwin-x86_64)               p="darwin-amd64" ;;
+            Linux-arm64|Linux-aarch64)   p="linux-arm64" ;;
+            Linux-x86_64)                p="linux-amd64" ;;
+            *) echo "Unsupported platform: $(uname -s)-$(uname -m)"; exit 1 ;;
+        esac
+        golangci_lint="$root/../tools/$p/golangci-lint"
+        GOOS=js GOARCH=wasm "$golangci_lint" run --build-tags=wasm
         ;;
     *)
         echo "Unknown target: $cmd"

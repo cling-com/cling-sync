@@ -15,10 +15,11 @@ import (
 )
 
 // protocPath returns the absolute path to the pinned protoc binary that
-// `./build.sh tools` downloads to <repo>/tools/protoc/bin/protoc.
+// `./build.sh tools` downloads to <repo>/tools/<os>-<arch>/protoc/bin/protoc.
 func protocPath() string {
 	_, file, _, _ := runtime.Caller(0) //nolint:dogsled
-	return filepath.Join(filepath.Dir(file), "..", "tools", "protoc", "bin", "protoc")
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	return filepath.Join(filepath.Dir(file), "..", "tools", platform, "protoc", "bin", "protoc")
 }
 
 // TestFormatMarshall encodes a message with the generated Marshall and asks

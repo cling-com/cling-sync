@@ -15,7 +15,8 @@ import (
 
 func protocPath() string {
 	_, file, _, _ := runtime.Caller(0) //nolint:dogsled
-	return filepath.Join(filepath.Dir(file), "..", "tools", "protoc", "bin", "protoc")
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	return filepath.Join(filepath.Dir(file), "..", "tools", platform, "protoc", "bin", "protoc")
 }
 
 // protoTester encodes a single proto field and returns the wire bytes.
