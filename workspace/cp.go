@@ -37,6 +37,7 @@ type CpOptions struct {
 	RevisionId             lib.RevisionId
 	Monitor                CpMonitor
 	PathFilter             lib.PathFilter
+	PathPrefix             lib.Path
 	RestorableMetadataFlag lib.RestorableMetadataFlag
 }
 
@@ -52,14 +53,19 @@ func Cp( //nolint:funlen
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
 	defer snapshot.Remove() //nolint:errcheck
-	reader := snapshot.Reader(lib.RevisionEntryPathFilter(opts.PathFilter))
+	reader := snapshot.Reader(nil)
 	mon := opts.Monitor
-	directories := []*lib.RevisionEntry{}
+	// Directory modes are restored last, after their contents. We carry the
+	// prefix-relative restore target because the entry itself is left untouched.
+	type restorableDir struct {
+		md     *lib.PathMetadata
+		target string
+	}
+	directories := []restorableDir{}
 	restoreDirFileModes := func() error {
-		for _, entry := range directories {
-			target := entry.Path.String()
-			if err := restoreFileMode(targetFS, target, &entry.Metadata, opts.RestorableMetadataFlag); err != nil {
-				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", entry.Metadata.FileMode, target)
+		for _, dir := range directories {
+			if err := restoreFileMode(targetFS, dir.target, dir.md, opts.RestorableMetadataFlag); err != nil {
+				return lib.WrapErrorf(err, "failed to restore file mode %s for %s", dir.md.FileMode, dir.target)
 			}
 		}
 		return nil
@@ -74,7 +80,16 @@ func Cp( //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		target := entry.Path.String()
+		// Match the filter and restore under the prefix-relative path the user
+		// sees.
+		path, ok := entry.Path.TrimBase(opts.PathPrefix)
+		if !ok {
+			continue
+		}
+		if opts.PathFilter != nil && !opts.PathFilter.Include(path, entry.Metadata.FileMode.IsDir()) {
+			continue
+		}
+		target := path.String()
 		if err := mon.OnStart(entry, target); err != nil {
 			return lib.WrapErrorf(err, "cp monitor start failed for %s", target)
 		}
@@ -103,7 +118,7 @@ func Cp( //nolint:funlen
 					}
 					return lib.WrapErrorf(err, "failed to change permissions of %s", target)
 				}
-				directories = append(directories, entry)
+				directories = append(directories, restorableDir{&entry.Metadata, target})
 			}
 		}
 		if err := mon.OnEnd(entry, target); err != nil {

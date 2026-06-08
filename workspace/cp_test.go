@@ -48,6 +48,47 @@ func TestCp(t *testing.T) {
 		assert.Error(err, "exists")
 	})
 
+	t.Run("PathPrefix scopes the pattern and restores relative to the prefix", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("A/B/1.txt", "x1")
+		w.Write("A/B/2.txt", "x2")
+		w.Write("A/C/3.txt", "x3")
+		w.Symlink("B/1.txt", "A/link")
+		rev, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		prefixA, err := lib.NewPath("A")
+		assert.NoError(err)
+		cpOpts := func(pattern string) *CpOptions {
+			return &CpOptions{
+				rev, wstd.CpMonitor(),
+				lib.NewPathInclusionFilter([]string{pattern}), prefixA, lib.RestorableMetadataAll,
+			}
+		}
+
+		// `B/*` is matched relative to the prefix, and files land without the `A/`.
+		out := td.NewTestFS(t, td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out.FS, cpOpts("B/*"), td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]lib.TestFileInfo{
+			{"B", 0o700 | fs.ModeDir, 0, ""},
+			{"B/1.txt", 0o600, 2, "x1"},
+			{"B/2.txt", 0o600, 2, "x2"},
+		}, out.Ls("."))
+
+		// A symlink under the prefix keeps a correct relative target after trimming.
+		out2 := td.NewTestFS(t, td.NewFS(t))
+		err = Cp(t.Context(), r.Repository, out2.FS, cpOpts("link"), td.NewFS(t))
+		assert.NoError(err)
+		linkTarget, err := out2.FS.ReadLink("link")
+		assert.NoError(err)
+		assert.Equal("B/1.txt", linkTarget)
+	})
+
 	t.Run("Overwrite", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)

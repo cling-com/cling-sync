@@ -28,6 +28,7 @@ const (
 	appName                   = "cling-sync"
 	fastScanFlagDescription   = "Speed up scanning by skipping file hash comparisons.\nFile changes are detected by trusting file metadata (size, ctime, inode).\nWARNING: May miss some changes, especially on network or FUSE file-systems.\nWhen in doubt, run without this flag for thorough verification."
 	repositoryFlagDescription = "Use this repository (local path or s3+... URI) instead of the workspace repository"
+	pathPrefixFlagDescription = "Use this path prefix instead of the workspace's, e.g. `dir/`.\nUse `/` to ignore the workspace prefix and operate on the whole repository from its root."
 )
 
 func AttachCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
@@ -116,9 +117,9 @@ func AttachCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create temporary directory")
 	}
-	pathPrefix, err := ws.ValidatePathPrefix(args.PathPrefix)
+	pathPrefix, err := parsePathPrefix(args.PathPrefix, lib.Path{})
 	if err != nil {
-		return lib.WrapErrorf(err, "invalid path prefix %q", args.PathPrefix)
+		return err
 	}
 	workspace, err := ws.NewWorkspace(
 		ctx,
@@ -363,6 +364,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		Overwrite    bool
 		Chown        bool
 		Repository   string
+		PathPrefix   string
 		Exclude      lib.ExtendedGlobPatterns
 	}{}
 	flags := flag.NewFlagSet("cp", flag.ExitOnError)
@@ -374,6 +376,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	flags.BoolVar(&args.Chown, "chown", false, "Restore file ownership from the repository.")
 	flags.BoolVar(&args.Overwrite, "overwrite", false, "Overwrite existing files")
 	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
+	flags.StringVar(&args.PathPrefix, "path-prefix", "", pathPrefixFlagDescription)
 	globPatternFlag(
 		flags,
 		"exclude",
@@ -407,6 +410,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	}
 	var (
 		repository *lib.Repository
+		pathPrefix lib.Path
 		err        error
 	)
 	if args.Repository != "" {
@@ -425,8 +429,13 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		if err != nil {
 			return err
 		}
+		pathPrefix = workspace.PathPrefix
 	}
 	defer repository.Close() //nolint:errcheck
+	pathPrefix, err = parsePathPrefix(args.PathPrefix, pathPrefix)
+	if err != nil {
+		return err
+	}
 	pathFilter := &lib.AllPathFilter{Filters: []lib.PathFilter{
 		lib.NewPathInclusionFilter([]string{flags.Arg(0)}),
 		&lib.PathExclusionFilter{args.Exclude},
@@ -442,6 +451,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	}
 	opts := &ws.CpOptions{
 		PathFilter:             pathFilter,
+		PathPrefix:             pathPrefix,
 		Monitor:                mon,
 		RevisionId:             revisionId,
 		RestorableMetadataFlag: lib.RestorableMetadataAll,
@@ -806,6 +816,21 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	return nil
 }
 
+func parsePathPrefix(flag string, default_ lib.Path) (lib.Path, error) {
+	switch flag {
+	case "":
+		return default_, nil
+	case "/":
+		return lib.Path{}, nil
+	default:
+		prefix, err := ws.ValidatePathPrefix(flag)
+		if err != nil {
+			return lib.Path{}, lib.WrapErrorf(err, "invalid path prefix %q", flag)
+		}
+		return prefix, nil
+	}
+}
+
 func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
 		Help            bool
@@ -824,8 +849,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
 	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
-	flags.StringVar(&args.PathPrefix, "path-prefix", "",
-		"List only this subtree of the repository, e.g. `dir/` (overrides the workspace path prefix)")
+	flags.StringVar(&args.PathPrefix, "path-prefix", "", pathPrefixFlagDescription)
 	flags.BoolVar(&args.Short, "short", false, "Show short listing (same as --timestamp-format=relative)")
 	flags.BoolVar(&args.FileHash, "file-hash", false, "Show file hash")
 	flags.BoolVar(
@@ -901,11 +925,9 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		pathPrefix = workspace.PathPrefix
 	}
 	defer repository.Close() //nolint:errcheck
-	if args.PathPrefix != "" {
-		pathPrefix, err = ws.ValidatePathPrefix(args.PathPrefix)
-		if err != nil {
-			return lib.WrapErrorf(err, "invalid path prefix %q", args.PathPrefix)
-		}
+	pathPrefix, err = parsePathPrefix(args.PathPrefix, pathPrefix)
+	if err != nil {
+		return err
 	}
 	revisionId, err := revisionId(ctx, repository, args.Revision)
 	if err != nil {

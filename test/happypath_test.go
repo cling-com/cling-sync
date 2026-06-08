@@ -709,11 +709,50 @@ func TestPathPrefix(t *testing.T) {
 		`), td.Column(ls, 4))
 	}
 
-	t.Log("`ls --path-prefix` overrides the workspace prefix")
+	t.Log("`ls --path-prefix dir1/` overrides the workspace prefix")
 	{
 		// workspace2 has prefix look/here/, but --path-prefix points elsewhere.
 		ls := sut.ClingSync("ls", "--path-prefix", "dir1/", "--short-file-mode", "--timestamp-format", "unix-fraction")
 		assert.Equal("b.txt", td.Column(ls, 4))
+	}
+
+	t.Log("`ls --path-prefix /` resets to the repository root")
+	{
+		// workspace2 has prefix look/here/, but `/` lists from the root.
+		ls := sut.ClingSync("ls", "--path-prefix", "/", "--short-file-mode", "--timestamp-format", "unix-fraction")
+		assert.Equal(td.Dedent(`
+			a.txt
+			dir1/
+			dir1/b.txt
+			look/
+			look/here/
+			look/here/c.txt
+			look/here/dir2/
+			look/here/dir2/d.txt
+		`), td.Column(ls, 4))
+	}
+
+	t.Log("`cp` matches `ls`: prefix-relative by default, whole repository with --path-prefix /")
+	{
+		// Default: the pattern and the restored layout are relative to look/here/.
+		sut.ClingSync("cp", "--no-progress", "*", "../cp-prefix")
+		got, err := os.ReadFile(sut.Path("../cp-prefix/c.txt"))
+		assert.NoError(err)
+		assert.Equal("c", string(got), "cp should restore relative to the prefix")
+		got, err = os.ReadFile(sut.Path("../cp-prefix/dir2/d.txt"))
+		assert.NoError(err)
+		assert.Equal("d", string(got))
+		_, err = os.Stat(sut.Path("../cp-prefix/look"))
+		assert.Equal(true, os.IsNotExist(err), "default cp must not include the prefix directories")
+
+		// --path-prefix "/" restores full repository paths.
+		sut.ClingSync("cp", "--no-progress", "--path-prefix", "/", "*", "../cp-root")
+		got, err = os.ReadFile(sut.Path("../cp-root/a.txt"))
+		assert.NoError(err)
+		assert.Equal("a", string(got), "cp --path-prefix / should restore full repository paths")
+		got, err = os.ReadFile(sut.Path("../cp-root/look/here/c.txt"))
+		assert.NoError(err)
+		assert.Equal("c", string(got))
 	}
 
 	t.Log("Run `status` in workspace with path prefix")

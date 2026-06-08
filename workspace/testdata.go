@@ -94,6 +94,7 @@ func (wstd WorkspaceTestData) CpOptions(revisionId lib.RevisionId) *CpOptions {
 		revisionId,
 		wstd.CpMonitor(),
 		nil,
+		lib.Path{},
 		lib.RestorableMetadataAll,
 	}
 }

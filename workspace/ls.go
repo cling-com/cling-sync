@@ -97,7 +97,7 @@ func Ls(ctx context.Context, repository *lib.Repository, tmpFS lib.FS, opts *LsO
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
 	defer snapshot.Remove() //nolint:errcheck
-	reader := snapshot.Reader(lib.RevisionEntryPathFilter(opts.PathFilter))
+	reader := snapshot.Reader(nil)
 	files := []LsFile{}
 	buf := lib.NewBlockBuf()
 	for {
@@ -108,12 +108,16 @@ func Ls(ctx context.Context, repository *lib.Repository, tmpFS lib.FS, opts *LsO
 			}
 			return nil, lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
+		// Trim the prefix first so the filter matches against the
+		// prefix-relative path the user sees, not the full repository path.
 		path, ok := re.Path.TrimBase(opts.PathPrefix)
 		if !ok {
 			continue
 		}
-		re.Path = path
-		files = append(files, LsFile{re.Path, re.Metadata})
+		if opts.PathFilter != nil && !opts.PathFilter.Include(path, re.Metadata.FileMode.IsDir()) {
+			continue
+		}
+		files = append(files, LsFile{path, re.Metadata})
 	}
 	return files, nil
 }
