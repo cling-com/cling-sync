@@ -278,6 +278,81 @@ func InitCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error
 	return nil
 }
 
+func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
+	args := struct { //nolint:exhaustruct
+		Help       bool
+		Revision   string
+		Repository string
+		Stdout     bool
+	}{}
+	flags := flag.NewFlagSet("cat", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to read from")
+	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
+	flags.BoolVar(&args.Stdout, "stdout", false, "Write to stdout even when it is a terminal (do not page)")
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s cat <path>\n\n", appName)
+		fmt.Fprint(os.Stderr, "Print the contents of a file in the repository.\n")
+		fmt.Fprint(os.Stderr, "When stdout is a terminal, the file is shown in a pager;\n")
+		fmt.Fprint(os.Stderr, "otherwise it is written to stdout.\n")
+		fmt.Fprint(os.Stderr, "\nArguments:\n")
+		fmt.Fprint(os.Stderr, "  path\n")
+		fmt.Fprint(os.Stderr, "        The repository path of the file to print.\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	if len(flags.Args()) != 1 {
+		return lib.Errorf("one positional argument is required: <path>")
+	}
+	path, err := lib.NewPath(flags.Arg(0))
+	if err != nil {
+		return lib.WrapErrorf(err, "invalid path %q", flags.Arg(0))
+	}
+	var repository *lib.Repository
+	if args.Repository != "" {
+		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+	} else {
+		var workspace *ws.Workspace
+		workspace, err = openWorkspace(ctx)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to open workspace")
+		}
+		defer workspace.Close() //nolint:errcheck
+		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+	}
+	revisionId, err := revisionId(ctx, repository, args.Revision)
+	if err != nil {
+		return err
+	}
+	tmpFS, cleanup, err := newTempFS("cat")
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	opts := &ws.CatOptions{RevisionId: revisionId, Path: path}
+	if args.Stdout || !IsTerm(os.Stdout) {
+		return ws.Cat(ctx, repository, os.Stdout, opts, tmpFS) //nolint:wrapcheck
+	}
+	var buf bytes.Buffer
+	if err := ws.Cat(ctx, repository, &buf, opts, tmpFS); err != nil {
+		return err //nolint:wrapcheck
+	}
+	return NewPager(os.Stdin, os.Stdout).Show(buf.Bytes())
+}
+
 func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
 		Help         bool
@@ -2064,6 +2139,7 @@ func run() int { //nolint:funlen
 		)
 		fmt.Fprint(os.Stderr, "Commands:\n")
 		fmt.Fprint(os.Stderr, "  attach       Attach a local directory to a repository\n")
+		fmt.Fprint(os.Stderr, "  cat          Print the contents of a file in the repository\n")
 		fmt.Fprint(os.Stderr, "  check        Check the health of the repository\n")
 		fmt.Fprint(os.Stderr, "  cp           Copy files from the repository to a local directory\n")
 		fmt.Fprint(os.Stderr, "  init         Initialize a new repository\n")
@@ -2103,6 +2179,8 @@ func run() int { //nolint:funlen
 	switch cmd {
 	case "attach":
 		err = AttachCmd(ctx, argv, args.PassphraseFromStdin)
+	case "cat":
+		err = CatCmd(ctx, argv, args.PassphraseFromStdin)
 	case "check":
 		err = CheckCmd(ctx, argv, args.PassphraseFromStdin)
 	case "cp":

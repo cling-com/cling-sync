@@ -175,6 +175,28 @@ func TestHappyPath(t *testing.T) {
 		sut.ClingSync("merge", "--no-progress", "--message", "revert b.txt")
 	}
 
+	t.Log("Print file contents (cat)")
+	{
+		// Without a tty, both the default and --stdout write straight to stdout.
+		assert.Equal("b", sut.ClingSync("cat", "b.txt"), "cat should print the HEAD content")
+		assert.Equal("b", sut.ClingSync("cat", "--stdout", "b.txt"), "cat --stdout should print the HEAD content")
+		assert.Equal("d", sut.ClingSync("cat", "dir1/d.txt"), "cat should print a nested file")
+
+		// --revision reads the file as of an older revision, even if deleted at HEAD.
+		assert.Equal(
+			"bb",
+			sut.ClingSync("cat", "--revision", rev2Id, "b.txt"),
+			"cat --revision should read that revision",
+		)
+		assert.Equal("a", sut.ClingSync("cat", "--revision", rev1Id, "a.txt"),
+			"cat --revision should read a file deleted at HEAD")
+
+		// A file absent from the revision and a directory are both errors.
+		assert.Contains(sut.ClingSyncError("cat", "--revision", rev1Id, "c.txt"), "file not found",
+			"cat should fail for a file absent in the revision")
+		assert.Contains(sut.ClingSyncError("cat", "dir1"), "is a directory", "cat should fail for a directory")
+	}
+
 	t.Log("Attach the repository to a second workspace")
 	{
 		workspace1Ls := sut.Ls()
@@ -304,7 +326,7 @@ func TestHappyPath(t *testing.T) {
 		assert.Equal("No changes", sut.ClingSync("status", "--chtime"), "After merge, no local changes should remain")
 	}
 
-	t.Log("Run repository commands with --repository and no workspace (log, ls, check, cp)")
+	t.Log("Run repository commands with --repository and no workspace (log, ls, check, cp, cat)")
 	{
 		// Capture reference output produced via the workspace, then remove the
 		// workspace so the same commands must reach the repository directly.
@@ -346,6 +368,10 @@ func TestHappyPath(t *testing.T) {
 		got, err := os.ReadFile(sut.Path("../cp-out/b.txt"))
 		assert.NoError(err, "failed to read copied b.txt")
 		assert.Equal(wsB, string(got), "cp via --repository should copy the repository content")
+
+		repoCat := sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin",
+			"cat", "--stdout", "--repository", "../repository", "b.txt")
+		assert.Equal(wsB, repoCat, "cat via --repository should print the repository content")
 	}
 }
 
