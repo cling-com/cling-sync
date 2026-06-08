@@ -26,7 +26,10 @@ func wasmContext() context.Context { return context.Background() }
 
 const MaxDownloadSize = 500 * 1024 * 1024
 
-var repositoryHandles = make(map[int]*lib.Repository) //nolint:gochecknoglobals
+var (
+	repositoryHandles    = make(map[int]*lib.Repository) //nolint:gochecknoglobals
+	nextRepositoryHandle int                             //nolint:gochecknoglobals
+)
 
 func BuildRepositoryAPI() js.Value {
 	repositoryAPI := &RepositoryAPI{}
@@ -35,6 +38,7 @@ func BuildRepositoryAPI() js.Value {
 	api.Set("head", js.FuncOf(repositoryAPI.Head))
 	api.Set("ls", js.FuncOf(repositoryAPI.Ls))
 	api.Set("readFile", js.FuncOf(repositoryAPI.ReadFile))
+	api.Set("close", js.FuncOf(repositoryAPI.Close))
 	return api
 }
 
@@ -63,7 +67,8 @@ func (r RepositoryAPI) Open(this js.Value, args []js.Value) any {
 			reject(js.ValueOf(err.Error()))
 			return
 		}
-		handle := len(repositoryHandles)
+		handle := nextRepositoryHandle
+		nextRepositoryHandle++
 		repositoryHandles[handle] = repository
 		resolve(js.ValueOf(handle))
 	})
@@ -241,5 +246,29 @@ func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:f
 		fileName := filepath.Base(file.Path.String())
 		result.Set("1", js.ValueOf(fileName))
 		resolve(result)
+	})
+}
+
+// Close wipes the repository's key material and drops the handle. The handle
+// must not be used afterwards.
+//
+// Parameters:
+//
+//	handle: RepositoryHandle
+//
+// Returns:
+//
+//	Promise<void>
+func (r RepositoryAPI) Close(this js.Value, args []js.Value) any {
+	handle := args[0].Int()
+	return Async(func(resolve func(js.Value), reject func(js.Value)) {
+		repository, ok := repositoryHandles[handle]
+		if !ok {
+			reject(js.ValueOf(fmt.Sprintf("invalid repository handle: %d", handle)))
+			return
+		}
+		delete(repositoryHandles, handle)
+		_ = repository.Close()
+		resolve(js.Undefined())
 	})
 }

@@ -246,6 +246,15 @@ func (r *Repository) GearCDCTable() GearCDCTable {
 	return r.gearCDCTable
 }
 
+// Close wipes the repository's key material. The instance must not be used afterwards.
+func (r *Repository) Close() error {
+	clear(r.blockIdHmacKey[:])
+	clear(r.gearCDCTable[:])
+	r.storage = nil
+	r.kekCipher = nil
+	return nil
+}
+
 // WriteBlock stores `data` as an encrypted, padded, optionally-compressed block
 // and returns its id. If `dataBytesWritten` is nil the block already existed.
 // Otherwise, it is the payload size after compression (if any). Padding obfuscates
@@ -305,6 +314,8 @@ func (r *Repository) WriteBlock(
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to generate random DEK for block %s", blockId)
 	}
+	// Best-effort wipe so the DEK does not linger in memory after the block is written.
+	defer clear(dek[:])
 	dekCipher, err := NewCipher(dek)
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to create DEK cipher for block %s", blockId)
@@ -321,6 +332,7 @@ func (r *Repository) WriteBlock(
 		Dek:               dek,
 		EncryptedDataSize: uint32(payloadLen), //nolint:gosec
 	}
+	defer clear(header.Dek[:])
 	headerTemp := work[dataOffset+len(encryptedPayload):]
 	headerWriter := NewProtobufWriter(headerTemp[:header.MarshallSize()])
 	if err := header.Marshall(headerWriter); err != nil {
@@ -381,6 +393,8 @@ func (r *Repository) ReadBlock(ctx context.Context, blockId BlockId, buf BlockBu
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to unmarshal block header for block %s", blockId)
 	}
+	// Best-effort wipe so the DEK does not linger in memory after the block is read.
+	defer clear(header.Dek[:])
 	if header.Version != uint32(StorageVersion) {
 		return nil, Errorf("unsupported block version %d for block %s", header.Version, blockId)
 	}

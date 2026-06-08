@@ -22,11 +22,13 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert.NoError(err)
 		repo1, err := InitNewRepository(t.Context(), storage, userPassphrase)
 		assert.NoError(err)
+		defer repo1.Close() //nolint:errcheck
 		head, err := repo1.Head(t.Context())
 		assert.NoError(err)
 		assert.Equal(true, head.IsRoot())
 		repo2, err := OpenRepository(t.Context(), storage, userPassphrase)
 		assert.NoError(err)
+		defer repo2.Close() //nolint:errcheck
 		assert.Equal(repo1.kekCipher, repo2.kekCipher)
 	})
 
@@ -37,6 +39,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert.NoError(err)
 		repo, err := InitNewRepository(t.Context(), storage, userPassphrase)
 		assert.NoError(err)
+		defer repo.Close() //nolint:errcheck
 		toml, err := repo.storage.Open(t.Context())
 		assert.NoError(err)
 		masterKeyInfo, err := parseRepositoryConfig(toml)
@@ -143,6 +146,43 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 			assert.Nil(repo2)
 		})
 	}
+}
+
+func TestRepositoryClose(t *testing.T) {
+	t.Parallel()
+	t.Run("Close wipes key material and renders the repository unusable", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		blockId, _, err := r.WriteBlock(t.Context(), []byte("plaintext"), NewBlockBuf())
+		assert.NoError(err)
+
+		assert.NoError(r.Close())
+
+		// All key material is zeroed and every handle is nil.
+		assert.Equal(RawKey{}, r.blockIdHmacKey)
+		assert.Equal(GearCDCTable{}, r.gearCDCTable)
+		assert.Nil(r.kekCipher)
+		assert.Nil(r.storage)
+
+		// Using the repository afterwards panics.
+		panicked := false
+		func() {
+			defer func() { panicked = recover() != nil }()
+			_, _ = r.ReadBlock(t.Context(), blockId, NewBlockBuf())
+		}()
+		assert.Equal(true, panicked, "expected panic when reading from a closed repository")
+	})
+
+	t.Run("Close is idempotent", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		assert.NoError(r.Close())
+		assert.NoError(r.Close())
+	})
 }
 
 func TestRepositoryReadWriteBlock(t *testing.T) {

@@ -167,6 +167,7 @@ func (td TestData) NewTestRepository(tb testing.TB, fs FS) *TestRepository {
 	assert.NoError(err)
 	repository, err := InitNewRepository(tb.Context(), storage, []byte(passphrase))
 	assert.NoError(err)
+	tb.Cleanup(func() { _ = repository.Close() })
 	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, tb, assert}
 }
 
@@ -178,6 +179,7 @@ func (td TestData) OpenRepository(tb testing.TB, fs FS) *TestRepository {
 	assert.NoError(err)
 	repository, err := OpenRepository(tb.Context(), storage, []byte(passphrase))
 	assert.NoError(err)
+	tb.Cleanup(func() { _ = repository.Close() })
 	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, tb, assert}
 }
 

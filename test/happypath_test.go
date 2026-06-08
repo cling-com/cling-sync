@@ -379,8 +379,10 @@ func TestSyncRepoHappyPath(t *testing.T) {
 	ctx := t.Context()
 	srcRepo, err := lib.OpenRepository(ctx, srcStorage, []byte(passphrase))
 	assert.NoError(err)
+	defer srcRepo.Close() //nolint:errcheck
 	dstRepo, err := lib.OpenRepository(ctx, dstStorage, []byte(passphrase))
 	assert.NoError(err)
+	defer dstRepo.Close() //nolint:errcheck
 
 	assert.Equal(sut.RepositoryHead(), headFromRepository(t, dstRepo))
 	assertSameRepositoryHistory(t, srcRepo, dstRepo)
@@ -405,6 +407,7 @@ func TestSyncRepoHappyPath(t *testing.T) {
 	assert.NoError(err)
 	dst2Repo, err := lib.OpenRepository(ctx, dst2Storage, []byte(passphrase))
 	assert.NoError(err)
+	defer dst2Repo.Close() //nolint:errcheck
 
 	t.Log("Add a commit, then sync only backup2 by name (with run-scoped flags before the name)")
 	firstHeadBeforeNamedRun := headFromRepository(t, dstRepo)

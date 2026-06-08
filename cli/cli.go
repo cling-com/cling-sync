@@ -105,9 +105,11 @@ func AttachCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	if err != nil {
 		return err
 	}
-	if _, err := lib.OpenRepository(ctx, storage, passphrase); err != nil {
+	repository, err := lib.OpenRepository(ctx, storage, passphrase)
+	if err != nil {
 		return lib.WrapErrorf(err, "failed to open repository")
 	}
+	repository.Close() //nolint:errcheck,gosec
 	repositoryURI = resolvedURI
 	// We know the repository exists, so let's create the workspace.
 	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-workspace")
@@ -253,9 +255,11 @@ func InitCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error
 		}
 		repositoryURI = repositoryPath
 	}
-	if _, err := lib.InitNewRepository(ctx, storage, passphrase); err != nil {
+	repository, err := lib.InitNewRepository(ctx, storage, passphrase)
+	if err != nil {
 		return lib.WrapErrorf(err, "failed to initialize repository")
 	}
+	repository.Close() //nolint:errcheck,gosec
 	tmpDir, err := os.MkdirTemp(os.TempDir(), "cling-sync-workspace")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create temporary directory")
@@ -347,6 +351,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 			return err
 		}
 	}
+	defer repository.Close() //nolint:errcheck
 	pathFilter := &lib.AllPathFilter{Filters: []lib.PathFilter{
 		lib.NewPathInclusionFilter([]string{flags.Arg(0)}),
 		&lib.PathExclusionFilter{args.Exclude},
@@ -438,6 +443,7 @@ func ResetCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	if err != nil {
 		return err
 	}
+	defer repository.Close() //nolint:errcheck
 	revisionId, err := revisionId(ctx, repository, flags.Arg(0))
 	if err != nil {
 		return err
@@ -534,6 +540,7 @@ func MergeCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	if err != nil {
 		return err
 	}
+	defer repository.Close() //nolint:errcheck
 	stagingMonitor, cpMonitor, commitMonitor := NewMergeMonitors(
 		CLIMonitorMode(args.Verbose, args.NoProgress),
 	)
@@ -683,6 +690,7 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	if err != nil {
 		return err
 	}
+	defer repository.Close() //nolint:errcheck
 	tmpFS, err := workspace.TempFS.MkSub("status")
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -817,6 +825,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		}
 		pathPrefix = workspace.PathPrefix
 	}
+	defer repository.Close() //nolint:errcheck
 	if args.PathPrefix != "" {
 		pathPrefix, err = ws.ValidatePathPrefix(args.PathPrefix)
 		if err != nil {
@@ -920,6 +929,7 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 			return err
 		}
 	}
+	defer repository.Close() //nolint:errcheck
 	var revisionRange lib.RevisionRange
 	if args.Revision != "" {
 		revisionRange, err = lib.NewRevisionRangeFromString(args.Revision)
@@ -1032,6 +1042,7 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 			return err
 		}
 	}
+	defer repository.Close() //nolint:errcheck
 	tempFS, cleanup, err := newTempFS("check")
 	if err != nil {
 		return err
@@ -1344,6 +1355,7 @@ func SyncRepoCmd(ctx context.Context, argv []string, passphraseFromStdin bool) e
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to open source repository")
 			}
+			defer repository.Close() //nolint:errcheck
 			chain, err = lib.ReadRevisionChain(ctx, repository)
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to read source revision chain")
@@ -1471,9 +1483,11 @@ func securityPassphraseCmd(ctx context.Context, op string, positional []string, 
 	if err != nil {
 		return err
 	}
-	if _, err := lib.OpenRepository(ctx, repositoryStorage, passphrase); err != nil {
+	repository, err := lib.OpenRepository(ctx, repositoryStorage, passphrase)
+	if err != nil {
 		return lib.WrapErrorf(err, "failed to validate passphrase against repository")
 	}
+	repository.Close() //nolint:errcheck,gosec
 	// Two layers: keychain holds a random local key, workspace holds the
 	// AEAD-encrypted passphrase. Neither alone unlocks the repo.
 	var encKey lib.RawKey
@@ -1581,9 +1595,11 @@ func securityEncryptS3URLCmd(ctx context.Context, argv []string, passphraseFromS
 		return lib.WrapErrorf(err, "failed to parse endpoint")
 	}
 	storage := clingHTTP.NewS3StorageClient(cfg, clingHTTP.NewDefaultHTTPClient(nil))
-	if _, err := lib.OpenRepository(ctx, storage, passphrase); err != nil {
+	repository, err := lib.OpenRepository(ctx, storage, passphrase)
+	if err != nil {
 		return lib.WrapErrorf(err, "failed to open repository at %s", endpoint)
 	}
+	repository.Close() //nolint:errcheck,gosec
 	uri, err := clingHTTP.EncodeS3URI(endpoint, creds, passphrase)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to encode S3 URI")
