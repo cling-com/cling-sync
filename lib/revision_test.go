@@ -4,23 +4,56 @@ import (
 	"testing"
 )
 
-func TestNewRevisionIdFromString(t *testing.T) {
+func TestParseRevisionId(t *testing.T) {
 	t.Parallel()
-	assert := NewAssert(t)
-	id := RevisionId{0xab, 0xcd}
-	parsed, err := NewRevisionIdFromString(id.String())
-	assert.NoError(err)
-	assert.Equal(id, parsed)
+	a := RevisionId{0xaa}
+	b := RevisionId{0xbb}
+	c := RevisionId{0xcc}
+	chain := RevisionChain{c, b, a} // head first: c is head, b is head~1, a is head~2.
 
-	t.Run("Malformed revision id should fail", func(t *testing.T) {
+	t.Run("head and ids resolve, ~n walks toward the root", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		_, err := NewRevisionIdFromString("not-hex")
+		for spec, want := range map[string]RevisionId{
+			"head":            c,
+			"HEAD":            c,
+			"head~0":          c,
+			"head~1":          b,
+			"head~2":          a,
+			"head~":           b,
+			b.String():        b,
+			c.String() + "~2": a,
+			b.String() + "~1": a,
+		} {
+			got, err := chain.ParseRevisionId(spec)
+			assert.NoError(err, spec)
+			assert.Equal(want, got, spec)
+		}
+	})
+
+	t.Run("Out-of-range and malformed specs should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		_, err := chain.ParseRevisionId("head~3") // only three revisions
+		assert.Error(err, "older than the oldest")
+		_, err = chain.ParseRevisionId(RevisionId{0xff}.String()) // valid hex, not in chain
+		assert.Error(err, "revision not found")
+		_, err = chain.ParseRevisionId("not-hex")
 		assert.Error(err, "invalid revision id")
-		_, err = NewRevisionIdFromString("abcd") // valid hex but too short
-		assert.Error(err, "invalid revision id")
-		_, err = NewRevisionIdFromString("")
-		assert.Error(err, "invalid revision id")
+		_, err = chain.ParseRevisionId("head~-1")
+		assert.Error(err, "non-negative")
+		_, err = chain.ParseRevisionId("head~x")
+		assert.Error(err, "non-negative")
+	})
+
+	t.Run("head on an empty chain is the root", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		got, err := RevisionChain{}.ParseRevisionId("head")
+		assert.NoError(err)
+		assert.Equal(true, got.IsRoot())
+		_, err = RevisionChain{}.ParseRevisionId("head~1")
+		assert.Error(err, "older than the oldest")
 	})
 }
 
@@ -28,8 +61,9 @@ func TestRevisionRange(t *testing.T) {
 	t.Parallel()
 	a := RevisionId{0xaa}
 	b := RevisionId{0xbb}
+	chain := RevisionChain{b, a} // head first: b is head, a is head~1.
 
-	t.Run("NewRevisionRangeFromString and String round-trip", func(t *testing.T) {
+	t.Run("ParseRevisionRange and String round-trip", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		cases := []struct {
@@ -41,27 +75,28 @@ func TestRevisionRange(t *testing.T) {
 			{a.String() + ".." + b.String(), RevisionRange{&a, &b}},
 			{a.String() + "..", RevisionRange{&a, nil}},
 			{".." + b.String(), RevisionRange{nil, &b}},
+			{"head~1..head", RevisionRange{&a, &b}}, // git-style bounds resolve
 		}
 		for _, c := range cases {
-			r, err := NewRevisionRangeFromString(c.in)
-			assert.NoError(err)
+			r, err := chain.ParseRevisionRange(c.in)
+			assert.NoError(err, c.in)
 			assert.Equal(c.want, r, c.in)
 		}
-		// String renders the canonical form, which NewRevisionRangeFromString accepts again.
+		// String renders the canonical form, which ParseRevisionRange accepts again.
 		assert.Equal("", RevisionRange{nil, nil}.String())
 		assert.Equal(b.String(), RevisionRange{nil, &b}.String())
 		assert.Equal(a.String()+".."+b.String(), RevisionRange{&a, &b}.String())
 		assert.Equal(a.String()+"..", RevisionRange{&a, nil}.String())
 	})
 
-	t.Run("Malformed revision id should fail", func(t *testing.T) {
+	t.Run("Malformed or unknown bounds should fail", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		_, err := NewRevisionRangeFromString("not-hex")
+		_, err := chain.ParseRevisionRange("not-hex")
 		assert.Error(err, "invalid range")
-		_, err = NewRevisionRangeFromString("dead..beef")
+		_, err = chain.ParseRevisionRange(RevisionId{0xcc}.String()) // valid hex, not in chain
 		assert.Error(err, "invalid range")
-		_, err = NewRevisionRangeFromString(a.String() + "..nothex")
+		_, err = chain.ParseRevisionRange(a.String() + "..nothex")
 		assert.Error(err, "invalid range")
 	})
 

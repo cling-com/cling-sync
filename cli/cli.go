@@ -1029,16 +1029,12 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 	defer repository.Close() //nolint:errcheck
 	var revisionRange lib.RevisionRange
 	if args.Revision != "" {
-		revisionRange, err = lib.NewRevisionRangeFromString(args.Revision)
-		if err != nil {
-			return err //nolint:wrapcheck
-		}
 		var chain lib.RevisionChain
 		if chain, err = lib.ReadRevisionChain(ctx, repository); err != nil {
 			return err //nolint:wrapcheck
 		}
-		if !revisionRange.IsInChain(chain) {
-			return lib.Errorf("revision not found in repository: %s", args.Revision)
+		if revisionRange, err = chain.ParseRevisionRange(args.Revision); err != nil {
+			return err //nolint:wrapcheck
 		}
 	}
 	opts := &ws.LogOptions{PathFilter: pathFilter, Status: args.Status, Range: revisionRange}
@@ -1866,25 +1862,11 @@ func ServeCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 }
 
 func revisionId(ctx context.Context, repository *lib.Repository, revision string) (lib.RevisionId, error) {
-	if strings.ToLower(revision) == "head" {
-		head, err := repository.Head(ctx)
-		if err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read head revision")
-		}
-		return head, nil
-	}
-	id, err := lib.NewRevisionIdFromString(revision)
-	if err != nil {
-		return lib.RevisionId{}, lib.Errorf("invalid revision id: %s", revision)
-	}
 	chain, err := lib.ReadRevisionChain(ctx, repository)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read revision chain")
 	}
-	if !id.IsInChain(chain) {
-		return lib.RevisionId{}, lib.Errorf("revision not found in repository: %s", revision)
-	}
-	return id, nil
+	return chain.ParseRevisionId(revision) //nolint:wrapcheck
 }
 
 func openWorkspace(ctx context.Context) (*ws.Workspace, error) {

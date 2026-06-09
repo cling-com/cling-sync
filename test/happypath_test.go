@@ -92,12 +92,24 @@ func TestHappyPath(t *testing.T) {
 			sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction", "--revision", rev1Id),
 			"Listing the first revision should match",
 		)
+		// `head~1` is git-style shorthand for the parent of the head revision.
+		assert.Equal(
+			rev1Ls,
+			sut.ClingSync("ls", "--short-file-mode", "--timestamp-format", "unix-fraction", "--revision", "head~1"),
+			"head~1 should resolve to the first revision",
+		)
 		// A well-formed but unknown revision id is rejected by the CLI.
 		unknownRev := strings.Repeat("0", 63) + "1"
 		assert.Contains(
 			sut.ClingSyncError("ls", "--revision", unknownRev),
 			"revision not found in repository",
 			"ls should reject an unknown revision",
+		)
+		// Walking back past the oldest revision is rejected.
+		assert.Contains(
+			sut.ClingSyncError("ls", "--revision", "head~5"),
+			"older than the oldest",
+			"ls should reject a ~n that walks past the root",
 		)
 	}
 

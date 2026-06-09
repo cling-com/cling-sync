@@ -119,7 +119,8 @@ Writes the workspace config to `<directory>/.cling/workspace.txt`.
     cling-sync attach s3+https://my-bucket.s3.region.example.com /path/to/workspace
 
 The `--path-prefix <p>` flag attaches to a subtree of the repository.
-All operations except `cp` are then limited to that subtree.
+All operations are then scoped to that subtree, and paths are shown
+relative to it.
 
 By default, the local directory must be empty or not yet exist. This
 guards against accidentally attaching to the wrong directory. Pass
@@ -144,7 +145,11 @@ back from the repository.
 
 ### `status`
 
-Show which workspace paths differ from the head revision.
+Show which workspace paths differ from the head revision. An optional
+glob pattern limits the output.
+
+    cling-sync status
+    cling-sync status 'src/**'
 
 ### `log [--pattern <pattern>] [--revision <id>[..<id>]] [--status]`
 
@@ -154,24 +159,53 @@ revision instead of the head. A range `<old>..<new>` excludes `<old>`,
 like git. `--status` shows added, updated, and deleted paths per
 revision.
 
+    cling-sync log --short
+    cling-sync log --status --pattern 'src/**'
+    cling-sync log --revision HEAD~3..HEAD
+
 ### `ls [<pattern>]`
 
-List paths in a revision, the head by default. Accepts a glob pattern.
-`--revision <id>` lists a non-head revision. `--path-prefix <dir>/`
-limits the listing to a subtree, overriding the workspace prefix or
-setting one when used with `--repository`.
+List paths in a revision, the head by default, optionally filtered by a
+glob pattern. `--revision <id>` lists a non-head revision.
+
+    cling-sync ls
+    cling-sync ls '*.md'
+    cling-sync ls --revision 9f3a...c104 'src/**'
+
+Paths are relative to the workspace's path prefix, and the pattern
+matches in that same relative space. `--path-prefix <dir>/` scopes to
+another subtree for one command (or sets the subtree under
+`--repository`). `--path-prefix /` lists from the repository root.
+
+    cling-sync ls --path-prefix /
 
 ### `cp <pattern> <target>`
 
-Copy paths from the repository into a local directory, without going
-through a workspace. Useful for partial extraction. `--revision <id>`
+Copy paths matching `<pattern>` from a revision into `<target>`,
+recreating their directory structure under it. `--revision <id>`
 selects a non-head revision.
+
+    cling-sync cp '*' /tmp/restore
+    cling-sync cp 'docs/**' .
+    cling-sync cp --revision 9f3a...c104 report.pdf .
+
+As with `ls`, the pattern and the restored layout are relative to the
+workspace's path prefix. `--path-prefix /` uses full repository paths.
+`--repository <path-or-uri>` copies straight from a repository without
+a workspace.
 
 ### `reset <revision>`
 
 Reset the workspace to the given revision, discarding local changes.
-A revision is addressed by its hex id, or by the literal `HEAD` for
-the current head revision.
+
+A revision is addressed by its hex id or by `HEAD` for the current
+head, optionally with a git-style `~<n>` suffix to walk `n` revisions
+back toward the root (`HEAD~1` is the parent of the head). This form is
+accepted everywhere a revision is taken: `reset`, `--revision`, and the
+bounds of a `log` range.
+
+    cling-sync reset HEAD~1
+    cling-sync reset 9f3a...c104
 
 ### `check [--data]`
 
