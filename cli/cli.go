@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -1413,8 +1414,8 @@ func SyncRepoCmd(ctx context.Context, argv []string, passphraseFromStdin bool) e
 		default:
 			return lib.Errorf("usage: sync-repo run [flags] [name]")
 		}
-		// The passphrase is needed to decrypt any S3 URI, and to open the source
-		// repository for the head check (unless it is skipped).
+		// The passphrase is needed to open the source repository for the head
+		// check (unless skipped), and to decrypt any S3 URI we actually need.
 		needPassphrase := !runArgs.SkipHeadCheck || clingHTTP.IsS3StorageURI(string(workspace.RemoteRepository))
 		if !needPassphrase {
 			targets, err := ws.LoadSyncTargets(ctx, workspace)
@@ -1422,7 +1423,7 @@ func SyncRepoCmd(ctx context.Context, argv []string, passphraseFromStdin bool) e
 				return lib.WrapErrorf(err, "failed to load sync targets")
 			}
 			for _, t := range targets {
-				if clingHTTP.IsS3StorageURI(t.URI) {
+				if slices.Contains(names, t.Name) && clingHTTP.IsS3StorageURI(t.URI) {
 					needPassphrase = true
 					break
 				}
