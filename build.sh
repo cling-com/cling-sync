@@ -16,6 +16,15 @@ if [ $# -eq 0 ]; then
     echo "        cli - build the CLI as \`./cling-sync\`"
     echo "        wasm - build the wasm binary"
     echo
+    echo "  release check|tag|build|upload|all"
+    echo "      Tag, build, and publish a new patch release. Run on darwin."
+    echo "        check  - verify HEAD has a green CI build on GitHub"
+    echo "        tag    - tag HEAD with the next patch version (latest + 1)"
+    echo "        build  - build the CLI for darwin and linux (arm64 and amd64) and a"
+    echo "                 source archive for the current tag into ./dist"
+    echo "        upload - push the current tag and publish ./dist as a GitHub release"
+    echo "        all    - run check, tag, build, and upload in order"
+    echo
     echo "  gen [project]"
     echo "      Run \`go generate\`. If no project is specified, generate all projects."
     echo
@@ -105,9 +114,9 @@ run_build() {
     for target in $targets; do
         case "$target" in
             cli)
-                echo ">>> Building CLI"
+                echo ">>> Building CLI ($(go env GOOS)/$(go env GOARCH))"
                 go build "$@" -o cling-sync ./cli
-                if [ -n "${CS_DARWIN_CODESIGN:-}" ] && [ "$(uname -s)" = "Darwin" ]; then
+                if [ -n "${CS_DARWIN_CODESIGN:-}" ] && [ "$(uname -s)" = "Darwin" ] && [ "$(go env GOOS)" = "darwin" ]; then
                     echo "Codesigning CLI"
                     codesign --sign "${CS_DARWIN_CODESIGN}" --force --options runtime ./cling-sync
                 fi
@@ -121,6 +130,126 @@ run_build() {
                 ;;
         esac
     done
+}
+
+# Latest vMAJOR.MINOR.PATCH release tag, or empty if there are none.
+latest_version() {
+    git for-each-ref --sort=-v:refname --format='%(refname:short)' 'refs/tags/*' \
+        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1
+}
+
+# Verify the current HEAD has a green CI build on GitHub.
+run_check_release() {
+    cd "$root"
+    command -v gh >/dev/null 2>&1 || { echo "gh (GitHub CLI) is not installed"; exit 1; }
+    local sha state
+    sha=$(git rev-parse HEAD)
+    echo ">>> Checking CI status for $sha"
+    state=$(gh api "repos/{owner}/{repo}/commits/$sha/check-runs" --jq '
+        if (.check_runs | length) == 0 then "none"
+        elif any(.check_runs[]; .status != "completed") then "pending"
+        elif all(.check_runs[]; .conclusion == "success" or .conclusion == "skipped") then "success"
+        else "failure"
+        end') || { echo "Could not query CI status for HEAD. Is it pushed to GitHub?"; exit 1; }
+    case "$state" in
+        success) echo "    CI is green" ;;
+        none)    echo "No CI build found for HEAD. Push it and wait for CI."; exit 1 ;;
+        pending) echo "CI is still running for HEAD. Wait for it to finish."; exit 1 ;;
+        *)       echo "CI is not green for HEAD ($state)."; exit 1 ;;
+    esac
+}
+
+# Tag HEAD with the next patch version: the latest release tag with its patch
+# bumped.
+run_tag_release() {
+    cd "$root"
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "Working tree is not clean. Commit or stash your changes before releasing."
+        exit 1
+    fi
+    local latest ver major minor patch new
+    latest=$(latest_version)
+    [ -n "$latest" ] || { echo "No release tag found. Create the first release tag by hand."; exit 1; }
+    ver="${latest#v}"
+    major="${ver%%.*}"
+    minor="${ver#*.}"; minor="${minor%%.*}"
+    patch="${ver##*.}"
+    new="v$major.$minor.$((patch + 1))"
+    echo ">>> Tagging $new (previous: $latest)"
+    git tag "$new"
+}
+
+# Build the CLI for darwin and linux (arm64 and amd64) and a source archive for
+# the current release tag into ./dist.
+run_build_release() {
+    cd "$root"
+    command -v podman >/dev/null 2>&1 || { echo "podman is required to run the linux binaries"; exit 1; }
+    local version
+    version=$(latest_version)
+    [ -n "$version" ] || { echo "No release tag found. Run \`release tag\` first."; exit 1; }
+    echo ">>> Building release artifacts for $version"
+    rm -rf dist
+    mkdir -p dist
+    local platform os arch cgo bin help
+    for platform in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
+        os="${platform%/*}"
+        arch="${platform#*/}"
+        # The darwin keychain backend needs cgo; the linux one does not, and cgo
+        # cannot cross-compile to linux from darwin.
+        cgo=0
+        [ "$os" = "darwin" ] && cgo=1
+        GOOS="$os" GOARCH="$arch" CGO_ENABLED="$cgo" \
+            bash "$root/build.sh" build cli -ldflags "-X main.version=$version"
+        bin="cling-sync-$os-$arch"
+        mv cling-sync "dist/$bin"
+        # Run each binary and confirm it reports the release version.
+        case "$os" in
+            darwin) help=$("$root/dist/$bin" --help 2>&1 || true) ;;
+            linux)  help=$(podman run --rm --platform "linux/$arch" -v "$root/dist:/dist:ro" \
+                        docker.io/library/alpine "/dist/$bin" --help 2>&1 || true) ;;
+        esac
+        echo "$help" | grep -qF "$version" || { echo "FAIL: $bin did not report $version"; exit 1; }
+        echo "    $bin runs and reports $version"
+    done
+    git archive --format=tar.gz --prefix="cling-sync-$version/" -o "dist/cling-sync-$version-src.tgz" "$version"
+}
+
+# Push the current release tag and publish ./dist as a GitHub release.
+run_upload_release() {
+    cd "$root"
+    command -v gh >/dev/null 2>&1 || { echo "gh (GitHub CLI) is not installed"; exit 1; }
+    local version prev
+    version=$(latest_version)
+    [ -n "$version" ] || { echo "No release tag found. Run \`release tag\` first."; exit 1; }
+    echo ">>> Pushing git tag $version"
+    git push origin "$version"
+    echo ">>> Uploading release $version"
+    # Release notes are the commit log since the previous release tag.
+    prev=$(git for-each-ref --sort=-v:refname --format='%(refname:short)' 'refs/tags/*' \
+        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+    git log --format='- %s (%h) by %an' "$prev..$version" \
+        | gh release create "$version" dist/* --title "$version" --notes-file -
+    echo
+    echo "Released $version"
+}
+
+run_release() {
+    case "${1:-}" in
+        check)  run_check_release ;;
+        tag)    run_tag_release ;;
+        build)  run_build_release ;;
+        upload) run_upload_release ;;
+        all)
+            run_check_release
+            run_tag_release
+            run_build_release
+            run_upload_release
+            ;;
+        *)
+            echo "Usage: $0 release check|tag|build|upload|all"
+            exit 1
+            ;;
+    esac
 }
 
 # Run a command for all or a specific project.
@@ -202,6 +331,9 @@ shift
 case "$cmd" in
     build)
         run_build "$@"
+        ;;
+    release)
+        run_release "$@"
         ;;
     tools)
         build_tools

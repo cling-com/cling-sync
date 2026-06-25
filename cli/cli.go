@@ -32,6 +32,9 @@ const (
 	pathPrefixFlagDescription = "Use this path prefix instead of the workspace's, e.g. `dir/`.\nUse `/` to ignore the workspace prefix and operate on the whole repository from its root."
 )
 
+// version is "dev" for normal builds and set to the release tag via -ldflags.
+var version = "dev"
+
 func AttachCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
 		Help          bool
@@ -2135,6 +2138,7 @@ func run() int { //nolint:funlen
 		PassphraseFromStdin bool
 	}{}
 	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "%s %s\n\n", appName, version)
 		fmt.Fprintf(os.Stderr, "Usage: %s <command> [command arguments]\n\n", appName)
 		fmt.Fprint(os.Stderr, "Remote repositories: only S3-compatible backends are currently supported.\n")
 		fmt.Fprintf(

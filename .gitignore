@@ -3,4 +3,5 @@
 .clingignore
 .env
 cling-sync
+dist
 todo.md
