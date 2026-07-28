@@ -135,7 +135,14 @@ func Decrypt(ciphertext []byte, cipher cryptoCipher.AEAD, associatedData []byte,
 
 // Re-uses the ciphertext buffer.
 func DecryptInPlace(ciphertext []byte, cipher cryptoCipher.AEAD, associatedData []byte) ([]byte, error) {
+	if len(ciphertext) < nonceSize {
+		return nil, Errorf("payload too short")
+	}
 	return Decrypt(ciphertext, cipher, associatedData, ciphertext[nonceSize:])
+}
+
+func (s Sha256) String() string {
+	return hex.EncodeToString(s[:])
 }
 
 func CalculateSha256(data []byte) Sha256 {

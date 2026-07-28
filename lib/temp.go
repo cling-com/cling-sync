@@ -12,6 +12,10 @@ import (
 
 const DefaultTempChunkSize = 4 * 1024 * 1024
 
+// Returned by `TempWriter.Add` and `TempWriter.Finalize` when a writer that
+// does not ignore duplicates sees the same entry twice.
+var ErrDuplicateTempEntry = Errorf("duplicate entry")
+
 // Splitting a sorted chunk into this many frames lets Finalize stream the
 // k-way merge with only one frame per input file in memory.
 const framesPerChunk = 16
@@ -43,6 +47,46 @@ type chunkMarshaller[T any] interface {
 	MarshallAll(entries []T, w ProtobufWriter) error
 	UnmarshallAll(r *ProtobufReader) ([]T, error)
 	EntrySize(entry T) int
+}
+
+// A chunkMarshaller for any 32 byte value.
+type bytes32ChunkMarshaller[T ~[32]byte] struct{}
+
+const bytes32Size = 32
+
+func (bytes32ChunkMarshaller[T]) MarshallAll(entries []T, w ProtobufWriter) error {
+	for _, entry := range entries {
+		if err := w.WriteBytes(1, entry[:]); err != nil {
+			return WrapErrorf(err, "failed to write entry")
+		}
+	}
+	return nil
+}
+
+func (bytes32ChunkMarshaller[T]) UnmarshallAll(r *ProtobufReader) ([]T, error) {
+	var entries []T
+	for !r.AtEnd() {
+		tag, wireType, err := r.ReadTag()
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to read entry tag")
+		}
+		if tag != 1 || wireType != 2 {
+			return nil, Errorf("unexpected tag %d / wire type %d for entry", tag, wireType)
+		}
+		b, err := r.ReadBytes()
+		if err != nil {
+			return nil, WrapErrorf(err, "failed to read entry")
+		}
+		if len(b) != bytes32Size {
+			return nil, Errorf("entry must have length %d, got %d", bytes32Size, len(b))
+		}
+		entries = append(entries, T(b))
+	}
+	return entries, nil
+}
+
+func (bytes32ChunkMarshaller[T]) EntrySize(_ T) int {
+	return TagLen(1, 2) + VarintLen(bytes32Size) + bytes32Size
 }
 
 type Temp[T any] struct {
@@ -244,7 +288,7 @@ func (tw *TempWriter[T]) Finalize() (*Temp[T], error) { //nolint:funlen
 		for i := 1; i < len(readers); i++ {
 			c := tw.compare(heads[i], heads[minIdx])
 			if c == 0 && !tw.ignoreDuplicates {
-				return nil, Errorf("duplicate entry: %v", heads[i])
+				return nil, WrapErrorf(ErrDuplicateTempEntry, "duplicate entry: %v", heads[i])
 			}
 			if c < 0 {
 				minIdx = i
@@ -309,7 +353,7 @@ func (tw *TempWriter[T]) rotateChunk() error {
 	slices.SortFunc(tw.chunk, func(a, b T) int {
 		c := tw.compare(a, b)
 		if c == 0 && !tw.ignoreDuplicates {
-			sortErr = Errorf("duplicate entry: %v", a)
+			sortErr = WrapErrorf(ErrDuplicateTempEntry, "duplicate entry: %v", a)
 		}
 		return c
 	})

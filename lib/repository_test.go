@@ -293,7 +293,7 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Equal(data, got)
 	})
 
-	t.Run("Tampering any byte of the encrypted block is detected", func(t *testing.T) {
+	t.Run("Tampering any bit of the encrypted block is detected", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
@@ -314,24 +314,29 @@ func TestRepositoryReadWriteBlock(t *testing.T) {
 		assert.Greater(Padme(uint64(len(writeData))), uint64(len(writeData)))
 
 		buf := NewBlockBuf()
-		prev := -1
+		// The protobuf envelope around the two encrypted parts is not covered by
+		// either AEAD, so a flip there can produce a block that parses but has a
+		// missing or short field. That must still be an error, never a panic.
+		mustNotRead := func(offset int, bit int) {
+			_, err := r.ReadBlock(t.Context(), blockId, buf)
+			assert.Error(err, "", "offset %d bit %d", offset, bit)
+		}
 		for i := range onDisk {
-			// Restore the previous flip and confirm the block reads again.
-			if prev >= 0 {
-				onDisk[prev] ^= 1
+			for bit := range 8 {
+				mask := byte(1) << bit
+				// Flip the bit and confirm the block no longer reads.
+				onDisk[i] ^= mask
+				err = WriteFile(r.Storage.FS, path, onDisk)
+				assert.NoError(err)
+				mustNotRead(i, bit)
+				// Restore the flip and confirm the block reads again.
+				onDisk[i] ^= mask
 				err = WriteFile(r.Storage.FS, path, onDisk)
 				assert.NoError(err)
 				readData, err := r.ReadBlock(t.Context(), blockId, buf)
-				assert.NoError(err, "after restoring offset %d", prev)
+				assert.NoError(err, "after restoring offset %d bit %d", i, bit)
 				assert.Equal(writeData, readData)
 			}
-			// Flip byte `i` and confirm the block no longer reads.
-			onDisk[i] ^= 1
-			err = WriteFile(r.Storage.FS, path, onDisk)
-			assert.NoError(err)
-			_, err = r.ReadBlock(t.Context(), blockId, buf)
-			assert.Error(err, "", "offset %d", i)
-			prev = i
 		}
 	})
 

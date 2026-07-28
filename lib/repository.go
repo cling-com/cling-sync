@@ -377,6 +377,14 @@ func (r *Repository) WriteBlock(
 }
 
 func (r *Repository) ReadBlock(ctx context.Context, blockId BlockId, buf BlockBuf) ([]byte, error) {
+	block, err := r.readBlockEnvelope(ctx, blockId, buf)
+	if err != nil {
+		return nil, err
+	}
+	return r.decryptBlock(block, blockId)
+}
+
+func (r *Repository) readBlockEnvelope(ctx context.Context, blockId BlockId, buf BlockBuf) (*Block, error) {
 	rawBlock, err := r.storage.ReadBlock(ctx, blockId, buf)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read block %s", blockId)
@@ -385,6 +393,10 @@ func (r *Repository) ReadBlock(ctx context.Context, blockId BlockId, buf BlockBu
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to unmarshal block envelope for %s", blockId)
 	}
+	return block, nil
+}
+
+func (r *Repository) decryptBlock(block *Block, blockId BlockId) ([]byte, error) {
 	rawHeader, err := DecryptInPlace(block.EncryptedHeader, r.kekCipher, blockId[:])
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to decrypt block header with KEK for block %s", blockId)

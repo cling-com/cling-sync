@@ -1092,7 +1092,8 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
-	flags.BoolVar(&args.Data, "data", false, "Check all file data blocks of all paths in all revisions")
+	flags.BoolVar(&args.Data, "data", false,
+		"Check all file data blocks of all paths in all revisions and that no block header nonce is reused")
 	flags.BoolVar(&args.OrphanedBlocks, "orphaned-blocks", false,
 		"Detect blocks in storage that are not referenced by any revision")
 	flags.BoolVar(&args.Full, "full", false, "Run all checks (implies --data and --orphaned-blocks)")

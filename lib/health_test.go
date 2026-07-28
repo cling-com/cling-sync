@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -143,6 +144,39 @@ func TestCheckHealth(t *testing.T) {
 		assert.Error(err, blockId2.String())
 	})
 
+	t.Run("Verify blocks detects a block whose header field was lost", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		blockId, _, err := r.WriteBlock(t.Context(), []byte("abc"), NewBlockBuf())
+		assert.NoError(err)
+		e := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
+		e.Metadata.BlockIds = []BlockId{blockId}
+		e.Metadata.Size = 3
+		e.Metadata.FileHash = td.SHA256("abc")
+		assert.NoError(commit.Add(e))
+		_, err = commit.Commit(t.Context(), td.CommitInfo())
+		assert.NoError(err)
+
+		// Change the field number of the encrypted header from 1 to 3. Unknown
+		// fields are skipped, so the block parses with no header at all.
+		path := r.Storage.blockPath(blockId)
+		data, err := ReadFile(r.Storage.FS, path)
+		assert.NoError(err)
+		data[0] = 0x1a
+		assert.NoError(r.Storage.FS.Chmod(path, 0o600))
+		assert.NoError(WriteFile(r.Storage.FS, path, data))
+
+		err = CheckHealth(t.Context(), r.Repository, td.NewFS(t), HealthCheckOptions{
+			Monitor: td.NewHealthCheckMonitor(), CheckBlocks: true, CheckOrphanedBlocks: false,
+		})
+		assert.Error(err, "failed to verify block")
+		assert.Error(err, blockId.String())
+	})
+
 	t.Run("Missing block", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -280,6 +314,117 @@ func TestCheckHealth(t *testing.T) {
 			NewMockCall("OnOrphanedBlock", sortedOrphans[0]),
 			NewMockCall("OnOrphanedBlock", sortedOrphans[1]),
 		}, monitor.Calls)
+	})
+}
+
+// Every block header is encrypted with the repository KEK, so `CheckHealth`
+// must reject a repository in which two of them share a nonce. The duplicate is
+// caught by the temp writer holding the nonce digests, which detects it in a
+// different place depending on how the digests are spread over its chunks.
+func TestCheckHealthNonce(t *testing.T) {
+	t.Parallel()
+	const wantErr = "the same nonce is used by more than one block header"
+
+	// A repository holding one revision over three files, plus every stored
+	// block id in the order `CheckHealth` reads them: three data blocks, the
+	// revision entry chunk, and the revision itself.
+	newRepository := func(t *testing.T) (*TestRepository, []BlockId) {
+		t.Helper()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		for _, content := range []string{"a", "b", "c"} {
+			blockId, _, err := r.WriteBlock(t.Context(), []byte(content), NewBlockBuf())
+			assert.NoError(err)
+			e := td.RevisionEntry(content+".txt", RevisionEntryKindAdd)
+			e.Metadata.BlockIds = []BlockId{blockId}
+			e.Metadata.Size = int64(len(content))
+			e.Metadata.FileHash = td.SHA256(content)
+			assert.NoError(commit.Add(e))
+		}
+		_, err = commit.Commit(t.Context(), td.CommitInfo())
+		assert.NoError(err)
+		var blockIds []BlockId
+		assert.NoError(r.Storage.ReadBlockIds(t.Context(), func(id BlockId) bool {
+			blockIds = append(blockIds, id)
+			return true
+		}))
+		slices.SortFunc(blockIds, BlockIdCompare)
+		// The chunk layout below depends on this count.
+		assert.Equal(5, len(blockIds))
+		return r, blockIds
+	}
+
+	// Re-encrypt the headers of all `blockIds` with one and the same nonce.
+	// Their content and ids stay the same, so they still decrypt.
+	reuseHeaderNonce := func(t *testing.T, r *TestRepository, blockIds ...BlockId) {
+		t.Helper()
+		assert := NewAssert(t)
+		for _, blockId := range blockIds {
+			path := r.Storage.blockPath(blockId)
+			raw, err := ReadFile(r.Storage.FS, path)
+			assert.NoError(err)
+			block, err := UnmarshallBlock(NewProtobufReader(raw))
+			assert.NoError(err)
+			header, err := DecryptInPlace(block.EncryptedHeader, r.kekCipher, blockId[:])
+			assert.NoError(err)
+			nonce := bytes.Repeat([]byte{1}, nonceSize)
+			block.EncryptedHeader = r.kekCipher.Seal(nonce, nonce, header, blockId[:])
+			out := make([]byte, block.MarshallSize())
+			w := NewProtobufWriter(out)
+			assert.NoError(block.Marshall(w))
+			assert.NoError(r.Storage.FS.Chmod(path, 0o600))
+			assert.NoError(WriteFile(r.Storage.FS, path, w.Bytes()))
+		}
+	}
+
+	check := func(t *testing.T, r *TestRepository, nonceChunkSize int) error {
+		t.Helper()
+		return checkHealth(t.Context(), r.Repository, td.NewFS(t), HealthCheckOptions{
+			Monitor: td.NewHealthCheckMonitor(), CheckBlocks: true, CheckOrphanedBlocks: false,
+		}, nonceChunkSize)
+	}
+
+	// `TempWriter` keeps `chunkFramingOverhead` bytes of every chunk free for
+	// framing, so this chunk size fits exactly two nonce digests. The five block
+	// ids above then land in chunk 0 = [0 1], chunk 1 = [2 3], chunk 2 = [4].
+	digestSize := bytes32ChunkMarshaller[Sha256]{}.EntrySize(Sha256{})
+	twoDigestChunkSize := chunkFramingOverhead + 2*digestSize
+
+	t.Run("Distinct nonces spread over several chunks should pass", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r, _ := newRepository(t)
+		assert.NoError(check(t, r, twoDigestChunkSize))
+	})
+
+	t.Run("Nonce reused by two blocks in the same chunk should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r, blockIds := newRepository(t)
+		reuseHeaderNonce(t, r, blockIds[0], blockIds[1])
+		assert.Error(check(t, r, twoDigestChunkSize), wantErr)
+	})
+
+	t.Run("Nonce reused by two blocks in different chunks should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r, blockIds := newRepository(t)
+		reuseHeaderNonce(t, r, blockIds[0], blockIds[4])
+		assert.Error(check(t, r, twoDigestChunkSize), wantErr)
+	})
+
+	t.Run("Nonce reuse with all digests in one chunk should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r, blockIds := newRepository(t)
+		reuseHeaderNonce(t, r, blockIds[0], blockIds[1])
+		// This is what `CheckHealth` itself uses, so go through the real entry point.
+		err := CheckHealth(t.Context(), r.Repository, td.NewFS(t), HealthCheckOptions{
+			Monitor: td.NewHealthCheckMonitor(), CheckBlocks: true, CheckOrphanedBlocks: false,
+		})
+		assert.Error(err, wantErr)
 	})
 }
 

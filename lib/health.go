@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -15,7 +16,8 @@ type HealthCheckMonitor interface {
 
 type HealthCheckOptions struct {
 	Monitor HealthCheckMonitor
-	// Read and decrypt every block referenced by any revision.
+	// Read and decrypt every block referenced by any revision and check that no
+	// two block headers were encrypted with the same nonce.
 	CheckBlocks bool
 	// Report every block in storage that is not referenced by any revision.
 	CheckOrphanedBlocks bool
@@ -27,6 +29,18 @@ type HealthCheckOptions struct {
 // every revision can be read and that every revision's path entries are
 // strictly sorted. Additional checks can be enabled via `opts`.
 func CheckHealth(ctx context.Context, repository *Repository, tempFS FS, opts HealthCheckOptions) error {
+	return checkHealth(ctx, repository, tempFS, opts, DefaultTempChunkSize)
+}
+
+// `nonceChunkSize` bounds the chunks of the block header nonce writer. It is a
+// parameter only so tests can force the writer to spill into several chunks.
+func checkHealth(
+	ctx context.Context,
+	repository *Repository,
+	tempFS FS,
+	opts HealthCheckOptions,
+	nonceChunkSize int,
+) error {
 	var seenWriter *TempWriter[BlockId]
 	if opts.CheckBlocks || opts.CheckOrphanedBlocks {
 		seenFS, err := tempFS.MkSub("seen")
@@ -52,7 +66,7 @@ func CheckHealth(ctx context.Context, repository *Repository, tempFS FS, opts He
 		}
 	}
 	if opts.CheckBlocks {
-		if err := checkBlocks(ctx, repository, opts.Monitor, seen); err != nil {
+		if err := checkBlocks(ctx, repository, tempFS, opts.Monitor, seen, nonceChunkSize); err != nil {
 			return err
 		}
 	}
@@ -175,7 +189,25 @@ func checkOrphanedBlocks(
 	return nil
 }
 
-func checkBlocks(ctx context.Context, repository *Repository, monitor HealthCheckMonitor, seen *Temp[BlockId]) error {
+// Decrypt every block in `seen` and make sure that no two block headers were
+// encrypted with the same nonce. Every header is encrypted with the repository
+// KEK, so a reused nonce would break the confidentiality of both blocks.
+func checkBlocks(
+	ctx context.Context,
+	repository *Repository,
+	tempFS FS,
+	monitor HealthCheckMonitor,
+	seen *Temp[BlockId],
+	nonceChunkSize int,
+) error {
+	nonceFS, err := tempFS.MkSub("nonces")
+	if err != nil {
+		return WrapErrorf(err, "failed to create temp directory for block header nonces")
+	}
+	// The writer rejects duplicates on its own, so writing every nonce to it is
+	// the whole check.
+	compare := func(a, b Sha256) int { return bytes.Compare(a[:], b[:]) }
+	nonces := NewTempWriter(compare, bytes32ChunkMarshaller[Sha256]{}, nonceFS, nonceChunkSize)
 	reader := seen.Reader(nil)
 	buf := NewBlockBuf()
 	for {
@@ -186,11 +218,33 @@ func checkBlocks(ctx context.Context, repository *Repository, monitor HealthChec
 		if err != nil {
 			return WrapErrorf(err, "failed to read seen block id")
 		}
-		data, err := repository.ReadBlock(ctx, id, buf)
+		block, err := repository.readBlockEnvelope(ctx, id, buf)
 		if err != nil {
 			return WrapErrorf(err, "failed to verify block %s", id)
 		}
+		data, err := repository.decryptBlock(block, id)
+		if err != nil {
+			return WrapErrorf(err, "failed to verify block %s", id)
+		}
+		// Nonces are not secret, but hashing them keeps raw crypto material out
+		// of the temporary files this check spills to disk.
+		digest := CalculateSha256(block.EncryptedHeader[:nonceSize])
+		if err := nonces.Add(digest); err != nil {
+			return wrapNonceCheckError(err)
+		}
 		monitor.OnBlockVerified(id, len(data))
 	}
+	sorted, err := nonces.Finalize()
+	if err != nil {
+		return wrapNonceCheckError(err)
+	}
+	_ = sorted.Remove()
 	return nil
+}
+
+func wrapNonceCheckError(err error) error {
+	if errors.Is(err, ErrDuplicateTempEntry) {
+		return WrapErrorf(err, "the same nonce is used by more than one block header")
+	}
+	return WrapErrorf(err, "failed to check block headers for nonce reuse")
 }
