@@ -26,7 +26,8 @@ type StagingEntryMonitor interface {
 }
 
 type Staging struct {
-	PathFilter lib.PathFilter
+	Include    *lib.PathInclusionFilter
+	Exclude    *lib.PathExclusionFilter
 	pathPrefix lib.Path
 	tempWriter *lib.TempWriter[*StagingEntry]
 	temp       *lib.Temp[*StagingEntry]
@@ -36,11 +37,12 @@ type Staging struct {
 // Build a `Staging` from the `src` directory.
 // `.cling` is always ignored.
 // If `pathPrefix` is not empty, it will be prepended to all paths *after* the
-// `pathFilter` is applied.
+// filters are applied.
 func NewStaging( //nolint:funlen
 	src lib.FS,
 	pathPrefix lib.Path,
-	pathFilter lib.PathFilter,
+	include *lib.PathInclusionFilter,
+	exclude *lib.PathExclusionFilter,
 	useCache bool,
 	tmp lib.FS,
 	mon StagingEntryMonitor,
@@ -51,7 +53,7 @@ func NewStaging( //nolint:funlen
 		return nil, lib.WrapErrorf(err, "failed to create staging cache")
 	}
 	defer cache.Cleanup() //nolint:errcheck
-	staging := &Staging{pathFilter, pathPrefix, revisionEntryWriter, nil, tmp}
+	staging := &Staging{include, exclude, pathPrefix, revisionEntryWriter, nil, tmp}
 	err = lib.WalkDirIgnore(src, ".", func(path_ string, d fs.DirEntry, err error) (retErr error) {
 		if err != nil {
 			return err
@@ -93,11 +95,15 @@ func NewStaging( //nolint:funlen
 		}()
 		// Eager exclusion so we don't hash excluded files or recurse into
 		// excluded directories.
-		if pathFilter != nil && !pathFilter.Include(localPath, d.IsDir()) {
+		if exclude != nil && !exclude.Include(localPath, d.IsDir()) {
 			excluded = true
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if include != nil && !include.Include(localPath, d.IsDir()) {
+			excluded = true
 			return nil
 		}
 		repoPath := pathPrefix.Join(localPath)
@@ -173,17 +179,24 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
 	}
-	revFilter := s.PathFilter
-	if !s.pathPrefix.IsEmpty() {
-		include := s.pathPrefix.AsFilter()
-		if revFilter != nil {
-			revFilter = &lib.AllPathFilter{Filters: []lib.PathFilter{revFilter, include}}
-		} else {
-			revFilter = include
+	var revFilter func(e *lib.RevisionEntry) bool
+	if !s.pathPrefix.IsEmpty() || s.Include != nil || s.Exclude != nil {
+		revFilter = func(e *lib.RevisionEntry) bool {
+			// Revision entries carry repository paths, the filters match local ones.
+			local, ok := e.Path.TrimBase(s.pathPrefix)
+			if !ok {
+				return false
+			}
+			isDir := e.Metadata.FileMode.IsDir()
+			if s.Exclude != nil && !s.Exclude.Include(local, isDir) {
+				return false
+			}
+			return s.Include == nil || s.Include.Include(local, isDir)
 		}
 	}
-	revReader := snapshot.Reader(lib.RevisionEntryPathFilter(revFilter))
-	stgReader := stgTemp.Reader(StagingEntryPathFilter(s.PathFilter))
+	revReader := snapshot.Reader(revFilter)
+	// Staging was already filtered while walking.
+	stgReader := stgTemp.Reader(nil)
 	final, err := s.tmpFS.MkSub("final")
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create commit directory")
@@ -300,9 +313,6 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 func (s *Staging) add(stagingEntry *StagingEntry) error {
 	if s.tempWriter == nil {
 		return lib.Errorf("staging is closed")
-	}
-	if s.PathFilter != nil && !s.PathFilter.Include(stagingEntry.RepoPath, stagingEntry.Metadata.FileMode.IsDir()) {
-		return nil
 	}
 	if err := s.tempWriter.Add(stagingEntry); err != nil {
 		return err //nolint:wrapcheck

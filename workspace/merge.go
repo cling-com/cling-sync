@@ -466,7 +466,12 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 	staging *lib.TempCache[*StagingEntry],
 	localChanges *lib.TempCache[*lib.RevisionEntry],
 ) error {
-	r := remoteRevision.Reader(lib.RevisionEntryPathFilter(m.ws.PathPrefix.AsFilter()))
+	r := remoteRevision.Reader(func(e *lib.RevisionEntry) bool {
+		// The path prefix is a literal path, not a glob pattern so we should not
+		// try to make this work magically with a filter implementation.
+		_, ok := e.Path.TrimBase(m.ws.PathPrefix)
+		return ok
+	})
 	ignorePatterns, err := lib.CollectIgnorePatterns(m.ws.FS, ".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to collect ignore patterns")
@@ -919,7 +924,7 @@ func buildLocalChanges(
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create revision temp cache")
 	}
-	staging, err := NewStaging(ws.FS, ws.PathPrefix, nil, opts.UseStagingCache, stagingTmpDir, opts.StagingMonitor)
+	staging, err := NewStaging(ws.FS, ws.PathPrefix, nil, nil, opts.UseStagingCache, stagingTmpDir, opts.StagingMonitor)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to detect local changes")
 	}

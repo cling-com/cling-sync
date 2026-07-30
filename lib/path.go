@@ -66,14 +66,6 @@ func (p Path) IsEmpty() bool {
 	return p.p == ""
 }
 
-func (p Path) AsFilter() PathFilter {
-	if p.p == "" {
-		return nil
-	}
-	f := NewPathInclusionFilter([]string{p.String() + "/**"})
-	return f
-}
-
 func (p Path) IsRelativeTo(base Path) bool {
 	if len(p.p) == len(base.p) {
 		return false
@@ -147,21 +139,6 @@ func NewPathInclusionFilter(includes []string) *PathInclusionFilter {
 
 func (pif *PathInclusionFilter) Include(p Path, isDir bool) bool {
 	return pif.Includes.Match(p.p, isDir)
-}
-
-// A PathFilter that combines multiple PathFilters.
-// It returns true if *all* of the PathFilters returns true.
-type AllPathFilter struct {
-	Filters []PathFilter
-}
-
-func (cpf *AllPathFilter) Include(p Path, isDir bool) bool {
-	for _, filter := range cpf.Filters {
-		if !filter.Include(p, isDir) {
-			return false
-		}
-	}
-	return true
 }
 
 // Create a string that can be used to sort two paths.

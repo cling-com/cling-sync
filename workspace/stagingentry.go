@@ -41,15 +41,6 @@ func (e *StagingEntry) HasChanged(other *StagingEntry) bool {
 	return e.Ctime != other.Ctime || e.Inode != other.Inode || e.Size != other.Size
 }
 
-func StagingEntryPathFilter(pathFilter lib.PathFilter) func(e *StagingEntry) bool {
-	if pathFilter == nil {
-		return nil
-	}
-	return func(e *StagingEntry) bool {
-		return pathFilter.Include(e.RepoPath, e.Metadata.FileMode.IsDir())
-	}
-}
-
 func StagingEntryPathCompare(a, b *StagingEntry) int {
 	return strings.Compare(
 		lib.PathCompareString(a.RepoPath, a.Metadata.FileMode.IsDir()),

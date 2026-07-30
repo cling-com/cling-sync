@@ -440,10 +440,6 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if err != nil {
 		return err
 	}
-	pathFilter := &lib.AllPathFilter{Filters: []lib.PathFilter{
-		lib.NewPathInclusionFilter([]string{flags.Arg(0)}),
-		&lib.PathExclusionFilter{args.Exclude},
-	}}
 	cpOnExists := ws.CpOnExistsAbort
 	if args.Overwrite {
 		cpOnExists = ws.CpOnExistsOverwrite
@@ -454,7 +450,8 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		return err
 	}
 	opts := &ws.CpOptions{
-		PathFilter:             pathFilter,
+		Include:                lib.NewPathInclusionFilter([]string{flags.Arg(0)}),
+		Exclude:                &lib.PathExclusionFilter{args.Exclude},
 		PathPrefix:             pathPrefix,
 		Monitor:                mon,
 		RevisionId:             revisionId,
@@ -760,20 +757,16 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 		flags.Usage()
 		return nil
 	}
-	var pathFilter lib.PathFilter
+	var include *lib.PathInclusionFilter
 	if len(flags.Args()) == 1 {
-		pathFilter = lib.NewPathInclusionFilter([]string{flags.Arg(0)})
+		include = lib.NewPathInclusionFilter([]string{flags.Arg(0)})
 	}
 	if len(flags.Args()) > 1 {
 		return lib.Errorf("too many positional arguments")
 	}
+	var exclude *lib.PathExclusionFilter
 	if len(args.Exclude) > 0 {
-		exclusionFilter := &lib.PathExclusionFilter{args.Exclude}
-		if pathFilter != nil {
-			pathFilter = &lib.AllPathFilter{[]lib.PathFilter{pathFilter, exclusionFilter}}
-		} else {
-			pathFilter = exclusionFilter
-		}
+		exclude = &lib.PathExclusionFilter{args.Exclude}
 	}
 	repository, err := openRepository(ctx, workspace, "", passphraseFromStdin)
 	if err != nil {
@@ -796,7 +789,8 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 		restorableMetadataFlag ^= lib.RestorableMetadataMode
 	}
 	opts := &ws.StatusOptions{
-		PathFilter:             pathFilter,
+		Include:                include,
+		Exclude:                exclude,
 		Monitor:                mon,
 		RestorableMetadataFlag: restorableMetadataFlag,
 		UseStagingCache:        args.FastScan,

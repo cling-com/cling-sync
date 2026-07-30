@@ -59,13 +59,14 @@ func (s StatusFiles) Summary() string {
 }
 
 type StatusOptions struct {
-	PathFilter             lib.PathFilter
+	Include                *lib.PathInclusionFilter
+	Exclude                *lib.PathExclusionFilter
 	Monitor                StagingEntryMonitor
 	RestorableMetadataFlag lib.RestorableMetadataFlag
 	UseStagingCache        bool
 }
 
-func Status(
+func Status( //nolint:funlen
 	ctx context.Context,
 	ws *Workspace,
 	repository *lib.Repository,
@@ -100,7 +101,15 @@ func Status(
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	staging, err := NewStaging(ws.FS, ws.PathPrefix, opts.PathFilter, opts.UseStagingCache, stagingTmpFS, opts.Monitor)
+	staging, err := NewStaging(
+		ws.FS,
+		ws.PathPrefix,
+		opts.Include,
+		opts.Exclude,
+		opts.UseStagingCache,
+		stagingTmpFS,
+		opts.Monitor,
+	)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan changes")
 	}

@@ -133,24 +133,36 @@ func TestPath(t *testing.T) {
 
 func TestPathExclusionFilter(t *testing.T) {
 	t.Parallel()
-	assert := NewAssert(t)
-	sut := NewPathExclusionFilter([]string{"etc", "**/*.txt", "!etc/host.conf", "!opt/test.txt"})
-	assert.Equal(true, sut.Include(Path{"etc/host.conf"}, false))
-	assert.Equal(false, sut.Include(Path{"etc/passwd"}, false))
-	assert.Equal(false, sut.Include(Path{"home/user/file.txt"}, false))
-	assert.Equal(true, sut.Include(Path{"opt/test.txt"}, false))
+
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewPathExclusionFilter([]string{"etc", "**/*.txt", "!etc/host.conf", "!opt/test.txt"})
+		assert.Equal(true, sut.Include(Path{"etc/host.conf"}, false))
+		assert.Equal(false, sut.Include(Path{"etc/passwd"}, false))
+		assert.Equal(false, sut.Include(Path{"home/user/file.txt"}, false))
+		assert.Equal(true, sut.Include(Path{"opt/test.txt"}, false))
+	})
+
+	t.Run("A pattern matching a directory also matches everything below it", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewPathExclusionFilter([]string{"build"})
+		assert.Equal(false, sut.Include(Path{"build"}, true))
+		assert.Equal(false, sut.Include(Path{"build/x.o"}, false))
+		assert.Equal(true, sut.Include(Path{"buildings/x.o"}, false))
+	})
 }
 
-func TestAllPathFilter(t *testing.T) {
+func TestPathInclusionFilter(t *testing.T) {
 	t.Parallel()
-	assert := NewAssert(t)
-	exclude1 := NewPathExclusionFilter([]string{"etc", "!etc/host.conf"})
-	// Even though exclude2 allows "etc", exclude1 should still exclude it.
-	// Filters are evaluated separately.
-	exclude2 := NewPathExclusionFilter([]string{"**/*.txt", "!opt/test.txt", "!etc"})
-	sut := AllPathFilter{Filters: []PathFilter{exclude1, exclude2}}
-	assert.Equal(true, sut.Include(Path{"etc/host.conf"}, false))
-	assert.Equal(false, sut.Include(Path{"etc/passwd"}, false))
-	assert.Equal(false, sut.Include(Path{"home/user/file.txt"}, false))
-	assert.Equal(true, sut.Include(Path{"opt/test.txt"}, false))
+
+	t.Run("A pattern matches inside a directory but not the directory itself", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewPathInclusionFilter([]string{"src/**"})
+		assert.Equal(false, sut.Include(Path{"src"}, true))
+		assert.Equal(true, sut.Include(Path{"src/a.go"}, false))
+		assert.Equal(true, sut.Include(Path{"src/sub"}, true))
+	})
 }

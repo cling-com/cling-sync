@@ -66,7 +66,7 @@ func TestCp(t *testing.T) {
 		cpOpts := func(pattern string) *CpOptions {
 			return &CpOptions{
 				rev, wstd.CpMonitor(),
-				lib.NewPathInclusionFilter([]string{pattern}), prefixA, lib.RestorableMetadataAll,
+				lib.NewPathInclusionFilter([]string{pattern}), nil, prefixA, lib.RestorableMetadataAll,
 			}
 		}
 
@@ -286,9 +286,8 @@ func TestCp(t *testing.T) {
 		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		filter := lib.NewPathInclusionFilter([]string{"c/**/*"})
 		opts := wstd.CpOptions(revId1)
-		opts.PathFilter = filter
+		opts.Include = lib.NewPathInclusionFilter([]string{"c/**/*"})
 		err = Cp(t.Context(), r.Repository, out.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]lib.TestFileInfo{
@@ -296,6 +295,31 @@ func TestCp(t *testing.T) {
 			{"c/1.txt", 0o600, 2, "c1"},
 			{"c/d", 0o700 | fs.ModeDir, 0, ""},
 			{"c/d/2.txt", 0o600, 2, "c2"},
+		}, out.Ls("."))
+	})
+
+	t.Run("Excluding a directory also excludes its contents", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		out := td.NewTestFS(t, td.NewFS(t))
+
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		w.Write("c/1.txt", "c1")
+		w.Write("c/d/2.txt", "c2")
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		opts := wstd.CpOptions(revId1)
+		opts.Exclude = lib.NewPathExclusionFilter([]string{"c/d"})
+		err = Cp(t.Context(), r.Repository, out.FS, opts, td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]lib.TestFileInfo{
+			{"a.txt", 0o600, 1, "a"},
+			{"c", 0o700 | fs.ModeDir, 0, ""},
+			{"c/1.txt", 0o600, 2, "c1"},
 		}, out.Ls("."))
 	})
 

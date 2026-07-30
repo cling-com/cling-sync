@@ -70,7 +70,7 @@ func (wstd WorkspaceTestData) CommitMonitor() *TestCommitMonitor {
 }
 
 func (wstd WorkspaceTestData) StatusOptions() *StatusOptions {
-	return &StatusOptions{nil, wstd.StagingMonitor(), lib.RestorableMetadataAll, false}
+	return &StatusOptions{nil, nil, wstd.StagingMonitor(), lib.RestorableMetadataAll, false}
 }
 
 func (wstd WorkspaceTestData) MergeOptions() *MergeOptions {
@@ -93,6 +93,7 @@ func (wstd WorkspaceTestData) CpOptions(revisionId lib.RevisionId) *CpOptions {
 	return &CpOptions{
 		revisionId,
 		wstd.CpMonitor(),
+		nil,
 		nil,
 		lib.Path{},
 		lib.RestorableMetadataAll,

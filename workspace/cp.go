@@ -36,7 +36,8 @@ type CpMonitor interface {
 type CpOptions struct {
 	RevisionId             lib.RevisionId
 	Monitor                CpMonitor
-	PathFilter             lib.PathFilter
+	Include                *lib.PathInclusionFilter
+	Exclude                *lib.PathExclusionFilter
 	PathPrefix             lib.Path
 	RestorableMetadataFlag lib.RestorableMetadataFlag
 }
@@ -86,7 +87,11 @@ func Cp( //nolint:funlen
 		if !ok {
 			continue
 		}
-		if opts.PathFilter != nil && !opts.PathFilter.Include(path, entry.Metadata.FileMode.IsDir()) {
+		isDir := entry.Metadata.FileMode.IsDir()
+		if opts.Include != nil && !opts.Include.Include(path, isDir) {
+			continue
+		}
+		if opts.Exclude != nil && !opts.Exclude.Include(path, isDir) {
 			continue
 		}
 		target := path.String()

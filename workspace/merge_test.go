@@ -772,6 +772,34 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		assert.Equal(rev, prefixW.Head())
 	})
 
+	t.Run("PathPrefix containing glob metacharacters is matched literally", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		rootW := wstd.NewTestWorkspace(t, r.Repository)
+		prefixW := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "my[1]/")
+
+		rootW.MkdirAll("my[1]")
+		rootW.Write("my[1]/remote.txt", "remote")
+		_, err := Merge(t.Context(), rootW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// The prefixed workspace receives the file instead of deleting it from
+		// the repository on the next merge.
+		_, err = Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal([]lib.TestFileInfo{
+			{"remote.txt", 0o600, 6, "remote"},
+		}, prefixW.Ls("."))
+
+		_, err = Merge(t.Context(), prefixW.Workspace, r.Repository, wstd.MergeOptions())
+		assert.ErrorIs(err, ErrUpToDate)
+		assert.Equal([]lib.TestFileInfo{
+			{"my[1]", 0o700 | fs.ModeDir, 0, ""},
+			{"my[1]/remote.txt", 0o600, 6, "remote"},
+		}, r.RevisionSnapshotFileInfos(r.Head(), nil))
+	})
+
 	t.Run("PathPrefix is created if it does not exist", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)

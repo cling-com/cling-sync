@@ -250,6 +250,83 @@ func TestStatus(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal([]string{"A c.txt"}, statusFilesString(status))
 	})
+
+	t.Run("Pattern matches paths below the top level", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("src/a.go", "a")
+		w.Write("src/sub/b.go", "b")
+		w.Write("docs/c.md", "c")
+
+		opts := wstd.StatusOptions()
+		opts.Include = lib.NewPathInclusionFilter([]string{"src/**"})
+		status, err := Status(t.Context(), w.Workspace, r.Repository, opts, td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{
+			"A src/a.go",
+			"A src/sub/",
+			"A src/sub/b.go",
+		}, statusFilesString(status))
+	})
+
+	t.Run("Pattern matches in a workspace with a path prefix", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+		w.Write("src/a.go", "a")
+		w.Write("docs/c.md", "c")
+
+		opts := wstd.StatusOptions()
+		opts.Include = lib.NewPathInclusionFilter([]string{"src/**"})
+		status, err := Status(t.Context(), w.Workspace, r.Repository, opts, td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{"A src/a.go"}, statusFilesString(status))
+	})
+
+	t.Run("Directories that do not match the pattern are not reported as deleted", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("src/a.go", "a")
+		w.Write("docs/c.md", "c")
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// `src/**` matches neither `src` nor `docs`, both of which are in the
+		// repository as directory entries.
+		opts := wstd.StatusOptions()
+		opts.Include = lib.NewPathInclusionFilter([]string{"src/**"})
+		status, err := Status(t.Context(), w.Workspace, r.Repository, opts, td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{}, statusFilesString(status))
+	})
+
+	t.Run("Excluding a directory also excludes its contents", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("a.txt", "a")
+		w.Write("build/x.o", "x")
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// `build` is in the repository, so it must not be reported as deleted.
+		opts := wstd.StatusOptions()
+		opts.Exclude = lib.NewPathExclusionFilter([]string{"build"})
+		status, err := Status(t.Context(), w.Workspace, r.Repository, opts, td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{}, statusFilesString(status))
+
+		w.Write("build/y.o", "y")
+		status, err = Status(t.Context(), w.Workspace, r.Repository, opts, td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{}, statusFilesString(status))
+	})
 }
 
 func statusFilesString(files []StatusFile) []string {
