@@ -113,7 +113,48 @@ func TestHappyPath(t *testing.T) {
 		)
 	}
 
-	t.Log("Log revision history (log, --revision, --pattern)")
+	t.Log("Exclude paths (ls, cp)")
+	{
+		lsOpts := []string{"ls", "--short-file-mode", "--timestamp-format", "unix-fraction"}
+		ls := func(args ...string) string {
+			return td.Column(sut.ClingSync(append(lsOpts, args...)...), 4)
+		}
+		assert.Equal(td.Dedent(`
+			b.txt
+			c.txt
+			dir1/
+			dir1/d.txt
+		`), ls(), "The head revision should hold these paths")
+		assert.Equal(td.Dedent(`
+			b.txt
+			c.txt
+		`), ls("--exclude", "dir1"), "Excluding a directory should drop its contents too")
+		assert.Equal("dir1/", ls("--exclude", "**/*.txt"))
+		assert.Equal("c.txt", ls("--exclude", "dir1", "--exclude", "b.txt"), "--exclude should be repeatable")
+		// The two narrow the result together rather than widening it: the
+		// pattern picks the three text files and --exclude then drops one.
+		// The flag has to come first or it is parsed as a second positional.
+		assert.Equal(td.Dedent(`
+			b.txt
+			dir1/d.txt
+		`), ls("--exclude", "c.txt", "**/*.txt"), "--exclude should narrow the pattern argument, not widen it")
+
+		// `--exclude dir1` drops the whole subtree for `cp` too, just as it did
+		// for `ls` above, and what survives is actually written out.
+		sut.ClingSync("cp", "--no-progress", "--exclude", "dir1", "*", "../cp-exclude")
+		sut.Chdir("../cp-exclude")
+		assert.Equal(td.Dedent(`
+			b.txt
+			c.txt
+		`), td.Column(sut.Ls(), 4), "the restored tree should hold exactly what `ls --exclude dir1` listed")
+		// `b.txt` was modified in the second commit and `c.txt` added there, so
+		// both prove the restore took its content from the head revision.
+		assert.Equal("bb", sut.Cat("b.txt"), "the restored files should hold the head content")
+		assert.Equal("C", sut.Cat("c.txt"))
+		sut.Chdir("../workspace")
+	}
+
+	t.Log("Log revision history (log, --revision, --include, --exclude)")
 	{
 		assert.Equal(td.Dedent(fmt.Sprintf(`
             %s %s second commit
@@ -133,11 +174,29 @@ func TestHappyPath(t *testing.T) {
 			sut.ClingSync("log", "--short", "--status"),
 			"Log should contain the two revisions")
 
-		// `--revision <id>` logs from that revision back to the root.
+		// `--revision <id>` shows only that revision, as it does for `cat`,
+		// `cp`, and `ls`.
 		assert.Equal(
 			fmt.Sprintf("%s %s first commit", rev1Id, rev1Date),
 			sut.ClingSync("log", "--short", "--revision", rev1Id),
-			"Logging the first revision should show only it",
+			"Logging the oldest revision should show only it",
+		)
+		assert.Equal(
+			fmt.Sprintf("%s %s second commit", rev2Id, rev2Date),
+			sut.ClingSync("log", "--short", "--revision", rev2Id),
+			"A revision with a parent should still show only itself",
+		)
+		assert.Equal(
+			fmt.Sprintf("%s %s second commit", rev2Id, rev2Date),
+			sut.ClingSync("log", "--short", "--revision", "head"),
+			"`head` should show only the head revision",
+		)
+
+		// The default is `..head`, the whole chain.
+		assert.Equal(
+			sut.ClingSync("log", "--short"),
+			sut.ClingSync("log", "--short", "--revision", "..head"),
+			"The default should be the same as `..head`",
 		)
 
 		// `--revision <old>..<new>` is a range that excludes <old> (git-style).
@@ -147,14 +206,22 @@ func TestHappyPath(t *testing.T) {
 			"A range should exclude the older revision",
 		)
 
-		// `--pattern` restricts the log to revisions touching a matching path.
+		// `--include` and `--exclude` restrict the log to revisions that still
+		// have a matching path, using the same patterns as `ls` and `cp`.
 		assert.Equal(
 			fmt.Sprintf("%s %s second commit", rev2Id, rev2Date),
-			sut.ClingSync("log", "--short", "--pattern", "c.txt"),
+			sut.ClingSync("log", "--short", "--include", "c.txt"),
 			"Only the revision that added c.txt should match",
 		)
-		assert.Equal(2, td.Wc("-l", sut.ClingSync("log", "--short", "--pattern", "a.txt")),
+		assert.Equal(2, td.Wc("-l", sut.ClingSync("log", "--short", "--include", "a.txt")),
 			"Both revisions touched a.txt")
+		// The second commit only touched `.txt` paths, so excluding them drops
+		// it. The first commit survives on its `dir1/` directory entry.
+		assert.Equal(
+			fmt.Sprintf("%s %s first commit", rev1Id, rev1Date),
+			sut.ClingSync("log", "--short", "--exclude", "**/*.txt"),
+			"a revision with no path left after --exclude should be dropped",
+		)
 
 		// An unknown revision id in a range is rejected by the CLI.
 		assert.Contains(
@@ -744,6 +811,60 @@ func TestPathPrefix(t *testing.T) {
 		`), td.Column(ls, 4))
 	}
 
+	t.Log("`cat` matches `ls`: prefix-relative by default, repository paths with --path-prefix /")
+	{
+		assert.Equal("c", sut.ClingSync("cat", "c.txt"), "cat should read relative to the prefix")
+		assert.Equal("d", sut.ClingSync("cat", "dir2/d.txt"))
+		// A full repository path must not resolve while the prefix is in effect.
+		assert.Equal(
+			true,
+			strings.Contains(sut.ClingSyncError("cat", "look/here/c.txt"), "file not found"),
+			"cat must not accept full repository paths",
+		)
+		assert.Equal("c", sut.ClingSync("cat", "--path-prefix", "/", "look/here/c.txt"))
+		assert.Equal("a", sut.ClingSync("cat", "--path-prefix", "/", "a.txt"))
+		assert.Equal("b", sut.ClingSync("cat", "--path-prefix", "dir1/", "b.txt"))
+	}
+
+	t.Log("`log` shows all history, the prefix only scopes the paths it prints")
+	{
+		// `first commit` touched a.txt and dir1/ only, both outside look/here/,
+		// but history is global so it is still listed. Hiding it would make the
+		// log disagree with `~<n>` and ranges, which address the whole chain.
+		assert.Equal(td.Dedent(`
+			from
+			first
+		`), td.Column(sut.ClingSync("log", "--short"), 3), "a path prefix should not hide history")
+		assert.Equal(
+			sut.ClingSync("log", "--short"),
+			sut.ClingSync("log", "--short", "--path-prefix", "/"),
+			"the prefix should not change which revisions are listed",
+		)
+
+		// `--status` reports the same prefix-relative paths as `ls` and drops
+		// the ones outside, so `first commit` is listed with no paths. It says
+		// how many it left out, so an empty list never looks like a bug.
+		logStatus := sut.ClingSync("log", "--status")
+		assert.Equal(false, strings.Contains(logStatus, "look/here"),
+			"log --status should report prefix-relative paths")
+		assert.Equal(true, strings.Contains(logStatus, "A dir2/d.txt"))
+		assert.Equal(false, strings.Contains(logStatus, "a.txt"),
+			"paths outside the prefix should not be reported")
+		assert.Equal(true,
+			strings.Contains(logStatus, "(0 of 3 paths shown, --path-prefix / shows the whole repository)"),
+			"a revision with nothing inside the prefix should say why it is empty")
+		// The prefix directories `look/` and `look/here/` are part of the
+		// revision, so they count towards the total but are never shown.
+		assert.Equal(true, strings.Contains(logStatus, "(3 of 5 paths shown"),
+			"a revision that is partly visible should say how much was left out")
+
+		// `--include` is an explicit filter, so it does restrict which
+		// revisions are listed, and it matches prefix-relative paths.
+		assert.Equal("from", td.Column(sut.ClingSync("log", "--short", "--include", "dir2/**"), 3))
+		assert.Equal("No revisions", sut.ClingSync("log", "--short", "--include", "look/here/**"),
+			"a pattern should not match full repository paths")
+	}
+
 	t.Log("`cp` matches `ls`: prefix-relative by default, whole repository with --path-prefix /")
 	{
 		// Default: the pattern and the restored layout are relative to look/here/.
@@ -774,6 +895,46 @@ func TestPathPrefix(t *testing.T) {
 		assert.Equal(td.Dedent(`
 			A new.txt
 		`), status)
+
+		// A pattern argument is anchored, so a bare name only matches at the
+		// top. `**/` opts back in to matching at any depth.
+		lsArgs := []string{"ls", "--short-file-mode", "--timestamp-format", "unix-fraction"}
+		ls := func(pattern string) string {
+			return td.Column(sut.ClingSync(append(append([]string{}, lsArgs...), pattern)...), 4)
+		}
+		assert.Equal("", ls("d.txt"), "a pattern argument should not match at any depth")
+		assert.Equal("dir2/d.txt", ls("**/d.txt"))
+		assert.Equal("dir2/d.txt", ls("dir2/d.txt"))
+		// `--exclude` is a filter, not a path, so it stays unanchored.
+		assert.Equal(td.Dedent(`
+			c.txt
+			dir2/
+		`), td.Column(sut.ClingSync(append(append([]string{}, lsArgs...), "--exclude", "d.txt")...), 4),
+			"--exclude should still match at any depth")
+
+		// `status` agrees with `ls` on the same pattern. An inclusion pattern
+		// has to reach into a directory that does not match it, otherwise the
+		// files it never visits look deleted.
+		assert.Equal("No changes", sut.ClingSync("status", "--no-progress", "dir2/d.txt"),
+			"an unchanged file below a non-matching directory should not look deleted")
+		sut.Write("dir2/d.txt", "d changed")
+		assert.Equal(td.Dedent(`
+			M dir2/d.txt
+		`), sut.ClingSync("status", "--no-progress", "--no-summary", "dir2/d.txt"))
+		sut.Write("dir2/d.txt", "d")
+
+		// A leading `/` anchors to the top of the prefix, it never means the
+		// repository root.
+		assert.Equal(td.Dedent(`
+			A new.txt
+		`), sut.ClingSync("status", "--no-progress", "--no-summary", "/new.txt"))
+		assert.Equal("No changes", sut.ClingSync("status", "--no-progress", "/look/here/new.txt"),
+			"a leading `/` should not escape the prefix")
+
+		// Exclusions still prune a whole subtree.
+		assert.Equal(td.Dedent(`
+			A new.txt
+		`), sut.ClingSync("status", "--no-progress", "--no-summary", "--exclude", "dir2"))
 	}
 
 	t.Log("Attach a non-empty directory with path-prefix (attach --allow-non-empty --path-prefix)")

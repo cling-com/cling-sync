@@ -102,11 +102,11 @@ type RevisionRange struct {
 // ParseRevisionRange parses a revision range, resolving each bound against the
 // chain. Formats:
 //
-//	<until>           <until> back to the root (a single revision)
+//	<rev>             only <rev>
 //	<since>..<until>  excludes <since>, like git's `since..until`
 //	<since>..         after <since> up to the head
-//	..<until>         the root up to <until> (same as `<until>`)
-//	(empty)           the whole chain
+//	..<until>         the root up to <until>
+//	(empty)           the whole chain, the same as `..head`
 //
 // Each bound is a spec accepted by ParseRevisionId (an id or `head`, with an
 // optional `~<n>`).
@@ -129,6 +129,14 @@ func (chain RevisionChain) ParseRevisionRange(spec string) (RevisionRange, error
 			return r, WrapErrorf(err, "invalid range until %q", until)
 		}
 		r.Until = &id
+	}
+	if !isRange && r.Until != nil {
+		// A bare revision is that revision alone, so the range starts at its
+		// parent. The oldest revision has no parent in the chain, and a nil
+		// Since already stops at the root.
+		if i := slices.Index(chain, *r.Until); i >= 0 && i+1 < len(chain) {
+			r.Since = &chain[i+1]
+		}
 	}
 	return r, nil
 }

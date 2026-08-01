@@ -271,7 +271,7 @@ func TestCp(t *testing.T) {
 		}, tout.Ls("."))
 	})
 
-	t.Run("PathFilter", func(t *testing.T) {
+	t.Run("Include and Exclude", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		out := td.NewTestFS(t, td.NewFS(t))

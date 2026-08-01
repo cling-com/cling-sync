@@ -29,7 +29,9 @@ const (
 	appName                   = "cling-sync"
 	fastScanFlagDescription   = "Speed up scanning by skipping file hash comparisons.\nFile changes are detected by trusting file metadata (size, ctime, inode).\nWARNING: May miss some changes, especially on network or FUSE file-systems.\nWhen in doubt, run without this flag for thorough verification."
 	repositoryFlagDescription = "Use this repository (local path or s3+... URI) instead of the workspace repository"
-	pathPrefixFlagDescription = "Use this path prefix instead of the workspace's, e.g. `dir/`.\nUse `/` to ignore the workspace prefix and operate on the whole repository from its root."
+	pathPrefixFlagDescription = "Use this path prefix, e.g. `dir/`, instead of the workspace's.\nUse a single / to ignore the workspace prefix and operate on the whole repository from its root."
+	excludeFlagDescription    = "Exclude paths matching the given pattern (can be used multiple times).\nSee Patterns below."
+	includeFlagDescription    = "Show only paths matching the given pattern (can be used multiple times).\nSee Patterns below."
 )
 
 // version is "dev" for normal builds and set to the release tag via -ldflags.
@@ -43,7 +45,8 @@ func AttachCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	}{}
 	flags := flag.NewFlagSet("attach", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
-	flags.StringVar(&args.PathPrefix, "path-prefix", "", "Only attach to this path inside the repository")
+	flags.StringVar(&args.PathPrefix, "path-prefix", "",
+		"Attach to this subtree of the repository, e.g. `dir/`.\nThe workspace then sees every path relative to it.")
 	flags.BoolVar(
 		&args.AllowNonEmpty,
 		"allow-non-empty",
@@ -288,12 +291,14 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		Help       bool
 		Revision   string
 		Repository string
+		PathPrefix string
 		Stdout     bool
 	}{}
 	flags := flag.NewFlagSet("cat", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to read from")
 	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
+	flags.StringVar(&args.PathPrefix, "path-prefix", "", pathPrefixFlagDescription)
 	flags.BoolVar(&args.Stdout, "stdout", false, "Write to stdout even when it is a terminal (do not page)")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s cat <path>\n\n", appName)
@@ -302,7 +307,7 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		fmt.Fprint(os.Stderr, "otherwise it is written to stdout.\n")
 		fmt.Fprint(os.Stderr, "\nArguments:\n")
 		fmt.Fprint(os.Stderr, "  path\n")
-		fmt.Fprint(os.Stderr, "        The repository path of the file to print.\n")
+		fmt.Fprint(os.Stderr, "        The path of the file to print, relative to the path prefix.\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
 	}
@@ -320,7 +325,10 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 	if err != nil {
 		return lib.WrapErrorf(err, "invalid path %q", flags.Arg(0))
 	}
-	var repository *lib.Repository
+	var (
+		repository *lib.Repository
+		pathPrefix lib.Path
+	)
 	if args.Repository != "" {
 		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
 		if err != nil {
@@ -337,6 +345,11 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		if err != nil {
 			return err
 		}
+		pathPrefix = workspace.PathPrefix
+	}
+	pathPrefix, err = parsePathPrefix(args.PathPrefix, pathPrefix)
+	if err != nil {
+		return err
 	}
 	revisionId, err := revisionId(ctx, repository, args.Revision)
 	if err != nil {
@@ -347,7 +360,7 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		return err
 	}
 	defer cleanup()
-	opts := &ws.CatOptions{RevisionId: revisionId, Path: path}
+	opts := &ws.CatOptions{RevisionId: revisionId, Path: path, PathPrefix: pathPrefix}
 	if args.Stdout || !IsTerm(os.Stdout) {
 		return ws.Cat(ctx, repository, os.Stdout, opts, tmpFS) //nolint:wrapcheck
 	}
@@ -384,7 +397,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	globPatternFlag(
 		flags,
 		"exclude",
-		"Exclude paths matching the given pattern (can be used multiple times).\nThe pattern syntax is the same as for the <pattern> argument.",
+		excludeFlagDescription,
 		&args.Exclude,
 	)
 	flags.Usage = func() {
@@ -392,15 +405,13 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		fmt.Fprint(os.Stderr, "Copy files from the repository to a local directory.\n")
 		fmt.Fprint(os.Stderr, "\nArguments:\n")
 		fmt.Fprint(os.Stderr, "  pattern\n")
-		fmt.Fprint(
-			os.Stderr,
-			"        Repository paths matching the given pattern are copied.\n"+globPatternDescription("        "),
-		)
-		fmt.Fprint(os.Stderr, "\n  target\n")
+		fmt.Fprint(os.Stderr, "        Copy only paths matching the given pattern (anchored, see Patterns below).\n")
+		fmt.Fprint(os.Stderr, "  target\n")
 		fmt.Fprint(os.Stderr, "        The target directory where files are copied to.\n")
 		fmt.Fprint(os.Stderr, "        Example: `cp path/to/file /tmp` creates `/tmp/path/to/file`\n")
-		fmt.Fprint(os.Stderr, "\n\nFlags:\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
+		fmt.Fprint(os.Stderr, patternSection)
 	}
 	if err := flags.Parse(argv); err != nil {
 		return err //nolint:wrapcheck
@@ -440,6 +451,14 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if err != nil {
 		return err
 	}
+	// The pattern is required, so Include is always set. Exclude stays nil
+	// when unused, like everywhere else: a nil filter means "no filter", and
+	// an empty one that always matches would hide that distinction.
+	include := lib.NewPathInclusionFilter([]string{anchoredPattern(flags.Arg(0))})
+	var exclude *lib.PathExclusionFilter
+	if len(args.Exclude) > 0 {
+		exclude = &lib.PathExclusionFilter{args.Exclude}
+	}
 	cpOnExists := ws.CpOnExistsAbort
 	if args.Overwrite {
 		cpOnExists = ws.CpOnExistsOverwrite
@@ -450,8 +469,8 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		return err
 	}
 	opts := &ws.CpOptions{
-		Include:                lib.NewPathInclusionFilter([]string{flags.Arg(0)}),
-		Exclude:                &lib.PathExclusionFilter{args.Exclude},
+		Include:                include,
+		Exclude:                exclude,
 		PathPrefix:             pathPrefix,
 		Monitor:                mon,
 		RevisionId:             revisionId,
@@ -735,7 +754,7 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	globPatternFlag(
 		flags,
 		"exclude",
-		"Exclude paths matching the given pattern (can be used multiple times).\nThe pattern syntax is the same as the [pattern] argument.",
+		excludeFlagDescription,
 		&args.Exclude,
 	)
 	flags.Usage = func() {
@@ -745,10 +764,11 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 		fmt.Fprint(os.Stderr, "  pattern (optional)\n")
 		fmt.Fprint(
 			os.Stderr,
-			"        Show status only for paths matching the given pattern.\n"+globPatternDescription("        "),
+			"        Show status only for paths matching the given pattern (anchored, see Patterns below).\n",
 		)
-		fmt.Fprint(os.Stderr, "\n\nFlags:\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
+		fmt.Fprint(os.Stderr, patternSection)
 	}
 	if err := flags.Parse(argv); err != nil {
 		return err //nolint:wrapcheck
@@ -757,12 +777,12 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 		flags.Usage()
 		return nil
 	}
-	var include *lib.PathInclusionFilter
-	if len(flags.Args()) == 1 {
-		include = lib.NewPathInclusionFilter([]string{flags.Arg(0)})
-	}
 	if len(flags.Args()) > 1 {
 		return lib.Errorf("too many positional arguments")
+	}
+	var include *lib.PathInclusionFilter
+	if len(flags.Args()) == 1 {
+		include = lib.NewPathInclusionFilter([]string{anchoredPattern(flags.Arg(0))})
 	}
 	var exclude *lib.PathExclusionFilter
 	if len(args.Exclude) > 0 {
@@ -840,6 +860,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		FileHash        bool
 		Repository      string
 		PathPrefix      string
+		Exclude         lib.ExtendedGlobPatterns
 	}{
 		TimestampFormat: time.RFC3339,
 	}
@@ -848,6 +869,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
 	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
 	flags.StringVar(&args.PathPrefix, "path-prefix", "", pathPrefixFlagDescription)
+	globPatternFlag(flags, "exclude", excludeFlagDescription, &args.Exclude)
 	flags.BoolVar(&args.Short, "short", false, "Show short listing (same as --timestamp-format=relative)")
 	flags.BoolVar(&args.FileHash, "file-hash", false, "Show file hash")
 	flags.BoolVar(
@@ -880,10 +902,11 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		fmt.Fprintf(os.Stderr, "Usage: %s ls [pattern]\n\n", appName)
 		fmt.Fprint(os.Stderr, "List files in the repository.\n")
 		fmt.Fprint(os.Stderr, "\nArguments:\n")
-		fmt.Fprint(os.Stderr, "  pattern\n")
-		fmt.Fprint(os.Stderr, "        The pattern syntax is the same as for the `commit --ignore` option.\n")
+		fmt.Fprint(os.Stderr, "  pattern (optional)\n")
+		fmt.Fprint(os.Stderr, "        List only paths matching the given pattern (anchored, see Patterns below).\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
+		fmt.Fprint(os.Stderr, patternSection)
 	}
 	if err := flags.Parse(argv); err != nil {
 		return err //nolint:wrapcheck
@@ -892,12 +915,16 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		flags.Usage()
 		return nil
 	}
-	var pathFilter lib.PathFilter
-	if len(flags.Args()) == 1 {
-		pathFilter = lib.NewPathInclusionFilter([]string{flags.Arg(0)})
-	}
 	if len(flags.Args()) > 1 {
 		return lib.Errorf("too many positional arguments")
+	}
+	var include *lib.PathInclusionFilter
+	if len(flags.Args()) == 1 {
+		include = lib.NewPathInclusionFilter([]string{anchoredPattern(flags.Arg(0))})
+	}
+	var exclude *lib.PathExclusionFilter
+	if len(args.Exclude) > 0 {
+		exclude = &lib.PathExclusionFilter{args.Exclude}
 	}
 	var (
 		repository *lib.Repository
@@ -931,7 +958,12 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if err != nil {
 		return err
 	}
-	opts := &ws.LsOptions{RevisionId: revisionId, PathFilter: pathFilter, PathPrefix: pathPrefix}
+	opts := &ws.LsOptions{
+		RevisionId: revisionId,
+		Include:    include,
+		Exclude:    exclude,
+		PathPrefix: pathPrefix,
+	}
 	tmpFS, cleanup, err := newTempFS("ls")
 	if err != nil {
 		return err
@@ -971,7 +1003,9 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		Short      bool
 		Status     bool
 		Repository string
-		Pattern    string
+		PathPrefix string
+		Include    lib.ExtendedGlobPatterns
+		Exclude    lib.ExtendedGlobPatterns
 		Revision   string
 	}{}
 	flags := flag.NewFlagSet("log", flag.ExitOnError)
@@ -979,15 +1013,21 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 	flags.BoolVar(&args.Short, "short", false, "Show short log")
 	flags.BoolVar(&args.Status, "status", false, "Show status of paths affected in a revision")
 	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
-	flags.StringVar(&args.Pattern, "pattern", "", "Show log only for paths matching the given pattern")
-	flags.StringVar(&args.Revision, "revision", "",
-		"Revision to show, or a range `<old>..<new>` which excludes `<old>` (like git). Defaults to the head revision.")
+	flags.StringVar(&args.PathPrefix, "path-prefix", "", pathPrefixFlagDescription)
+	globPatternFlag(flags, "include", includeFlagDescription, &args.Include)
+	globPatternFlag(flags, "exclude", excludeFlagDescription, &args.Exclude)
+	flags.StringVar(
+		&args.Revision,
+		"revision",
+		"",
+		"Revision to show. A `<old>..<new>` range shows every revision after <old> up to <new>.\nDefaults to ..head, which is the whole chain.",
+	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s log\n\n", appName)
 		fmt.Fprint(os.Stderr, "Show revision log.\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
 		flags.PrintDefaults()
-		fmt.Fprint(os.Stderr, "\n"+globPatternDescription("")+"\n")
+		fmt.Fprint(os.Stderr, patternSection)
 	}
 	if err := flags.Parse(argv); err != nil {
 		return err //nolint:wrapcheck
@@ -999,12 +1039,17 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 	if len(flags.Args()) > 0 {
 		return lib.Errorf("too many positional arguments")
 	}
-	var pathFilter lib.PathFilter
-	if args.Pattern != "" {
-		pathFilter = lib.NewPathInclusionFilter([]string{args.Pattern})
+	var include *lib.PathInclusionFilter
+	if len(args.Include) > 0 {
+		include = &lib.PathInclusionFilter{args.Include}
+	}
+	var exclude *lib.PathExclusionFilter
+	if len(args.Exclude) > 0 {
+		exclude = &lib.PathExclusionFilter{args.Exclude}
 	}
 	var (
 		repository *lib.Repository
+		pathPrefix lib.Path
 		err        error
 	)
 	if args.Repository != "" {
@@ -1023,8 +1068,13 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		if err != nil {
 			return err
 		}
+		pathPrefix = workspace.PathPrefix
 	}
 	defer repository.Close() //nolint:errcheck
+	pathPrefix, err = parsePathPrefix(args.PathPrefix, pathPrefix)
+	if err != nil {
+		return err
+	}
 	var revisionRange lib.RevisionRange
 	if args.Revision != "" {
 		var chain lib.RevisionChain
@@ -1035,7 +1085,13 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 			return err //nolint:wrapcheck
 		}
 	}
-	opts := &ws.LogOptions{PathFilter: pathFilter, Status: args.Status, Range: revisionRange}
+	opts := &ws.LogOptions{
+		Include:    include,
+		Exclude:    exclude,
+		Status:     args.Status,
+		Range:      revisionRange,
+		PathPrefix: pathPrefix,
+	}
 	logs, err := ws.Log(ctx, repository, opts)
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -1058,6 +1114,15 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		fmt.Println()
 		for _, file := range log.Files {
 			fmt.Printf("    %s\n", file.Format())
+		}
+		// Say so when paths were left out, otherwise a short or empty list
+		// looks like the revision changed nothing.
+		if len(log.Files) < log.TotalFiles {
+			hint := ""
+			if !pathPrefix.IsEmpty() {
+				hint = ", --path-prefix / shows the whole repository"
+			}
+			fmt.Printf("    (%d of %d paths shown%s)\n", len(log.Files), log.TotalFiles, hint)
 		}
 		if args.Short && i < len(logs)-1 {
 			fmt.Println()
@@ -2100,15 +2165,50 @@ func readPassphrase(passphraseFromStdin bool) ([]byte, error) {
 	return passphrase, nil
 }
 
-func globPatternDescription(indent string) string {
-	// todo: Explain more and add examples
-	return indent + strings.ReplaceAll(strings.TrimSpace(`
-Patterns follow the same syntax as the git-ignore files.
-Pattern syntax:
-    **      matches any number of directories
-    *       matches any number of characters in a single directory
-    ?       matches a single character
-	`), "\n", "\n"+indent)
+// Printed last by every command that takes a pattern, so that its pattern
+// argument and its `--exclude` flag can both point at one explanation.
+// todo: Explain more and add examples
+const patternSection = `
+Patterns:
+  Patterns match paths relative to the path prefix, never to the
+  repository root, and use the git-ignore syntax.
+
+      **      matches any number of directories
+      *       matches any number of characters in a single directory
+      ?       matches a single character
+
+  A pattern argument names a path, so it is anchored: it has to match
+  from the start of the path. Anchored, "d.txt" matches d.txt but not
+  dir/d.txt, while "**/d.txt" matches both. A lone "/" is the start of
+  the path, so it matches everything.
+
+  --exclude, and on ` + "`log`" + ` also --include, name filters rather than
+  paths, so they are not anchored and may match at any depth. A bare
+  "build" drops every build directory. A path has to survive every
+  filter, so --include cannot bring back what --exclude dropped. Negate
+  inside --exclude instead. Each --exclude takes one pattern, so repeat
+  the flag to give several. The last one to match wins, so a negation
+  comes after what it re-includes:
+
+      --exclude build --exclude '!build/keep.txt'
+
+  A pattern naming a directory also matches everything below it. Quote
+  patterns so the shell cannot expand them against local files.
+`
+
+// A pattern argument names a path, so it is anchored: `d.txt` is the one at the
+// top of the view, not every `d.txt` below it. `--include` and `--exclude` are
+// filters and keep the git-ignore reading, where a bare name matches at any
+// depth. A lone `/` is the root of the view, so it means everything under it.
+func anchoredPattern(pattern string) string {
+	switch {
+	case pattern == "/":
+		return "/**"
+	case strings.HasPrefix(pattern, "/"):
+		return pattern
+	default:
+		return "/" + pattern
+	}
 }
 
 func globPatternFlag(flags *flag.FlagSet, name string, usage string, value *lib.ExtendedGlobPatterns) {

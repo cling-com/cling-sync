@@ -87,7 +87,8 @@ func (f *LsFile) Format(format *LsFormat) string {
 
 type LsOptions struct {
 	RevisionId lib.RevisionId
-	PathFilter lib.PathFilter
+	Include    *lib.PathInclusionFilter
+	Exclude    *lib.PathExclusionFilter
 	PathPrefix lib.Path
 }
 
@@ -114,7 +115,8 @@ func Ls(ctx context.Context, repository *lib.Repository, tmpFS lib.FS, opts *LsO
 		if !ok {
 			continue
 		}
-		if opts.PathFilter != nil && !opts.PathFilter.Include(path, re.Metadata.FileMode.IsDir()) {
+		isDir := re.Metadata.FileMode.IsDir()
+		if !opts.Include.Include(path, isDir) || !opts.Exclude.Include(path, isDir) {
 			continue
 		}
 		files = append(files, LsFile{path, re.Metadata})

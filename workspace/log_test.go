@@ -27,7 +27,11 @@ func TestLog(t *testing.T) {
 		assert.NoError(err)
 
 		// List all revisions.
-		logs, err := Log(t.Context(), r.Repository, &LogOptions{nil, false, lib.RevisionRange{nil, nil}})
+		logs, err := Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{nil, nil, false, lib.RevisionRange{nil, nil}, lib.Path{}},
+		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId3, nil),
@@ -39,7 +43,7 @@ func TestLog(t *testing.T) {
 		logs, err = Log(
 			t.Context(),
 			r.Repository,
-			&LogOptions{nil, false, lib.RevisionRange{Since: &revId1, Until: &revId3}},
+			&LogOptions{nil, nil, false, lib.RevisionRange{Since: &revId1, Until: &revId3}, lib.Path{}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -51,7 +55,7 @@ func TestLog(t *testing.T) {
 		logs, err = Log(
 			t.Context(),
 			r.Repository,
-			&LogOptions{nil, false, lib.RevisionRange{Since: nil, Until: &revId2}},
+			&LogOptions{nil, nil, false, lib.RevisionRange{Since: nil, Until: &revId2}, lib.Path{}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -81,7 +85,11 @@ func TestLog(t *testing.T) {
 		assert.NoError(err)
 
 		// List all revisions.
-		logs, err := Log(t.Context(), r.Repository, &LogOptions{nil, true, lib.RevisionRange{nil, nil}})
+		logs, err := Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{nil, nil, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId2, []TestStatusFile{
@@ -99,7 +107,7 @@ func TestLog(t *testing.T) {
 		}, newTestRevisionLogs(logs, true))
 	})
 
-	t.Run("PathFilter", func(t *testing.T) {
+	t.Run("Include and Exclude", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
@@ -118,31 +126,128 @@ func TestLog(t *testing.T) {
 		revId3, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		// PathFilter on `a.txt` without status.
+		// Include `a.txt` without status.
 		filter := lib.NewPathInclusionFilter([]string{"a.txt"})
-		logs, err := Log(t.Context(), r.Repository, &LogOptions{filter, false, lib.RevisionRange{nil, nil}})
+		logs, err := Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{filter, nil, false, lib.RevisionRange{nil, nil}, lib.Path{}},
+		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId3, nil),
 			revisionLog(t, r, revId1, nil),
 		}, newTestRevisionLogs(logs, false))
 
-		// PathFilter on `a.txt` with status.
-		logs, err = Log(t.Context(), r.Repository, &LogOptions{filter, true, lib.RevisionRange{nil, nil}})
+		// Include `a.txt` with status.
+		logs, err = Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{filter, nil, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId3, []TestStatusFile{{"a.txt", lib.RevisionEntryKindDelete, 1}}),
 			revisionLog(t, r, revId1, []TestStatusFile{{"a.txt", lib.RevisionEntryKindAdd, 1}}),
 		}, newTestRevisionLogs(logs, true))
 
-		// PathFilter on `c/*` with status.
+		// Include `c/*` with status.
 		filter = lib.NewPathInclusionFilter([]string{"c/*"})
-		logs, err = Log(t.Context(), r.Repository, &LogOptions{filter, true, lib.RevisionRange{nil, nil}})
+		logs, err = Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{filter, nil, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId2, []TestStatusFile{{"c/e.txt", lib.RevisionEntryKindAdd, 1}}),
 			revisionLog(t, r, revId1, []TestStatusFile{{"c/d.txt", lib.RevisionEntryKindAdd, 1}}),
 		}, newTestRevisionLogs(logs, true))
+
+		// Exclude drops paths, and a revision left with none of them.
+		// `revId2` only added `c/e.txt`, so it disappears entirely.
+		exclude := lib.NewPathExclusionFilter([]string{"c"})
+		logs, err = Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{nil, exclude, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+		)
+		assert.NoError(err)
+		assert.Equal([]TestRevisionLog{
+			revisionLog(t, r, revId3, []TestStatusFile{{"a.txt", lib.RevisionEntryKindDelete, 1}}),
+			revisionLog(t, r, revId1, []TestStatusFile{
+				{"a.txt", lib.RevisionEntryKindAdd, 1},
+				{"b.txt", lib.RevisionEntryKindAdd, 1},
+			}),
+		}, newTestRevisionLogs(logs, true))
+
+		// Include and Exclude combine.
+		filter = lib.NewPathInclusionFilter([]string{"**/*.txt"})
+		exclude = lib.NewPathExclusionFilter([]string{"a.txt"})
+		logs, err = Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{filter, exclude, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+		)
+		assert.NoError(err)
+		assert.Equal([]TestRevisionLog{
+			revisionLog(t, r, revId2, []TestStatusFile{{"c/e.txt", lib.RevisionEntryKindAdd, 1}}),
+			revisionLog(t, r, revId1, []TestStatusFile{
+				{"b.txt", lib.RevisionEntryKindAdd, 1},
+				{"c/d.txt", lib.RevisionEntryKindAdd, 1},
+			}),
+		}, newTestRevisionLogs(logs, true))
+	})
+
+	t.Run("PathPrefix", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		// One commit inside `sub/`, one outside it.
+		w.Write("sub/a.txt", "a")
+		revId1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		w.Write("b.txt", "b")
+		revId2, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// A prefix reports paths relative to itself and drops the ones outside,
+		// but it never hides a revision: `revId2` is still listed, with no
+		// paths under it.
+		prefix, err := lib.NewPath("sub")
+		assert.NoError(err)
+		logs, err := Log(t.Context(), r.Repository, &LogOptions{nil, nil, true, lib.RevisionRange{nil, nil}, prefix})
+		assert.NoError(err)
+		assert.Equal([]TestRevisionLog{
+			revisionLog(t, r, revId2, []TestStatusFile{}),
+			revisionLog(t, r, revId1, []TestStatusFile{{"a.txt", lib.RevisionEntryKindAdd, 1}}),
+		}, newTestRevisionLogs(logs, true))
+		// `TotalFiles` counts what was skipped, so a caller can report it.
+		// `revId2` holds `b.txt`, `revId1` holds `sub/` and `sub/a.txt`.
+		assert.Equal(1, logs[0].TotalFiles, "b.txt is outside the prefix but still counted")
+		assert.Equal(2, logs[1].TotalFiles, "the `sub` directory entry itself is counted too")
+
+		// A pattern is an explicit filter, so it does drop revisions. It
+		// matches the prefix-relative path, so a leading `/` anchors at the
+		// prefix and not at the repository root.
+		filter := lib.NewPathInclusionFilter([]string{"/a.txt"})
+		logs, err = Log(t.Context(), r.Repository, &LogOptions{filter, nil, false, lib.RevisionRange{nil, nil}, prefix})
+		assert.NoError(err)
+		assert.Equal([]TestRevisionLog{revisionLog(t, r, revId1, nil)}, newTestRevisionLogs(logs, false))
+
+		// Without a prefix both revisions are listed.
+		logs, err = Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{nil, nil, false, lib.RevisionRange{nil, nil}, lib.Path{}},
+		)
+		assert.NoError(err)
+		assert.Equal([]TestRevisionLog{
+			revisionLog(t, r, revId2, nil),
+			revisionLog(t, r, revId1, nil),
+		}, newTestRevisionLogs(logs, false))
 	})
 }
 

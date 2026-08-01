@@ -32,7 +32,8 @@ func TestCat(t *testing.T) {
 			p, err := lib.NewPath(path)
 			assert.NoError(err)
 			var buf bytes.Buffer
-			err = Cat(t.Context(), r.Repository, &buf, &CatOptions{RevisionId: rev, Path: p}, td.NewFS(t))
+			opts := &CatOptions{RevisionId: rev, Path: p, PathPrefix: lib.Path{}}
+			err = Cat(t.Context(), r.Repository, &buf, opts, td.NewFS(t))
 			return buf.String(), err
 		}
 		return cat, rev1, rev2
@@ -96,5 +97,34 @@ func TestCat(t *testing.T) {
 		cat, _, rev2 := setupCat(t)
 		_, err := cat(rev2, "link")
 		assert.Error(err, "link is a symlink to a.txt")
+	})
+
+	t.Run("Reads a file relative to the path prefix", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("a.txt", "root")
+		w.Write("sub/a.txt", "nested")
+		rev, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		cat := func(prefix lib.Path, path string) (string, error) {
+			p, err := lib.NewPath(path)
+			assert.NoError(err)
+			var buf bytes.Buffer
+			err = Cat(t.Context(), r.Repository, &buf, &CatOptions{rev, p, prefix}, td.NewFS(t))
+			return buf.String(), err
+		}
+		prefix, err := lib.NewPath("sub")
+		assert.NoError(err)
+
+		got, err := cat(prefix, "a.txt")
+		assert.NoError(err)
+		assert.Equal("nested", got, "the path should resolve under the prefix, not at the repository root")
+		got, err = cat(lib.Path{}, "a.txt")
+		assert.NoError(err)
+		assert.Equal("root", got)
+		_, err = cat(prefix, "sub/a.txt")
+		assert.Error(err, "file not found", "a full repository path should not resolve under a prefix")
 	})
 }

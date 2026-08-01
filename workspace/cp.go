@@ -88,10 +88,7 @@ func Cp( //nolint:funlen
 			continue
 		}
 		isDir := entry.Metadata.FileMode.IsDir()
-		if opts.Include != nil && !opts.Include.Include(path, isDir) {
-			continue
-		}
-		if opts.Exclude != nil && !opts.Exclude.Include(path, isDir) {
+		if !opts.Include.Include(path, isDir) || !opts.Exclude.Include(path, isDir) {
 			continue
 		}
 		target := path.String()

@@ -10,9 +10,13 @@ import (
 
 	clingHTTP "github.com/flunderpero/cling-sync/http"
 	"github.com/flunderpero/cling-sync/lib"
+	"github.com/flunderpero/cling-sync/workspace"
 )
 
-var td = lib.TestData{} //nolint:gochecknoglobals
+var (
+	td   = lib.TestData{}                //nolint:gochecknoglobals
+	wstd = workspace.WorkspaceTestData{} //nolint:gochecknoglobals
+)
 
 const (
 	wasmTestAccessKey = "test-access-key"
@@ -25,6 +29,15 @@ func TestWasm(t *testing.T) {
 	t.Parallel()
 	fs := td.NewRealFS(t)
 	r := td.NewTestRepository(t, fs)
+
+	// Seed a revision so the wasm side has something to list.
+	w := wstd.NewTestWorkspace(t, r.Repository)
+	w.Write("a.txt", "a")
+	w.Write("skip.log", "log")
+	head, err := workspace.Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	mux := http.NewServeMux()
 	clingHTTP.NewS3StorageServer(r.Storage, wasmTestRegion, wasmTestAccessKey, wasmTestSecret).
@@ -43,5 +56,5 @@ func TestWasm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	RunWasmTests(t, "checkrepo", "WASM_S3_URL="+encryptedURI)
+	RunWasmTests(t, "checkrepo", "WASM_S3_URL="+encryptedURI, "WASM_HEAD_REVISION="+head.String())
 }

@@ -95,14 +95,14 @@ func NewStaging( //nolint:funlen
 		}()
 		// Eager exclusion so we don't hash excluded files or recurse into
 		// excluded directories.
-		if exclude != nil && !exclude.Include(localPath, d.IsDir()) {
+		if !exclude.Include(localPath, d.IsDir()) {
 			excluded = true
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if include != nil && !include.Include(localPath, d.IsDir()) {
+		if !include.Include(localPath, d.IsDir()) {
 			excluded = true
 			return nil
 		}
@@ -179,6 +179,8 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
 	}
+	// Testing for nil asks whether any filtering is needed at all, so that a
+	// prefix-less, filter-less snapshot is read without a per-entry callback.
 	var revFilter func(e *lib.RevisionEntry) bool
 	if !s.pathPrefix.IsEmpty() || s.Include != nil || s.Exclude != nil {
 		revFilter = func(e *lib.RevisionEntry) bool {
@@ -188,10 +190,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 				return false
 			}
 			isDir := e.Metadata.FileMode.IsDir()
-			if s.Exclude != nil && !s.Exclude.Include(local, isDir) {
-				return false
-			}
-			return s.Include == nil || s.Include.Include(local, isDir)
+			return s.Include.Include(local, isDir) && s.Exclude.Include(local, isDir)
 		}
 	}
 	revReader := snapshot.Reader(revFilter)

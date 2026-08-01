@@ -15,10 +15,11 @@ names. Every block on disk is indistinguishable from random.
 3. [Command reference](#command-reference)
 4. [Remote repositories](#remote-repositories)
 5. [Ignore files](#ignore-files)
-6. [Symlinks](#symlinks)
-7. [How it works](#how-it-works)
-8. [Threat model](#threat-model)
-9. [Development](#development)
+6. [Pattern reference](#pattern-reference)
+7. [Symlinks](#symlinks)
+8. [How it works](#how-it-works)
+9. [Threat model](#threat-model)
+10. [Development](#development)
 
 ## Concepts
 
@@ -87,10 +88,82 @@ find the revision id, then:
 All commands operate on the current directory's workspace unless noted.
 Run `cling-sync <command> --help` for the full flag list.
 
-The commands that only read a repository (`check`, `cp`, `ls`, `log`,
-`serve`) accept `--repository <path-or-uri>` to operate on a repository
-directly, bypassing the workspace. The argument is a local path or an
-`s3+...` URI, opened the same way as `attach`.
+The commands that only read a repository (`cat`, `check`, `cp`, `ls`,
+`log`, `serve`) accept `--repository <path-or-uri>` to operate on a
+repository directly, bypassing the workspace. The argument is a local
+path or an `s3+...` URI, opened the same way as `attach`.
+
+### Paths and filters
+
+Every path and pattern argument is relative to the workspace's path
+prefix, and every command reports paths in that same relative space. A
+workspace attached with `--path-prefix look/here/` sees the repository
+path `look/here/dir/f.txt` as `dir/f.txt`, and that is what `cat`, `cp`,
+`log`, `ls`, and `status` accept and print. Without a prefix, or under
+`--repository`, the relative space is the repository root.
+
+The four read commands that take paths (`cat`, `cp`, `log`, `ls`) accept
+`--path-prefix <dir>/` to use a different subtree for one invocation,
+and `--path-prefix /` to use the whole repository from its root.
+`merge`, `reset`, and `status` are pinned to the workspace's own prefix,
+because their other side is the local directory.
+
+    cling-sync ls                            # the subtree
+    cling-sync ls --path-prefix dir1/        # another subtree
+    cling-sync ls --path-prefix /            # the whole repository
+
+Patterns use the git-ignore syntax, documented in full under
+[Pattern reference](#pattern-reference), matched against the relative
+path. A pattern naming a directory also matches everything below it.
+Quote every pattern, because the shell must not expand it: it is matched
+against the repository, not against your working directory.
+
+There are two kinds of pattern, and they differ in one way: whether they
+are anchored. An anchored pattern has to match from the start of the
+path, so `notes.md` matches `notes.md` but not `docs/notes.md`. An
+unanchored one may match at any depth, so `notes.md` matches both.
+
+**A pattern argument names a path, so it is anchored.** `cp`, `ls`, and
+`status` take a pattern argument. A bare pattern matches only at the top of 
+the relative space, and `**/` opts back in to matching at any depth. 
+A lone `/` is the start of the path, so it means everything.
+
+A leading `!` is an ordinary character here, not a negation.
+
+    cling-sync ls 'notes.md'      # only at the top
+    cling-sync ls '**/notes.md'   # at any depth
+    cling-sync ls 'docs'          # docs and everything below it
+    cling-sync ls '/'             # everything
+    cling-sync ls '!odd'          # a file actually named !odd
+
+**`--exclude` is a filter, so it is not anchored.** A bare pattern
+matches at any depth, which is what you want for `build` or `*.tmp`. It
+can be repeated, and `cp`, `ls`, `status`, and `log` all take it.
+
+    cling-sync ls --exclude 'build' --exclude '**/*.tmp'
+
+`log` is the only command with a matching **`--include`**, because it works
+mainly on revisions, a pattern argument would feel wrong.
+
+#### How filters combine
+
+A path has to survive every filter, so `--include` narrows and
+`--exclude` removes. Which of the two you write first makes no
+difference.
+
+**`--include` cannot bring back what `--exclude` dropped.** That differs
+from tools where `--include` overrides `--exclude`. Here the two are
+combined rather than ranked, so this matches nothing at all:
+
+    cling-sync log --exclude '**/c.txt' --include '**/c.txt'
+
+To carve an exception out of an exclusion, negate inside `--exclude` with
+a leading `!`. Each `--exclude` takes one pattern, so repeat the flag to
+give several. They are applied left to right and the last one to match a
+path wins, so a negation has to come after whatever it is re-including.
+
+    cling-sync ls --exclude 'build' --exclude '!build/keep.txt'  # keeps it
+    cling-sync ls --exclude '!build/keep.txt' --exclude 'build'  # drops it
 
 ### `init <repository-path>`
 
@@ -146,53 +219,79 @@ back from the repository.
 ### `status`
 
 Show which workspace paths differ from the head revision. An optional
-glob pattern limits the output.
+glob pattern limits the output, and `--exclude` drops paths it matched.
 
     cling-sync status
     cling-sync status 'src/**'
+    cling-sync status --exclude 'build'
 
-### `log [--pattern <pattern>] [--revision <id>[..<id>]] [--status]`
+### `log [--include <pattern>] [--exclude <pattern>] [--revision <id>[..<id>]] [--status]`
 
-Show the revision chain. `--pattern` restricts to revisions that
-touched a matching path. `--revision <id>` starts the log at a
-revision instead of the head. A range `<old>..<new>` excludes `<old>`,
-like git. `--status` shows added, updated, and deleted paths per
-revision.
+Show the revision chain. `--include` and `--exclude` take the same
+patterns as `ls` and `cp` and restrict the log to revisions that still
+have a matching path. Both can be repeated. `--revision <id>` shows only that revision,
+the same as it does for `cat`, `cp`, and `ls`. A range `<old>..<new>`
+shows every revision after `<old>` up to `<new>`, so it excludes
+`<old>`, like git. The default is `..head`, the whole chain.
+`--status` shows added, updated, and deleted paths per revision.
 
     cling-sync log --short
-    cling-sync log --status --pattern 'src/**'
+    cling-sync log --status --include 'src/**'
+    cling-sync log --exclude '**/*.lock'
+    cling-sync log --revision HEAD~1
     cling-sync log --revision HEAD~3..HEAD
+
+> [!NOTE]
+> This differs from git, where `git log <commit>` also shows every
+> ancestor. Here a bare revision means that one revision, so
+> `--revision` reads the same on every command that takes it.
+
+A path prefix does not hide history. Every revision is listed, because
+revision ids, `~<n>`, and ranges all address the whole chain, and a log
+that showed fewer revisions than those can reach would contradict them.
+The prefix only scopes the paths `--status` prints. `--include` and
+`--exclude` are different: they are explicit filters, so they do
+restrict which revisions are listed.
+
+Whenever `--status` leaves paths out, it says so, so a short or empty
+list is never mistaken for a revision that changed nothing.
+
+    (0 of 3 paths shown, --path-prefix / shows the whole repository)
 
 ### `ls [<pattern>]`
 
 List paths in a revision, the head by default, optionally filtered by a
-glob pattern. `--revision <id>` lists a non-head revision.
+glob pattern and `--exclude`. `--revision <id>` lists a non-head
+revision.
 
     cling-sync ls
     cling-sync ls '*.md'
+    cling-sync ls --exclude 'build'
     cling-sync ls --revision 9f3a...c104 'src/**'
 
-Paths are relative to the workspace's path prefix, and the pattern
-matches in that same relative space. `--path-prefix <dir>/` scopes to
-another subtree for one command (or sets the subtree under
-`--repository`). `--path-prefix /` lists from the repository root.
+### `cat <path>`
 
-    cling-sync ls --path-prefix /
+Print a single file from a revision. `--revision <id>` reads a non-head
+revision. When stdout is a terminal the file is shown in a pager,
+otherwise it is written to stdout.
+
+    cling-sync cat notes.md
+    cling-sync cat --revision HEAD~1 notes.md
 
 ### `cp <pattern> <target>`
 
 Copy paths matching `<pattern>` from a revision into `<target>`,
 recreating their directory structure under it. `--revision <id>`
-selects a non-head revision.
+selects a non-head revision and `--exclude` drops paths the pattern
+matched.
 
     cling-sync cp '*' /tmp/restore
     cling-sync cp 'docs/**' .
+    cling-sync cp --exclude '**/*.tmp' '*' /tmp/restore
     cling-sync cp --revision 9f3a...c104 report.pdf .
 
-As with `ls`, the pattern and the restored layout are relative to the
-workspace's path prefix. `--path-prefix /` uses full repository paths.
-`--repository <path-or-uri>` copies straight from a repository without
-a workspace.
+The restored layout mirrors the relative space the pattern matches in,
+so `--path-prefix /` recreates full repository paths under `<target>`.
 
 ### `reset <revision>`
 
@@ -371,8 +470,10 @@ ones.
 
 ## Ignore files
 
-cling-sync respects `.gitignore` and `.clingignore`. The syntax is the
-[Git syntax](https://git-scm.com/docs/gitignore).
+cling-sync respects `.gitignore` and `.clingignore`, using the same
+patterns as everything else. See [Pattern reference](#pattern-reference).
+A file applies to its own directory and everything below it, and a
+pattern in a nested file can negate one from a parent.
 
 During `merge`, a repository entry whose path matches a workspace ignore
 pattern is not written into the workspace. The entry stays in the
@@ -383,6 +484,72 @@ repository, so another workspace without that pattern still receives it.
 > tracked files and then running `merge` marks those paths as deleted
 > in the next revision. Nothing is actually removed: the files in the
 > workspace are untouched, and earlier revisions still contain them.
+
+Once a directory is ignored, cling-sync never looks inside it, so a `!`
+pattern cannot bring anything below it back. Git behaves the same way.
+This ignores all of `build/`, and the second line does nothing:
+
+    build
+    !build/keep.txt
+
+Ignore the contents instead of the directory, and the negation is reached:
+
+    build/*
+    !build/keep.txt
+
+## Pattern reference
+
+Patterns follow the [git-ignore syntax](https://git-scm.com/docs/gitignore),
+which is the best introduction to them. Git's documentation does not
+cover every corner it implements, so this is what cling-sync actually
+does.
+
+**Wildcards**
+
+- `*` matches any run of characters inside one path component.
+- `?` matches exactly one byte and never a `/`.
+- `**` matches any number of directories.
+- A pattern matching a directory also matches everything below it, so
+  `build` covers `build/out/x.o`.
+
+**Character classes**
+
+- `[abc]` matches one listed character, `[a-z]` a range, `[a-ce-g]`
+  several ranges.
+- `[!abc]` negates. `[^abc]` negates too, which Git implements but does
+  not document, so prefer `!`.
+- A reversed range like `[z-a]` matches nothing, as does an unclosed `[`.
+- POSIX classes are written `[[:digit:]]`, and `alnum`, `alpha`, `blank`,
+  `cntrl`, `digit`, `graph`, `lower`, `print`, `punct`, `space`, `upper`
+  and `xdigit` are supported. An unknown one makes the whole pattern
+  match nothing.
+
+**Escaping**
+
+- `\` escapes the next character, and escaping an ordinary character is
+  harmless: `\R` is just `R`.
+- A pattern ending in a lone `\` matches nothing.
+
+**Whole-pattern rules**
+
+- A leading `/` anchors the pattern. A pattern that contains a `/`
+  anywhere but at the end is anchored already.
+- A leading `!` negates the pattern in ignore files and in `--exclude`
+  and `--include`. In a pattern argument it is an ordinary character.
+- A trailing `/` requires a directory.
+- A leading `#` makes the whole line a comment that matches nothing, so
+  `--exclude '#tmp'` quietly does nothing. Write `\#tmp` for a literal
+  hash.
+- Trailing spaces are stripped unless escaped as `\ `. Leading and
+  interior spaces are matched as they are.
+
+**Matching is byte-based**
+
+- Matching is case sensitive: `readme.md` does not match `README.md`.
+- Bytes are matched rather than runes, so `?` covers one byte:
+  `?ber.txt` misses `über.txt` while `??ber.txt` matches it. Literals and
+  `*` are unaffected.
+- Hidden files are not special: `*` and `?` match a leading dot.
 
 ## Symlinks
 

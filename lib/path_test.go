@@ -154,6 +154,22 @@ func TestPathExclusionFilter(t *testing.T) {
 	})
 }
 
+func TestNilPathFilter(t *testing.T) {
+	t.Parallel()
+	assert := NewAssert(t)
+
+	// A nil filter means no filter, so it keeps every path. An empty one is a
+	// different thing and both are checked here so they cannot be confused.
+	var include *PathInclusionFilter
+	var exclude *PathExclusionFilter
+	assert.Equal(true, include.Include(Path{"a.txt"}, false), "a nil include should keep every path")
+	assert.Equal(true, exclude.Include(Path{"a.txt"}, false), "a nil exclude should keep every path")
+	assert.Equal(false, NewPathInclusionFilter(nil).Include(Path{"a.txt"}, false),
+		"an empty include matches nothing, so it drops every path")
+	assert.Equal(true, NewPathExclusionFilter(nil).Include(Path{"a.txt"}, false),
+		"an empty exclude drops nothing")
+}
+
 func TestPathInclusionFilter(t *testing.T) {
 	t.Parallel()
 

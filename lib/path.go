@@ -108,6 +108,10 @@ type PathFilter interface {
 // A PathFilter that can exclude paths.
 // A path is excluded if it matches any of the exclude patterns and none of the include patterns.
 // So the include patterns are only used to override exclude patterns.
+//
+// A nil `*PathExclusionFilter` means no filter and is safe to call: it keeps
+// every path. Keep it nil rather than empty, so that the code asking whether a
+// filter is in effect at all can tell the difference.
 type PathExclusionFilter struct {
 	Excludes ExtendedGlobPatterns
 }
@@ -122,9 +126,17 @@ func NewPathExclusionFilter(excludes []string) *PathExclusionFilter {
 }
 
 func (pef *PathExclusionFilter) Include(p Path, isDir bool) bool {
+	if pef == nil {
+		return true
+	}
 	return !pef.Excludes.Match(p.p, isDir)
 }
 
+// A PathFilter that keeps only the paths matching one of the include patterns.
+//
+// A nil `*PathInclusionFilter` means no filter and is safe to call: it keeps
+// every path. An empty one is not the same thing, it matches nothing and so
+// drops every path.
 type PathInclusionFilter struct {
 	Includes ExtendedGlobPatterns
 }
@@ -138,6 +150,9 @@ func NewPathInclusionFilter(includes []string) *PathInclusionFilter {
 }
 
 func (pif *PathInclusionFilter) Include(p Path, isDir bool) bool {
+	if pif == nil {
+		return true
+	}
 	return pif.Includes.Match(p.p, isDir)
 }
 

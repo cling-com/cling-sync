@@ -122,11 +122,16 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any {
 		}
 		// todo: is this a reasonable limit?
 		tmpFS := lib.NewMemoryFS(100_000_000)
-		var filter lib.PathFilter
+		var exclude *lib.PathExclusionFilter
 		if excludes != "" {
-			filter = lib.NewPathExclusionFilter(strings.Split(excludes, ","))
+			exclude = lib.NewPathExclusionFilter(strings.Split(excludes, ","))
 		}
-		opts := &workspace.LsOptions{RevisionId: revisionId, PathFilter: filter, PathPrefix: lib.Path{}}
+		opts := &workspace.LsOptions{
+			RevisionId: revisionId,
+			Include:    nil,
+			Exclude:    exclude,
+			PathPrefix: lib.Path{},
+		}
 		files, err := workspace.Ls(wasmContext(), repository, tmpFS, opts)
 		if err != nil {
 			reject(js.ValueOf(err.Error()))

@@ -71,10 +71,16 @@ func TestRevisionRange(t *testing.T) {
 			want RevisionRange
 		}{
 			{"", RevisionRange{nil, nil}},
+			// A bare revision is that revision alone: the range starts at its
+			// parent, or at the root when it is the oldest revision.
+			{b.String(), RevisionRange{&a, &b}},
+			{"head", RevisionRange{&a, &b}},
 			{a.String(), RevisionRange{nil, &a}},
+			{"head~1", RevisionRange{nil, &a}},
 			{a.String() + ".." + b.String(), RevisionRange{&a, &b}},
 			{a.String() + "..", RevisionRange{&a, nil}},
 			{".." + b.String(), RevisionRange{nil, &b}},
+			{"..head", RevisionRange{nil, &b}},
 			{"head~1..head", RevisionRange{&a, &b}}, // git-style bounds resolve
 		}
 		for _, c := range cases {

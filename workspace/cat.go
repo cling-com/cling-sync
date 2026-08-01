@@ -10,7 +10,9 @@ import (
 
 type CatOptions struct {
 	RevisionId lib.RevisionId
+	// Path is relative to PathPrefix.
 	Path       lib.Path
+	PathPrefix lib.Path
 }
 
 // Cat writes the contents of a single regular file from the repository to w.
@@ -21,6 +23,7 @@ func Cat(ctx context.Context, repository *lib.Repository, w io.Writer, opts *Cat
 	}
 	defer snapshot.Remove() //nolint:errcheck
 	reader := snapshot.Reader(nil)
+	repoPath := opts.PathPrefix.Join(opts.Path)
 	buf := lib.NewBlockBuf()
 	for {
 		entry, err := reader.Read(buf)
@@ -30,7 +33,7 @@ func Cat(ctx context.Context, repository *lib.Repository, w io.Writer, opts *Cat
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		if entry.Path != opts.Path {
+		if entry.Path != repoPath {
 			continue
 		}
 		if entry.Metadata.FileMode.IsDir() {

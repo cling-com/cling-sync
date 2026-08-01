@@ -57,7 +57,7 @@ func TestLs(t *testing.T) {
 		}, lsFiles(ls))
 	})
 
-	t.Run("PathFilter", func(t *testing.T) {
+	t.Run("Include", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
@@ -72,7 +72,7 @@ func TestLs(t *testing.T) {
 		assert.NoError(err)
 
 		filter := lib.NewPathInclusionFilter([]string{"c"})
-		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, filter, lib.Path{}})
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, filter, nil, lib.Path{}})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"c", 0o700 | lib.FileModeDir, 0},
@@ -99,7 +99,7 @@ func TestLs(t *testing.T) {
 
 		prefix, err := lib.NewPath("b")
 		assert.NoError(err)
-		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, prefix})
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, prefix})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"b1.txt", 0o600, 2},
@@ -125,7 +125,7 @@ func TestLs(t *testing.T) {
 		prefixA, err := lib.NewPath("A")
 		assert.NoError(err)
 		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t),
-			&LsOptions{rev1, lib.NewPathInclusionFilter([]string{"B/*"}), prefixA})
+			&LsOptions{rev1, lib.NewPathInclusionFilter([]string{"B/*"}), nil, prefixA})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"B/1.txt", 0o600, 2},
@@ -136,7 +136,7 @@ func TestLs(t *testing.T) {
 		prefixAB, err := lib.NewPath("A/B")
 		assert.NoError(err)
 		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t),
-			&LsOptions{rev1, lib.NewPathInclusionFilter([]string{"*"}), prefixAB})
+			&LsOptions{rev1, lib.NewPathInclusionFilter([]string{"*"}), nil, prefixAB})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"1.txt", 0o600, 2},
@@ -157,7 +157,7 @@ func TestLs(t *testing.T) {
 		rev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, lib.Path{}})
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, lib.Path{}})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"a.txt", 0o600, 1},
@@ -167,7 +167,7 @@ func TestLs(t *testing.T) {
 
 		// Adding a .clingignore file should not affect existing revisions.
 		w.Write(".clingignore", "*.md")
-		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, lib.Path{}})
+		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, lib.Path{}})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"a.txt", 0o600, 1},
