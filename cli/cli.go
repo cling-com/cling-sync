@@ -771,9 +771,12 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 		fmt.Fprint(os.Stderr, "        The local directory to import.\n")
 		fmt.Fprint(os.Stderr, "\n  destination\n")
 		fmt.Fprint(os.Stderr, "        The directory to import into, must end with `/`.\n")
-		fmt.Fprint(os.Stderr, "        The source is placed below it under its own name, so\n")
-		fmt.Fprint(os.Stderr, "        `import ~/Photos backup/` creates `backup/Photos/...`.\n")
 		fmt.Fprint(os.Stderr, "        Use `/` for the root of the path prefix.\n")
+		fmt.Fprint(os.Stderr, "\nExamples:\n")
+		fmt.Fprint(os.Stderr, "  With ~/Photos/2026/img.jpg on disk:\n\n")
+		fmt.Fprint(os.Stderr, "    import ~/Photos backup/         adds  backup/2026/img.jpg\n")
+		fmt.Fprint(os.Stderr, "    import ~/Photos backup/Photos/  adds  backup/Photos/2026/img.jpg\n")
+		fmt.Fprint(os.Stderr, "    import ~/Photos /               adds  2026/img.jpg\n")
 		fmt.Fprint(os.Stderr, "\nAn import never removes anything from the repository, and only commits\n")
 		fmt.Fprint(os.Stderr, "new paths unless `--overwrite` is given.\n")
 		fmt.Fprint(os.Stderr, "\nFlags:\n")
@@ -810,10 +813,6 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	if !sourceInfo.IsDir() {
 		return lib.Errorf("%s is not a directory", source)
 	}
-	sourceName, err := lib.NewPath(filepath.Base(sourcePath))
-	if err != nil {
-		return lib.WrapErrorf(err, "cannot import %s", source)
-	}
 	var (
 		repository *lib.Repository
 		pathPrefix lib.Path
@@ -846,14 +845,12 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	if err != nil {
 		return err
 	}
-	dest := sourceName
+	var dest lib.Path
 	if destination != "/" {
-		var destDir lib.Path
-		destDir, err = ws.ValidatePathPrefix(destination)
+		dest, err = ws.ValidatePathPrefix(destination)
 		if err != nil {
 			return lib.WrapErrorf(err, "invalid destination %q", destination)
 		}
-		dest = destDir.Join(sourceName)
 	}
 	restorableMetadataFlag := lib.RestorableMetadataAll
 	if !args.Chown {

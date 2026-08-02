@@ -225,13 +225,13 @@ does not have to be a workspace and is not attached as one. Use it to
 put a tree into a repository once, where `merge` would mean binding that
 tree to it forever.
 
-The source is placed below `<destination>` under its own name, so
-`import ~/Photos backup/` creates `backup/Photos/...`. The destination
-must end with `/` and, like every other path argument, is relative to
-the path prefix. Use `/` for the root of that prefix.
+Everything in `<source>` lands in `<destination>`, which must end with
+`/` and is relative to the path prefix like every other path argument.
+With `~/Photos/2026/img.jpg` on disk:
 
-    cling-sync import ~/Photos backup/
-    cling-sync import --repository /path/to/repo ~/Photos /
+    cling-sync import ~/Photos backup/         # backup/2026/img.jpg
+    cling-sync import ~/Photos backup/Photos/  # backup/Photos/2026/img.jpg
+    cling-sync import ~/Photos /               # 2026/img.jpg
 
 The changes are shown first, in the same form and the same path space as
 `status`, together with the author and message, and nothing is written

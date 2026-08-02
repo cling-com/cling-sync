@@ -491,11 +491,11 @@ func TestHappyPath(t *testing.T) {
 		srcFS := td.NewTestFS(t, lib.NewRealFS(srcDir))
 		srcBefore := srcFS.Ls(".")
 
-		// The source lands below the destination under its own name.
+		// The contents of the source land in the destination itself.
 		revisions := sut.ClingSync("log", "--short")
 		dryRun := sut.ClingSync("import", "--dry-run", "--no-progress", "../to-import", "backup/")
-		assert.Contains(dryRun, "A backup/to-import/index.json")
-		assert.Contains(dryRun, "A backup/to-import/2026/img.jpg")
+		assert.Contains(dryRun, "A backup/index.json")
+		assert.Contains(dryRun, "A backup/2026/img.jpg")
 		assert.Equal(revisions, sut.ClingSync("log", "--short"), "--dry-run should not create a revision")
 
 		// Committing needs either a terminal to confirm on or --yes.
@@ -504,7 +504,7 @@ func TestHappyPath(t *testing.T) {
 		assert.Equal(revisions, sut.ClingSync("log", "--short"), "an unconfirmed import should not create a revision")
 
 		sut.ClingSync("import", "--yes", "--no-progress", "../to-import", "backup/")
-		assert.Equal("img", sut.ClingSync("cat", "backup/to-import/2026/img.jpg"))
+		assert.Equal("img", sut.ClingSync("cat", "backup/2026/img.jpg"))
 		assert.Equal(
 			"No changes",
 			sut.ClingSync("import", "--yes", "--no-progress", "../to-import", "backup/"),
@@ -522,11 +522,11 @@ func TestHappyPath(t *testing.T) {
 		err = os.WriteFile(filepath.Join(srcDir, "index.json"), []byte("changed"), 0o600)
 		assert.NoError(err, "failed to change index.json")
 		stderr = sut.ClingSyncError("import", "--yes", "--no-progress", "../to-import", "backup/")
-		assert.Contains(stderr, "M backup/to-import/index.json")
+		assert.Contains(stderr, "M backup/index.json")
 		assert.Contains(stderr, "Re-run with --overwrite")
 		assert.Equal(revisions, sut.ClingSync("log", "--short"), "a refused import should not create a revision")
 		sut.ClingSync("import", "--yes", "--overwrite", "--no-progress", "../to-import", "backup/")
-		assert.Equal("changed", sut.ClingSync("cat", "backup/to-import/index.json"))
+		assert.Equal("changed", sut.ClingSync("cat", "backup/index.json"))
 
 		// The metadata flags only decide what counts as an overwrite.
 		assert.Contains(
@@ -540,12 +540,12 @@ func TestHappyPath(t *testing.T) {
 			"No changes",
 			sut.ClingSync("import", "--yes", "--no-progress", "../to-import", "backup/"),
 			"import must never delete from the repository")
-		assert.Equal("changed", sut.ClingSync("cat", "backup/to-import/index.json"))
+		assert.Equal("changed", sut.ClingSync("cat", "backup/index.json"))
 
 		// The same import without a workspace, straight into the repository.
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "import", "--yes", "--no-progress",
 			"--repository", "../repository", "../to-import", "elsewhere/")
-		assert.Equal("img", sut.ClingSync("cat", "elsewhere/to-import/2026/img.jpg"))
+		assert.Equal("img", sut.ClingSync("cat", "elsewhere/2026/img.jpg"))
 		assert.Equal(
 			"No changes",
 			sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "import", "--yes", "--no-progress",
@@ -557,7 +557,7 @@ func TestHappyPath(t *testing.T) {
 		err = os.Symlink(srcDir, sut.Path("../to-import-link"))
 		assert.NoError(err, "failed to create the source symlink")
 		sut.ClingSync("import", "--yes", "--no-progress", "../to-import-link", "linked/")
-		assert.Equal("img", sut.ClingSync("cat", "linked/to-import-link/2026/img.jpg"))
+		assert.Equal("img", sut.ClingSync("cat", "linked/2026/img.jpg"))
 
 		// A symlink cannot be imported, because its target only means something
 		// relative to a workspace.
