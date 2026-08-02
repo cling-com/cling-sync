@@ -508,7 +508,11 @@ func writeBody(w http.ResponseWriter, contentType string, data []byte) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data) //nolint:gosec
+	// The status is already on the wire, so a log line is all we can do. The
+	// client sees a body that ends before the announced `Content-Length`.
+	if n, err := w.Write(data); err != nil { //nolint:gosec
+		slog.Error("Failed to write response body", "error", err, "written", n, "expected", len(data)) //nolint:gosec
+	}
 }
 
 func (s *S3StorageServer) internalError(w http.ResponseWriter, err error) {

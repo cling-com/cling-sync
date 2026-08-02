@@ -59,17 +59,25 @@ func (c *DefaultHTTPClient) Request(
 func readCappedBody(src io.Reader, dst []byte) ([]byte, error) {
 	if dst != nil {
 		limit := io.LimitReader(src, int64(len(dst))+1)
-		n, err := io.ReadFull(limit, dst)
-		switch {
-		case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
-			return dst[:n], nil
-		case err != nil:
-			return nil, lib.WrapErrorf(err, "failed to read response body")
+		// Note: We are not using `io.ReadFull`, because it swallows regular
+		// io.EOF and reports them as io.ErrUnexpectedEOF.
+		n := 0
+		var err error
+		for err == nil && n < len(dst) {
+			var read int
+			read, err = limit.Read(dst[n:])
+			n += read
 		}
-		var extra [1]byte
-		more, _ := limit.Read(extra[:])
-		if more > 0 {
-			return nil, lib.Errorf("response body exceeds buffer of %d", len(dst))
+		if err == nil {
+			var extra [1]byte
+			var more int
+			more, err = limit.Read(extra[:])
+			if more > 0 {
+				return nil, lib.Errorf("response body exceeds buffer of %d", len(dst))
+			}
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, lib.WrapErrorf(err, "failed to read response body")
 		}
 		return dst[:n], nil
 	}

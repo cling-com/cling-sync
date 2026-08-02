@@ -650,6 +650,71 @@ func TestS3StorageServer(t *testing.T) {
 		_, err := client.ReadBlock(t.Context(), td.BlockId("1"), lib.NewBlockBuf())
 		assert.Error(err, "response body exceeds buffer")
 	})
+
+	t.Run("Client should reject truncated response bodies", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		// Mock server announces a full block but delivers only a prefix, so
+		// `net/http` closes the connection mid-body.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", strconv.Itoa(lib.MaxBlockSize))
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.CopyN(w, zeroReader{}, 1024)
+		}))
+		t.Cleanup(srv.Close)
+		client := NewS3StorageClient(S3StorageConfig{
+			BucketURL:       srv.URL,
+			Region:          testRegion,
+			Prefix:          "",
+			AccessKeyID:     testAccessKey,
+			SecretAccessKey: []byte(testSecret),
+		}, NewDefaultHTTPClient(srv.Client()))
+		_, err := client.ReadBlock(t.Context(), td.BlockId("1"), lib.NewBlockBuf())
+		assert.Error(err, "unexpected EOF")
+	})
+
+	t.Run("Client should reject a body truncated at exactly MaxBlockSize", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		// The prefix fills the buffer exactly, so only the announced length
+		// still tells the client that the block is incomplete.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", strconv.Itoa(lib.MaxBlockSize+1))
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.CopyN(w, zeroReader{}, int64(lib.MaxBlockSize))
+		}))
+		t.Cleanup(srv.Close)
+		client := NewS3StorageClient(S3StorageConfig{
+			BucketURL:       srv.URL,
+			Region:          testRegion,
+			Prefix:          "",
+			AccessKeyID:     testAccessKey,
+			SecretAccessKey: []byte(testSecret),
+		}, NewDefaultHTTPClient(srv.Client()))
+		_, err := client.ReadBlock(t.Context(), td.BlockId("1"), lib.NewBlockBuf())
+		assert.Error(err, "unexpected EOF")
+	})
+
+	t.Run("Client should reject truncated control file bodies", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		// Control files take the other read path, the one without a `BlockBuf`.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", strconv.Itoa(lib.MaxControlFileSize))
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.CopyN(w, zeroReader{}, 1024)
+		}))
+		t.Cleanup(srv.Close)
+		client := NewS3StorageClient(S3StorageConfig{
+			BucketURL:       srv.URL,
+			Region:          testRegion,
+			Prefix:          "",
+			AccessKeyID:     testAccessKey,
+			SecretAccessKey: []byte(testSecret),
+		}, NewDefaultHTTPClient(srv.Client()))
+		_, err := client.ReadControlFile(t.Context(), lib.ControlFileSectionRefs, "head")
+		assert.Error(err, "unexpected EOF")
+	})
 }
 
 func TestS3StorageServerListPagination(t *testing.T) {

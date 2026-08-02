@@ -133,6 +133,8 @@ func (e *LockExistsError) Error() string {
 		e.Name, e.Host, e.Pid, e.Owner, e.CreatedAt.Format(time.RFC3339))
 }
 
+// Implementations are all-or-nothing: every read returns the complete object
+// or an error, and every write stores all bytes or fails.
 type Storage interface {
 	Init(ctx context.Context, config Toml, headerComment string) error
 	Open(ctx context.Context) (Toml, error)
