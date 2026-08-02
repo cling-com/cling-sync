@@ -310,9 +310,14 @@ List paths in a revision, the head by default, optionally filtered by a
 glob pattern and `--exclude`. `--revision <id>` lists a non-head
 revision.
 
+`--depth <n>` lists at most `n` levels below the listing root, which is
+the path prefix in effect, `1` being its direct children. `0`, the
+default, means unlimited.
+
     cling-sync ls
     cling-sync ls '*.md'
     cling-sync ls --exclude 'build'
+    cling-sync ls --depth 1
     cling-sync ls --revision 9f3a...c104 'src/**'
 
 ### `cat <path>`

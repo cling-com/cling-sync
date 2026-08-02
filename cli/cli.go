@@ -1092,6 +1092,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		Repository      string
 		PathPrefix      string
 		Exclude         lib.ExtendedGlobPatterns
+		Depth           int
 	}{
 		TimestampFormat: time.RFC3339,
 	}
@@ -1128,6 +1129,12 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		"short-file-mode",
 		false,
 		"Show short file mode (only permissions and file type)",
+	)
+	flags.IntVar(
+		&args.Depth,
+		"depth",
+		0,
+		"List at most this many levels below the listing root, 1 being its direct children.\n0 means unlimited.",
 	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s ls [pattern]\n\n", appName)
@@ -1194,6 +1201,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		Include:    include,
 		Exclude:    exclude,
 		PathPrefix: pathPrefix,
+		Depth:      args.Depth,
 	}
 	tmpFS, cleanup, err := newTempFS("ls")
 	if err != nil {

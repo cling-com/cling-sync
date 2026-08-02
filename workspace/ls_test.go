@@ -72,7 +72,7 @@ func TestLs(t *testing.T) {
 		assert.NoError(err)
 
 		filter := lib.NewPathInclusionFilter([]string{"c"})
-		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, filter, nil, lib.Path{}})
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, filter, nil, lib.Path{}, 0})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"c", 0o700 | lib.FileModeDir, 0},
@@ -99,7 +99,7 @@ func TestLs(t *testing.T) {
 
 		prefix, err := lib.NewPath("b")
 		assert.NoError(err)
-		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, prefix})
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, prefix, 0})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"b1.txt", 0o600, 2},
@@ -125,7 +125,7 @@ func TestLs(t *testing.T) {
 		prefixA, err := lib.NewPath("A")
 		assert.NoError(err)
 		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t),
-			&LsOptions{rev1, lib.NewPathInclusionFilter([]string{"B/*"}), nil, prefixA})
+			&LsOptions{rev1, lib.NewPathInclusionFilter([]string{"B/*"}), nil, prefixA, 0})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"B/1.txt", 0o600, 2},
@@ -136,11 +136,104 @@ func TestLs(t *testing.T) {
 		prefixAB, err := lib.NewPath("A/B")
 		assert.NoError(err)
 		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t),
-			&LsOptions{rev1, lib.NewPathInclusionFilter([]string{"*"}), nil, prefixAB})
+			&LsOptions{rev1, lib.NewPathInclusionFilter([]string{"*"}), nil, prefixAB, 0})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"1.txt", 0o600, 2},
 			{"2.txt", 0o600, 2},
+		}, lsFiles(ls))
+	})
+
+	t.Run("Depth", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		w.Write("b/b1.txt", "b1")
+		w.Write("b/c/c1.txt", "c1")
+		w.Write("b/c/d/d1.txt", "d1")
+		rev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, lib.Path{}, 1})
+		assert.NoError(err)
+		assert.Equal([]lsFileInfo{
+			{"a.txt", 0o600, 1},
+			{"b", 0o700 | lib.FileModeDir, 0},
+		}, lsFiles(ls))
+
+		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, lib.Path{}, 2})
+		assert.NoError(err)
+		assert.Equal([]lsFileInfo{
+			{"a.txt", 0o600, 1},
+			{"b", 0o700 | lib.FileModeDir, 0},
+			{"b/b1.txt", 0o600, 2},
+			{"b/c", 0o700 | lib.FileModeDir, 0},
+		}, lsFiles(ls))
+
+		// 0 means unlimited.
+		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, lib.Path{}, 0})
+		assert.NoError(err)
+		assert.Equal([]lsFileInfo{
+			{"a.txt", 0o600, 1},
+			{"b", 0o700 | lib.FileModeDir, 0},
+			{"b/b1.txt", 0o600, 2},
+			{"b/c", 0o700 | lib.FileModeDir, 0},
+			{"b/c/c1.txt", 0o600, 2},
+			{"b/c/d", 0o700 | lib.FileModeDir, 0},
+			{"b/c/d/d1.txt", 0o600, 2},
+		}, lsFiles(ls))
+
+		// A depth beyond the deepest path lists everything.
+		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, lib.Path{}, 100})
+		assert.NoError(err)
+		assert.Equal(7, len(ls))
+	})
+
+	t.Run("Depth counts from the path prefix", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		w.Write("b/b1.txt", "b1")
+		w.Write("b/c/c1.txt", "c1")
+		w.Write("b/c/d/d1.txt", "d1")
+		rev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		prefix, err := lib.NewPath("b")
+		assert.NoError(err)
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, prefix, 1})
+		assert.NoError(err)
+		assert.Equal([]lsFileInfo{
+			{"b1.txt", 0o600, 2},
+			{"c", 0o700 | lib.FileModeDir, 0},
+		}, lsFiles(ls))
+	})
+
+	t.Run("Depth and pattern", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("a.txt", "a")
+		w.Write("b/b1.txt", "b1")
+		w.Write("b/c/c1.txt", "c1")
+		rev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		filter := lib.NewPathInclusionFilter([]string{"b"})
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, filter, nil, lib.Path{}, 2})
+		assert.NoError(err)
+		assert.Equal([]lsFileInfo{
+			{"b", 0o700 | lib.FileModeDir, 0},
+			{"b/b1.txt", 0o600, 2},
+			{"b/c", 0o700 | lib.FileModeDir, 0},
 		}, lsFiles(ls))
 	})
 
@@ -157,7 +250,7 @@ func TestLs(t *testing.T) {
 		rev1, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, lib.Path{}})
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, lib.Path{}, 0})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"a.txt", 0o600, 1},
@@ -167,7 +260,7 @@ func TestLs(t *testing.T) {
 
 		// Adding a .clingignore file should not affect existing revisions.
 		w.Write(".clingignore", "*.md")
-		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, lib.Path{}})
+		ls, err = Ls(t.Context(), r.Repository, td.NewFS(t), &LsOptions{rev1, nil, nil, lib.Path{}, 0})
 		assert.NoError(err)
 		assert.Equal([]lsFileInfo{
 			{"a.txt", 0o600, 1},

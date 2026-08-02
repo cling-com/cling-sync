@@ -106,7 +106,7 @@ func (r RepositoryAPI) Head(this js.Value, args []js.Value) any {
 // Returns:
 //
 //	Promise<string>: The result as <tr> elements.
-func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any {
+func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any { //nolint:funlen
 	handle := args[0].Int()
 	excludes := args[1].String()
 	return Async(func(resolve func(js.Value), reject func(js.Value)) {
@@ -131,6 +131,7 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any {
 			Include:    nil,
 			Exclude:    exclude,
 			PathPrefix: lib.Path{},
+			Depth:      0,
 		}
 		files, err := workspace.Ls(wasmContext(), repository, tmpFS, opts)
 		if err != nil {

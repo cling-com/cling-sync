@@ -90,6 +90,9 @@ type LsOptions struct {
 	Include    *lib.PathInclusionFilter
 	Exclude    *lib.PathExclusionFilter
 	PathPrefix lib.Path
+	// Maximum number of path segments to list, counted from `PathPrefix`.
+	// 0 means unlimited.
+	Depth int
 }
 
 func Ls(ctx context.Context, repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, error) {
@@ -113,6 +116,9 @@ func Ls(ctx context.Context, repository *lib.Repository, tmpFS lib.FS, opts *LsO
 		// prefix-relative path the user sees, not the full repository path.
 		path, ok := re.Path.TrimBase(opts.PathPrefix)
 		if !ok {
+			continue
+		}
+		if opts.Depth > 0 && path.Depth() > opts.Depth {
 			continue
 		}
 		isDir := re.Metadata.FileMode.IsDir()

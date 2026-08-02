@@ -154,6 +154,28 @@ func TestHappyPath(t *testing.T) {
 		sut.Chdir("../workspace")
 	}
 
+	t.Log("Limit the listing depth (ls --depth)")
+	{
+		lsOpts := []string{"ls", "--short-file-mode", "--timestamp-format", "unix-fraction"}
+		ls := func(args ...string) string {
+			return td.Column(sut.ClingSync(append(lsOpts, args...)...), 4)
+		}
+		assert.Equal(td.Dedent(`
+			b.txt
+			c.txt
+			dir1/
+		`), ls("--depth", "1"), "--depth 1 should list only the direct children")
+		assert.Equal(td.Dedent(`
+			b.txt
+			c.txt
+			dir1/
+			dir1/d.txt
+		`), ls("--depth", "2"), "--depth 2 should reach into the directory")
+		assert.Equal(ls(), ls("--depth", "100"), "A depth beyond the deepest path should list everything")
+		assert.Equal(ls(), ls("--depth", "0"), "--depth 0 should list everything")
+		assert.Equal("dir1/", ls("--depth", "1", "dir1"), "--depth should work with a pattern argument")
+	}
+
 	t.Log("Log revision history (log, --revision, --include, --exclude)")
 	{
 		assert.Equal(td.Dedent(fmt.Sprintf(`
