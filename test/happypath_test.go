@@ -23,6 +23,9 @@ var td = lib.TestData{} //nolint:gochecknoglobals
 
 const passphrase = "testpassphrase"
 
+// Choosing the lowest allowed values to speed up the tests.
+const testArgon2id = "m=12288,t=3,p=1"
+
 var clingSyncBin string //nolint:gochecknoglobals
 
 // Just test a simple scenario that covers most of the common CLI commands.
@@ -1358,7 +1361,7 @@ func initServeRepo(t *testing.T) string {
 	t.Helper()
 	srvDir := t.TempDir()
 	sideDir := t.TempDir()
-	cmd := exec.Command(clingSyncBin, "--passphrase-from-stdin", "init", srvDir)
+	cmd := exec.Command(clingSyncBin, "--passphrase-from-stdin", "init", "--argon2id", testArgon2id, srvDir)
 	cmd.Dir = sideDir
 	cmd.Stdin = strings.NewReader(passphrase)
 	cmd.Stdout = os.Stdout
@@ -1587,7 +1590,7 @@ func newSut(t *testing.T) *Sut {
 func NewSut(t *testing.T) *Sut {
 	t.Helper()
 	sut := newSut(t)
-	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "init", "../repository")
+	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "init", "--argon2id", testArgon2id, "../repository")
 	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 	return sut
 }
@@ -1604,7 +1607,7 @@ func NewS3Sut(t *testing.T, uri string, preInited bool) *Sut {
 	if preInited {
 		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "attach", uri, ".")
 	} else {
-		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "init", uri)
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "init", "--argon2id", testArgon2id, uri)
 	}
 	sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "security", "save-passphrase")
 	return sut

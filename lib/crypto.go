@@ -177,10 +177,85 @@ type Argon2id struct {
 	Salt        Salt
 }
 
+// The cost of deriving the user key, without the salt, which is generated when
+// the repository is created.
+type Argon2idParams struct {
+	Time        uint32
+	Memory      uint32
+	Parallelism uint8
+}
+
+func NewArgon2id(salt Salt, params Argon2idParams) Argon2id {
+	return Argon2id{Time: params.Time, Memory: params.Memory, Parallelism: params.Parallelism, Salt: salt}
+}
+
 // todo: measure on a phone or raspberry.
-// Create a default Argon2id config with time=4, memory=128MiB, parallelism=2.
-func NewArgon2id(salt Salt) Argon2id {
-	return Argon2id{Time: 4, Memory: 128 * 1024, Parallelism: 2, Salt: salt}
+// The default cost: time=4, memory=128MiB, parallelism=2.
+func DefaultArgon2idParams() Argon2idParams {
+	return Argon2idParams{Time: 4, Memory: 128 * 1024, Parallelism: 2}
+}
+
+// Higher is slower to derive and slower to attack, `memory` is in KiB.
+//
+// The cost has to meet the OWASP recommendation of 12MiB memory, 3 iterations and
+// 1 thread, and has to stay within what a client can realistically derive with.
+func NewArgon2idParams(time uint32, memory uint32, parallelism uint8) (Argon2idParams, error) {
+	switch {
+	case memory < 12*1024:
+		return Argon2idParams{}, Errorf("memory must be at least 12MiB")
+	case memory > 1024*1024:
+		return Argon2idParams{}, Errorf("memory must be at most 1GiB")
+	case time < 3:
+		return Argon2idParams{}, Errorf("time must be at least 3")
+	case time > 64:
+		return Argon2idParams{}, Errorf("time must be at most 64")
+	case parallelism < 1:
+		return Argon2idParams{}, Errorf("parallelism must be at least 1")
+	case parallelism > 64:
+		return Argon2idParams{}, Errorf("parallelism must be at most 64")
+	}
+	return Argon2idParams{Time: time, Memory: memory, Parallelism: parallelism}, nil
+}
+
+// Parse `m=<memory>,t=<time>,p=<parallelism>`, the parameter section of the PHC
+// format.
+func ParseArgon2idParams(s string) (Argon2idParams, error) {
+	params := strings.Split(s, ",")
+	if len(params) != 3 {
+		return Argon2idParams{}, Errorf("expecting 3 parameters")
+	}
+	parseParam := func(s string, param string) (uint32, error) {
+		s, ok := strings.CutPrefix(s, param+"=")
+		if !ok {
+			return 0, Errorf("expected parameter %s", param)
+		}
+		i, err := strconv.Atoi(s)
+		// `int64(i)` so the bound does not overflow `int` on 32-bit targets (TinyGo wasm).
+		if err != nil || i < 0 || int64(i) >= 1<<32 {
+			return 0, Errorf("invalid value for parameter %s", param)
+		}
+		return uint32(i), nil
+	}
+	memory, err := parseParam(params[0], "m")
+	if err != nil {
+		return Argon2idParams{}, err
+	}
+	time, err := parseParam(params[1], "t")
+	if err != nil {
+		return Argon2idParams{}, err
+	}
+	parallelism, err := parseParam(params[2], "p")
+	if err != nil {
+		return Argon2idParams{}, err
+	}
+	if parallelism > 255 {
+		return Argon2idParams{}, Errorf("parallelism must be at most 64")
+	}
+	return NewArgon2idParams(time, memory, uint8(parallelism))
+}
+
+func (p Argon2idParams) Marshal() string {
+	return fmt.Sprintf("m=%d,t=%d,p=%d", p.Memory, p.Time, p.Parallelism)
 }
 
 func (a Argon2id) Marshal() string {
@@ -208,31 +283,7 @@ func UnmarshalArgon2idConfig(s string) (Argon2id, error) {
 	if parts[0] != "" || parts[1] != "argon2id" || parts[2] != "v=19" {
 		return Argon2id{}, Errorf("expecting argon2id, version 19")
 	}
-	params := strings.Split(parts[3], ",")
-	if len(params) != 3 {
-		return Argon2id{}, Errorf("expecting 3 parameters")
-	}
-	parseParam := func(s string, param string) (uint32, error) {
-		s, ok := strings.CutPrefix(s, param+"=")
-		if !ok {
-			return 0, Errorf("expected parameter %s", param)
-		}
-		i, err := strconv.Atoi(s)
-		// `int64(i)` so the bound does not overflow `int` on 32-bit targets (TinyGo wasm).
-		if err != nil || i < 0 || int64(i) >= 1<<32 {
-			return 0, Errorf("invalid value for parameter %s", param)
-		}
-		return uint32(i), nil
-	}
-	memory, err := parseParam(params[0], "m")
-	if err != nil {
-		return Argon2id{}, err
-	}
-	time, err := parseParam(params[1], "t")
-	if err != nil {
-		return Argon2id{}, err
-	}
-	parallelism, err := parseParam(params[2], "p")
+	params, err := ParseArgon2idParams(parts[3])
 	if err != nil {
 		return Argon2id{}, err
 	}
@@ -241,19 +292,5 @@ func UnmarshalArgon2idConfig(s string) (Argon2id, error) {
 	if err != nil || len(salt) != 32 {
 		return Argon2id{}, WrapErrorf(err, "invalid salt")
 	}
-	if parallelism < 1 || parallelism > 255 {
-		return Argon2id{}, Errorf("parallelism must be at least 1")
-	}
-	if memory < 12*1024 {
-		return Argon2id{}, Errorf("memory must be at least 12MiB")
-	}
-	if time < 3 {
-		return Argon2id{}, Errorf("time must be at least 3")
-	}
-	return Argon2id{
-		Time:        time,
-		Memory:      memory,
-		Parallelism: uint8(parallelism),
-		Salt:        Salt(salt),
-	}, nil
+	return NewArgon2id(Salt(salt), params), nil
 }

@@ -79,7 +79,7 @@ func EncodeS3URI(rawURL string, creds S3Credentials, passphrase []byte) (string,
 	if err != nil {
 		return "", lib.WrapErrorf(err, "failed to generate salt")
 	}
-	argon := lib.NewArgon2id(salt)
+	argon := lib.NewArgon2id(salt, lib.DefaultArgon2idParams())
 	aead, err := cipherFromPassphrase(passphrase, argon)
 	if err != nil {
 		return "", err

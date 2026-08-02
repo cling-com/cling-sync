@@ -147,10 +147,20 @@ func InitCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error
 	args := struct { //nolint:exhaustruct
 		Help                bool
 		AllowWeakPassphrase bool
+		Argon2id            string
 	}{}
 	flags := flag.NewFlagSet("init", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.BoolVar(&args.AllowWeakPassphrase, "allow-weak-passphrase", false, "Allow weak passphrase (not recommended)")
+	flags.StringVar(
+		&args.Argon2id,
+		"argon2id",
+		lib.DefaultArgon2idParams().Marshal(),
+		"Cost of deriving the key from the passphrase.\n"+
+			"m is memory in KiB (12288..1048576), t is iterations (3..64),\n"+
+			"p is threads (1..64). Higher is slower to unlock and slower to\n"+
+			"attack. Stick with the default unless you have a reason not to.",
+	)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s init <repository-path>\n\n", appName)
 		fmt.Fprint(os.Stderr, "Create and initialize a new local repository.\n")
@@ -263,7 +273,11 @@ func InitCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error
 		}
 		repositoryURI = repositoryPath
 	}
-	repository, err := lib.InitNewRepository(ctx, storage, passphrase)
+	kdf, err := lib.ParseArgon2idParams(args.Argon2id)
+	if err != nil {
+		return lib.WrapErrorf(err, "invalid --argon2id %q", args.Argon2id)
+	}
+	repository, err := lib.InitNewRepository(ctx, storage, passphrase, kdf)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to initialize repository")
 	}

@@ -159,13 +159,18 @@ func (td TestData) NewTestFS(tb testing.TB, fs FS) *TestFS {
 	return &TestFS{fs, tb, NewAssert(tb)}
 }
 
+// Choosing the lowest allowed values to speed up the tests.
+func (td TestData) Argon2idParams() Argon2idParams {
+	return Argon2idParams{Time: 3, Memory: 12 * 1024, Parallelism: 1}
+}
+
 func (td TestData) NewTestRepository(tb testing.TB, fs FS) *TestRepository {
 	tb.Helper()
 	assert := NewAssert(tb)
 	passphrase := "testpassphrase"
 	storage, err := NewFileStorage(fs, StoragePurposeRepository)
 	assert.NoError(err)
-	repository, err := InitNewRepository(tb.Context(), storage, []byte(passphrase))
+	repository, err := InitNewRepository(tb.Context(), storage, []byte(passphrase), td.Argon2idParams())
 	assert.NoError(err)
 	tb.Cleanup(func() { _ = repository.Close() })
 	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, tb, assert}

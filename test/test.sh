@@ -53,7 +53,7 @@ setup() {
         cd work
         mkdir workspace repository
         cd workspace
-        echo -n "$passphrase" | cling-sync --passphrase-from-stdin init ../repository
+        echo -n "$passphrase" | cling-sync --passphrase-from-stdin init --argon2id m=12288,t=3,p=1 ../repository
 
     log $cyan">>> Save the repository passphrase"
         cmd "echo -n '$passphrase' | cling-sync --passphrase-from-stdin security save-passphrase"

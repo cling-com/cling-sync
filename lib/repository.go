@@ -80,12 +80,17 @@ type Repository struct {
 	gearCDCTable   GearCDCTable
 }
 
-func InitNewRepository(ctx context.Context, storage Storage, passphrase []byte) (*Repository, error) { //nolint:funlen
+func InitNewRepository( //nolint:funlen
+	ctx context.Context,
+	storage Storage,
+	passphrase []byte,
+	kdf Argon2idParams,
+) (*Repository, error) {
 	userKeySalt, err := NewSalt()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to generate random user key salt")
 	}
-	argon2id := NewArgon2id(userKeySalt)
+	argon2id := NewArgon2id(userKeySalt, kdf)
 	userKey, err := DeriveUserKey(passphrase, argon2id)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to derive user-key from passphrase")

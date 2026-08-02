@@ -20,7 +20,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert := NewAssert(t)
 		storage, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
 		assert.NoError(err)
-		repo1, err := InitNewRepository(t.Context(), storage, userPassphrase)
+		repo1, err := InitNewRepository(t.Context(), storage, userPassphrase, td.Argon2idParams())
 		assert.NoError(err)
 		defer repo1.Close() //nolint:errcheck
 		head, err := repo1.Head(t.Context())
@@ -37,7 +37,7 @@ func TestRepositoryInitAndOpen(t *testing.T) {
 		assert := NewAssert(t)
 		storage, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
 		assert.NoError(err)
-		repo, err := InitNewRepository(t.Context(), storage, userPassphrase)
+		repo, err := InitNewRepository(t.Context(), storage, userPassphrase, td.Argon2idParams())
 		assert.NoError(err)
 		defer repo.Close() //nolint:errcheck
 		toml, err := repo.storage.Open(t.Context())

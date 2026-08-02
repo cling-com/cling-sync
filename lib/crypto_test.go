@@ -63,7 +63,7 @@ func TestDeriveUserKey(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		salt := [32]byte([]byte("0123456789abcdef0123456789abcdef"))
-		argon2id := NewArgon2id(salt)
+		argon2id := NewArgon2id(salt, td.Argon2idParams())
 		passphrase := []byte("This is a test.")
 		key, err := DeriveUserKey(passphrase, argon2id)
 		assert.NoError(err)
@@ -88,6 +88,88 @@ func TestMarshalArgon2id(t *testing.T) {
 			Salt:        [32]byte([]byte("0123456789abcdef0123456789abcdef")),
 		}, argon2id)
 		assert.Equal(s, argon2id.Marshal())
+	})
+}
+
+func TestParseArgon2idParams(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		params, err := ParseArgon2idParams("m=65536,t=16,p=2")
+		assert.NoError(err)
+		assert.Equal(Argon2idParams{Time: 16, Memory: 65536, Parallelism: 2}, params)
+	})
+
+	t.Run("Parameters below the OWASP minimum should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		// The minimum itself is accepted, which is what the tests run at.
+		_, err := ParseArgon2idParams("m=12288,t=3,p=1")
+		assert.NoError(err)
+		_, err = ParseArgon2idParams("m=12287,t=3,p=1")
+		assert.Error(err, "memory must be at least 12MiB")
+		_, err = ParseArgon2idParams("m=12288,t=2,p=1")
+		assert.Error(err, "time must be at least 3")
+		_, err = ParseArgon2idParams("m=12288,t=3,p=0")
+		assert.Error(err, "parallelism must be at least 1")
+	})
+
+	t.Run("Parameters above the maximum should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		// The maximum itself is accepted.
+		_, err := ParseArgon2idParams("m=1048576,t=64,p=64")
+		assert.NoError(err)
+		_, err = ParseArgon2idParams("m=1048577,t=64,p=64")
+		assert.Error(err, "memory must be at most 1GiB")
+		_, err = ParseArgon2idParams("m=1048576,t=65,p=64")
+		assert.Error(err, "time must be at most 64")
+		_, err = ParseArgon2idParams("m=1048576,t=64,p=65")
+		assert.Error(err, "parallelism must be at most 64")
+		// `p` does not even fit into the `uint8` it is stored in.
+		_, err = ParseArgon2idParams("m=1048576,t=64,p=256")
+		assert.Error(err, "parallelism must be at most 64")
+	})
+}
+
+func TestNewArgon2idParams(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		params, err := NewArgon2idParams(16, 65536, 2)
+		assert.NoError(err)
+		assert.Equal(Argon2idParams{Time: 16, Memory: 65536, Parallelism: 2}, params)
+		assert.Equal("m=65536,t=16,p=2", params.Marshal())
+	})
+
+	t.Run("The defaults are within the accepted range", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		defaults := DefaultArgon2idParams()
+		params, err := NewArgon2idParams(defaults.Time, defaults.Memory, defaults.Parallelism)
+		assert.NoError(err)
+		assert.Equal(defaults, params)
+	})
+
+	t.Run("Parameters outside the accepted range should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		_, err := NewArgon2idParams(3, 12*1024-1, 1)
+		assert.Error(err, "memory must be at least 12MiB")
+		_, err = NewArgon2idParams(3, 1024*1024+1, 1)
+		assert.Error(err, "memory must be at most 1GiB")
+		_, err = NewArgon2idParams(2, 12*1024, 1)
+		assert.Error(err, "time must be at least 3")
+		_, err = NewArgon2idParams(65, 12*1024, 1)
+		assert.Error(err, "time must be at most 64")
+		_, err = NewArgon2idParams(3, 12*1024, 0)
+		assert.Error(err, "parallelism must be at least 1")
+		_, err = NewArgon2idParams(3, 12*1024, 65)
+		assert.Error(err, "parallelism must be at most 64")
 	})
 }
 

@@ -183,6 +183,14 @@ See [Remote repositories](#remote-repositories).
 
     cling-sync init s3+https://my-bucket.s3.region.example.com
 
+`--argon2id` sets how expensive it is to derive the key from your
+passphrase (see [Cryptography](#cryptography)). `m` is memory in KiB,
+`t` is iterations, `p` is threads. It defaults to `m=131072,t=4,p=2`
+and must stay within `m=12288..1048576`, `t=3..64`, `p=1..64`. Stick
+with the default unless you have a reason not to. The cost is paid on
+every command that opens the repository, and it is recorded in
+`repository.txt`, so it can only be chosen here.
+
 ### `attach <repository> <directory>`
 
 Attach to an existing repository. Binds the workspace at `<directory>`
@@ -632,7 +640,8 @@ All secrets are derived from one user passphrase.
 Algorithms used:
 
 - [**Argon2id**](https://www.rfc-editor.org/rfc/rfc9106) for key
-  derivation. Defaults: time = 4, memory = 128 MiB, lanes = 2.
+  derivation. Defaults: time = 4, memory = 128 MiB, lanes = 2, and
+  they can only be changed at [`init`](#init-repository-path).
 - [**XChaCha20-Poly1305**](https://en.wikipedia.org/wiki/ChaCha20-Poly1305)
   (AEAD) for every encryption. 24 byte random nonce, 16 byte tag.
 - [**HMAC-SHA256**](https://www.rfc-editor.org/rfc/rfc6234) for block
