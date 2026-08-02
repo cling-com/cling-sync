@@ -101,12 +101,16 @@ func Status( //nolint:funlen
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
+	cache, err := NewStagingCache(ws.FS, opts.UseStagingCache)
+	if err != nil {
+		return nil, lib.WrapErrorf(err, "failed to create staging cache")
+	}
 	staging, err := NewStaging(
 		ws.FS,
 		ws.PathPrefix,
 		opts.Include,
 		opts.Exclude,
-		opts.UseStagingCache,
+		cache,
 		stagingTmpFS,
 		opts.Monitor,
 	)

@@ -452,6 +452,92 @@ func TestHappyPath(t *testing.T) {
 			"cat", "--stdout", "--repository", "../repository", "b.txt")
 		assert.Equal(wsB, repoCat, "cat via --repository should print the repository content")
 	}
+
+	t.Log("Add a directory that is not a workspace (import)")
+	{
+		sut.Chdir("../workspace")
+		srcDir := sut.Path("../to-import")
+		err := os.MkdirAll(filepath.Join(srcDir, "2026"), 0o700)
+		assert.NoError(err, "failed to create the import source")
+		err = os.WriteFile(filepath.Join(srcDir, "2026", "img.jpg"), []byte("img"), 0o600)
+		assert.NoError(err, "failed to write img.jpg")
+		err = os.WriteFile(filepath.Join(srcDir, "index.json"), []byte("idx"), 0o600)
+		assert.NoError(err, "failed to write index.json")
+
+		// Snapshotted before anything has read it, so that a side effect of the
+		// first scan cannot hide by being present in both snapshots.
+		srcFS := td.NewTestFS(t, lib.NewRealFS(srcDir))
+		srcBefore := srcFS.Ls(".")
+
+		// The source lands below the destination under its own name.
+		revisions := sut.ClingSync("log", "--short")
+		dryRun := sut.ClingSync("import", "--dry-run", "--no-progress", "../to-import", "backup/")
+		assert.Contains(dryRun, "A backup/to-import/index.json")
+		assert.Contains(dryRun, "A backup/to-import/2026/img.jpg")
+		assert.Equal(revisions, sut.ClingSync("log", "--short"), "--dry-run should not create a revision")
+
+		// Committing needs either a terminal to confirm on or --yes.
+		stderr := sut.ClingSyncError("import", "--no-progress", "../to-import", "backup/")
+		assert.Contains(stderr, "stdin is not a terminal")
+		assert.Equal(revisions, sut.ClingSync("log", "--short"), "an unconfirmed import should not create a revision")
+
+		sut.ClingSync("import", "--yes", "--no-progress", "../to-import", "backup/")
+		assert.Equal("img", sut.ClingSync("cat", "backup/to-import/2026/img.jpg"))
+		assert.Equal(
+			"No changes",
+			sut.ClingSync("import", "--yes", "--no-progress", "../to-import", "backup/"),
+			"importing the same directory twice should not create a revision")
+
+		// Nothing in the source changed. `Ls` covers every path, mode, size, and
+		// content, but skips `.cling`, so that one is checked separately.
+		assert.Equal(srcBefore, srcFS.Ls("."), "import must not change the source directory")
+		_, statErr := os.Stat(filepath.Join(srcDir, ".cling"))
+		assert.Equal(true, os.IsNotExist(statErr), "import must not create anything in the source directory")
+
+		// Overwriting a path that is already there needs --overwrite. The changes
+		// are still shown, so it is clear what was refused.
+		revisions = sut.ClingSync("log", "--short")
+		err = os.WriteFile(filepath.Join(srcDir, "index.json"), []byte("changed"), 0o600)
+		assert.NoError(err, "failed to change index.json")
+		stderr = sut.ClingSyncError("import", "--yes", "--no-progress", "../to-import", "backup/")
+		assert.Contains(stderr, "M backup/to-import/index.json")
+		assert.Contains(stderr, "Re-run with --overwrite")
+		assert.Equal(revisions, sut.ClingSync("log", "--short"), "a refused import should not create a revision")
+		sut.ClingSync("import", "--yes", "--overwrite", "--no-progress", "../to-import", "backup/")
+		assert.Equal("changed", sut.ClingSync("cat", "backup/to-import/index.json"))
+
+		// The metadata flags only decide what counts as an overwrite.
+		assert.Contains(
+			sut.ClingSyncError("import", "--yes", "--chtime", "--no-progress", "../to-import", "backup/"),
+			"they need --overwrite")
+
+		// Removing a file from the source removes nothing from the repository.
+		err = os.Remove(filepath.Join(srcDir, "index.json"))
+		assert.NoError(err, "failed to remove index.json")
+		assert.Equal(
+			"No changes",
+			sut.ClingSync("import", "--yes", "--no-progress", "../to-import", "backup/"),
+			"import must never delete from the repository")
+		assert.Equal("changed", sut.ClingSync("cat", "backup/to-import/index.json"))
+
+		// The same import without a workspace, straight into the repository.
+		sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "import", "--yes", "--no-progress",
+			"--repository", "../repository", "../to-import", "elsewhere/")
+		assert.Equal("img", sut.ClingSync("cat", "elsewhere/to-import/2026/img.jpg"))
+		assert.Equal(
+			"No changes",
+			sut.ClingSyncStdin(passphrase, "--passphrase-from-stdin", "import", "--yes", "--no-progress",
+				"--repository", "../repository", "../to-import", "elsewhere/"),
+			"--repository must reach the same revision the workspace does")
+
+		// A symlink cannot be imported, because its target only means something
+		// relative to a workspace.
+		err = os.Symlink("2026/img.jpg", filepath.Join(srcDir, "link.jpg"))
+		assert.NoError(err, "failed to create a symlink in the source")
+		assert.Contains(
+			sut.ClingSyncError("import", "--yes", "--no-progress", "../to-import", "backup/"),
+			"cannot import symlink link.jpg")
+	}
 }
 
 func TestSyncRepoHappyPath(t *testing.T) {

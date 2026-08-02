@@ -723,6 +723,237 @@ To select remote changes, run `+"`"+`%s cp --overwrite <remote-path> .`+"`"+`
 	return nil
 }
 
+func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen,gocognit
+	args := struct { //nolint:exhaustruct
+		Help       bool
+		Repository string
+		PathPrefix string
+		Include    lib.ExtendedGlobPatterns
+		Exclude    lib.ExtendedGlobPatterns
+		Overwrite  bool
+		Yes        bool
+		DryRun     bool
+		Message    string
+		Author     string
+		Chown      bool
+		Chmod      bool
+		Chtime     bool
+		Verbose    bool
+		NoProgress bool
+	}{}
+	defaultAuthor := "<anonymous>"
+	whoami, err := user.Current()
+	if err == nil {
+		defaultAuthor = whoami.Username
+	}
+	flags := flag.NewFlagSet("import", flag.ExitOnError)
+	flags.BoolVar(&args.Help, "help", false, "Show help message")
+	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
+	flags.StringVar(&args.PathPrefix, "path-prefix", "", pathPrefixFlagDescription)
+	flags.BoolVar(&args.Overwrite, "overwrite", false, "Overwrite paths that are already in the destination")
+	flags.BoolVar(&args.Yes, "yes", false, "Do not ask for confirmation")
+	flags.BoolVar(&args.DryRun, "dry-run", false, "Only show what would be committed")
+	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
+	flags.StringVar(&args.Message, "message", "Imported with cling-sync", "Commit message")
+	flags.BoolVar(&args.Chown, "chown", false, "Include file ownership changes (requires --overwrite)")
+	flags.BoolVar(&args.Chmod, "chmod", false, "Include file mode changes (requires --overwrite)")
+	flags.BoolVar(&args.Chtime, "chtime", false, "Include file time changes (requires --overwrite)")
+	flags.BoolVar(&args.Verbose, "verbose", false, "Show progress")
+	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
+	globPatternFlag(flags, "include", includeFlagDescription, &args.Include)
+	globPatternFlag(flags, "exclude", excludeFlagDescription, &args.Exclude)
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s import <source> <destination>\n\n", appName)
+		fmt.Fprint(os.Stderr, "Add a local directory to the repository as a new revision.\n")
+		fmt.Fprint(os.Stderr, "The directory does not have to be a workspace and is not attached as one.\n")
+		fmt.Fprint(os.Stderr, "\nArguments:\n")
+		fmt.Fprint(os.Stderr, "  source\n")
+		fmt.Fprint(os.Stderr, "        The local directory to import.\n")
+		fmt.Fprint(os.Stderr, "\n  destination\n")
+		fmt.Fprint(os.Stderr, "        The directory to import into, must end with `/`.\n")
+		fmt.Fprint(os.Stderr, "        The source is placed below it under its own name, so\n")
+		fmt.Fprint(os.Stderr, "        `import ~/Photos backup/` creates `backup/Photos/...`.\n")
+		fmt.Fprint(os.Stderr, "        Use `/` for the root of the path prefix.\n")
+		fmt.Fprint(os.Stderr, "\nAn import never removes anything from the repository, and only commits\n")
+		fmt.Fprint(os.Stderr, "new paths unless `--overwrite` is given.\n")
+		fmt.Fprint(os.Stderr, "\nFlags:\n")
+		flags.PrintDefaults()
+		fmt.Fprint(os.Stderr, patternSection)
+	}
+	if err := flags.Parse(argv); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if args.Help {
+		flags.Usage()
+		return nil
+	}
+	if len(flags.Args()) != 2 {
+		return lib.Errorf("two positional arguments are required: <source> <destination>")
+	}
+	source, destination := flags.Arg(0), flags.Arg(1)
+	if !strings.HasSuffix(destination, "/") {
+		return lib.Errorf("destination %q must end with `/`", destination)
+	}
+	if (args.Chown || args.Chmod || args.Chtime) && !args.Overwrite {
+		// New paths always record all metadata, so these only decide whether a
+		// metadata-only difference makes an existing path an overwrite.
+		return lib.Errorf("--chown, --chmod, and --chtime only apply to existing paths, so they need --overwrite")
+	}
+	sourcePath, err := filepath.Abs(source)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to get absolute path for %s", source)
+	}
+	sourceInfo, err := os.Stat(sourcePath)
+	if err != nil {
+		return lib.WrapErrorf(err, "failed to open %s", source)
+	}
+	if !sourceInfo.IsDir() {
+		return lib.Errorf("%s is not a directory", source)
+	}
+	sourceName, err := lib.NewPath(filepath.Base(sourcePath))
+	if err != nil {
+		return lib.WrapErrorf(err, "cannot import %s", source)
+	}
+	var (
+		repository *lib.Repository
+		pathPrefix lib.Path
+	)
+	if args.Repository != "" {
+		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+	} else {
+		var workspace *ws.Workspace
+		workspace, err = openWorkspace(ctx)
+		if errors.Is(err, lib.ErrStorageNotFound) {
+			return lib.Errorf(
+				"the current directory is not a workspace - use --repository to import into a repository directly",
+			)
+		}
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to open workspace")
+		}
+		defer workspace.Close() //nolint:errcheck
+		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		if err != nil {
+			return err
+		}
+		pathPrefix = workspace.PathPrefix
+	}
+	defer repository.Close() //nolint:errcheck
+	pathPrefix, err = parsePathPrefix(args.PathPrefix, pathPrefix)
+	if err != nil {
+		return err
+	}
+	dest := sourceName
+	if destination != "/" {
+		var destDir lib.Path
+		destDir, err = ws.ValidatePathPrefix(destination)
+		if err != nil {
+			return lib.WrapErrorf(err, "invalid destination %q", destination)
+		}
+		dest = destDir.Join(sourceName)
+	}
+	restorableMetadataFlag := lib.RestorableMetadataAll
+	if !args.Chown {
+		restorableMetadataFlag ^= lib.RestorableMetadataOwnership
+	}
+	if !args.Chtime {
+		restorableMetadataFlag ^= lib.RestorableMetadataMTime
+	}
+	if !args.Chmod {
+		restorableMetadataFlag ^= lib.RestorableMetadataMode
+	}
+	var include *lib.PathInclusionFilter
+	if len(args.Include) > 0 {
+		include = &lib.PathInclusionFilter{args.Include}
+	}
+	var exclude *lib.PathExclusionFilter
+	if len(args.Exclude) > 0 {
+		exclude = &lib.PathExclusionFilter{args.Exclude}
+	}
+	stagingMonitor, commitMonitor := NewImportMonitors(CLIMonitorMode(args.Verbose, args.NoProgress))
+	opts := &ws.ImportOptions{
+		PathPrefix:             pathPrefix,
+		Dest:                   dest,
+		Include:                include,
+		Exclude:                exclude,
+		StagingMonitor:         stagingMonitor,
+		CommitMonitor:          commitMonitor,
+		RestorableMetadataFlag: restorableMetadataFlag,
+	}
+	tmpFS, cleanup, err := newTempFS("import")
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	stagingMonitor.Preparing()
+	imp, err := ws.NewImport(ctx, repository, lib.NewRealFS(sourcePath), opts, tmpFS)
+	stagingMonitor.close()
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	if len(imp.Changes) == 0 {
+		fmt.Println("No changes")
+		return nil
+	}
+	var status strings.Builder
+	for _, file := range imp.Changes {
+		fmt.Fprintln(&status, file.Format())
+	}
+	fmt.Fprintf(&status, "\n%s\n", imp.Changes.Summary())
+	overwrites := 0
+	for _, file := range imp.Changes {
+		if file.Kind == lib.RevisionEntryKindUpdate {
+			overwrites++
+		}
+	}
+	if overwrites > 0 && !args.Overwrite {
+		return lib.Errorf(
+			"import aborted because it would overwrite paths that are already in the repository\n\n%s\nRe-run with --overwrite to allow it.",
+			status.String(),
+		)
+	}
+	fmt.Printf("Importing %s into %s/\n\n", sourcePath, dest)
+	fmt.Print(status.String())
+	fmt.Printf("Author:  %s\n", args.Author)
+	fmt.Printf("Message: %s\n", args.Message)
+	if args.DryRun {
+		return nil
+	}
+	if !args.Yes {
+		fmt.Println()
+		confirmed, err := Confirm("Commit as a new revision?")
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			fmt.Println("Nothing was committed")
+			return nil
+		}
+	}
+	revisionId, err := imp.Commit(ctx, &lib.CommitInfo{Author: args.Author, Message: args.Message})
+	commitMonitor.close()
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	compressionRatio := "n/a"
+	if commitMonitor.RawBytesAdded > 0 {
+		compressionRatio = fmt.Sprintf(
+			"%.2f",
+			float64(commitMonitor.CompressedBytesAdded)/float64(commitMonitor.RawBytesAdded),
+		)
+	}
+	fmt.Printf(
+		"Revision %s (%s added, compressed: %s)\n",
+		revisionId,
+		ws.FormatBytes(commitMonitor.RawBytesAdded),
+		compressionRatio,
+	)
+	return nil
+}
+
 func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	workspace, err := openWorkspace(ctx)
 	if err != nil {
@@ -2182,8 +2413,8 @@ Patterns:
   dir/d.txt, while "**/d.txt" matches both. A lone "/" is the start of
   the path, so it matches everything.
 
-  --exclude, and on ` + "`log`" + ` also --include, name filters rather than
-  paths, so they are not anchored and may match at any depth. A bare
+  --exclude, and on ` + "`log`" + ` and ` + "`import`" + ` also --include, name filters
+  rather than paths, so they are not anchored and may match at any depth. A bare
   "build" drops every build directory. A path has to survive every
   filter, so --include cannot bring back what --exclude dropped. Negate
   inside --exclude instead. Each --exclude takes one pattern, so repeat
@@ -2246,6 +2477,7 @@ func run() int { //nolint:funlen
 		fmt.Fprint(os.Stderr, "  cat          Print the contents of a file in the repository\n")
 		fmt.Fprint(os.Stderr, "  check        Check the health of the repository\n")
 		fmt.Fprint(os.Stderr, "  cp           Copy files from the repository to a local directory\n")
+		fmt.Fprint(os.Stderr, "  import       Add a local directory to the repository\n")
 		fmt.Fprint(os.Stderr, "  init         Initialize a new repository\n")
 		fmt.Fprint(os.Stderr, "  ls           List files in the repository\n")
 		fmt.Fprint(os.Stderr, "  log          Show revision log\n")
@@ -2289,6 +2521,8 @@ func run() int { //nolint:funlen
 		err = CheckCmd(ctx, argv, args.PassphraseFromStdin)
 	case "cp":
 		err = CpCmd(ctx, argv, args.PassphraseFromStdin)
+	case "import":
+		err = ImportCmd(ctx, argv, args.PassphraseFromStdin)
 	case "init":
 		err = InitCmd(ctx, argv, args.PassphraseFromStdin)
 	case "ls":

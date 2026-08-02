@@ -43,7 +43,7 @@ func TestStaging(t *testing.T) {
 		}, r.RevisionInfos(remoteRev1))
 
 		// Create a staging.
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -91,7 +91,7 @@ func TestStaging(t *testing.T) {
 		remoteRev, err := commit.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
 		snapshot, err := lib.NewRevisionSnapshot(t.Context(), r.Repository, remoteRev, td.NewFS(t))
 		assert.NoError(err)
@@ -124,7 +124,7 @@ func TestStaging(t *testing.T) {
 		w.Write("dir1/dir3/b.png", "b")
 		w.Write("dir1/dir3/c.md", "c")
 
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -153,7 +153,7 @@ func TestStaging(t *testing.T) {
 			td.Path("look/here/"),
 			nil,
 			nil,
-			false,
+			nil,
 			w.TempFS,
 			wstd.StagingMonitor(),
 		)
@@ -177,7 +177,7 @@ func TestStaging(t *testing.T) {
 		w.Write("docs/c.md", "c")
 
 		include := lib.NewPathInclusionFilter([]string{"src/**"})
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, include, nil, false, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, include, nil, nil, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -201,7 +201,7 @@ func TestStaging(t *testing.T) {
 
 		exclude := lib.NewPathExclusionFilter([]string{"build"})
 		mon := &recordingStagingMonitor{Visited: nil}
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, exclude, false, w.TempFS, mon)
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, exclude, nil, w.TempFS, mon)
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -224,7 +224,7 @@ func TestStaging(t *testing.T) {
 
 		include := lib.NewPathInclusionFilter([]string{"src/**"})
 		exclude := lib.NewPathExclusionFilter([]string{"src/vendor"})
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, include, exclude, false, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, include, exclude, nil, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -256,7 +256,7 @@ func TestStaging(t *testing.T) {
 			td.Path("look/here/"),
 			include,
 			nil,
-			false,
+			nil,
 			w.TempFS,
 			wstd.StagingMonitor(),
 		)
@@ -286,7 +286,7 @@ func TestStaging(t *testing.T) {
 		w.Write("a.txt", "a")
 
 		mon := &cancelStagingMonitor{}
-		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, mon)
+		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, mon)
 		assert.ErrorIs(err, lib.ErrCancel)
 	})
 }
@@ -302,7 +302,7 @@ func TestStagingSymlinks(t *testing.T) {
 		w.Write("a.txt", "a")
 		w.Symlink("a.txt", "link")
 
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -326,7 +326,7 @@ func TestStagingSymlinks(t *testing.T) {
 		w.Write("dir1/a.txt", "a")
 		w.Symlink("../dir1/a.txt", "dir2/link")
 
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -352,7 +352,7 @@ func TestStagingSymlinks(t *testing.T) {
 			td.Path("look/here/"),
 			nil,
 			nil,
-			false,
+			nil,
 			w.TempFS,
 			wstd.StagingMonitor(),
 		)
@@ -377,7 +377,7 @@ func TestStagingSymlinks(t *testing.T) {
 		// absolute target so the chmod fails fast with ENOENT.
 		w.Symlink("/nonexistent_absolute_target", "bad")
 
-		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, wstd.StagingMonitor())
+		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, wstd.StagingMonitor())
 		assert.Equal(true, errors.Is(err, ErrSymLinkTargetEscapes))
 	})
 
@@ -391,7 +391,7 @@ func TestStagingSymlinks(t *testing.T) {
 		w := wstd.NewTestWorkspace(t, r.Repository)
 		w.Symlink("/nonexistent_absolute_target", "dir1/bad")
 
-		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, wstd.StagingMonitor())
+		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, wstd.StagingMonitor())
 		assert.Equal(true, errors.Is(err, ErrSymLinkTargetEscapes))
 	})
 
@@ -402,7 +402,7 @@ func TestStagingSymlinks(t *testing.T) {
 		w := wstd.NewTestWorkspace(t, r.Repository)
 		w.Symlink("../../outside", "dir1/bad")
 
-		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, wstd.StagingMonitor())
+		_, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, wstd.StagingMonitor())
 		assert.Equal(true, errors.Is(err, ErrSymLinkTargetEscapes))
 	})
 }
@@ -458,7 +458,15 @@ func TestStagingCache(t *testing.T) {
 		assert.NoError(err)
 
 		// Create a staging that should use the cache.
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, true, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(
+			w.Workspace.FS,
+			lib.Path{},
+			nil,
+			nil,
+			stagingCache(t, w, true),
+			w.TempFS,
+			wstd.StagingMonitor(),
+		)
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -470,7 +478,15 @@ func TestStagingCache(t *testing.T) {
 
 		// The previous run should have retained the cache entry for `a.txt`. So we should see the
 		// same result.
-		staging, err = NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, true, w.TempFS, wstd.StagingMonitor())
+		staging, err = NewStaging(
+			w.Workspace.FS,
+			lib.Path{},
+			nil,
+			nil,
+			stagingCache(t, w, true),
+			w.TempFS,
+			wstd.StagingMonitor(),
+		)
 		assert.NoError(err)
 		finalized, err = staging.Finalize()
 		assert.NoError(err)
@@ -482,7 +498,15 @@ func TestStagingCache(t *testing.T) {
 
 		// Not using the cache should ignore our fake cache entry and rebuild the cache correctly.
 		// Note: The cache will be re-created even if `useCache` is false.
-		staging, err = NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, wstd.StagingMonitor())
+		staging, err = NewStaging(
+			w.Workspace.FS,
+			lib.Path{},
+			nil,
+			nil,
+			stagingCache(t, w, false),
+			w.TempFS,
+			wstd.StagingMonitor(),
+		)
 		assert.NoError(err)
 		finalized, err = staging.Finalize()
 		assert.NoError(err)
@@ -500,6 +524,31 @@ func TestStagingCache(t *testing.T) {
 		assert.Equal(td.SHA256("a"), entry.Metadata.FileHash)
 	})
 
+	t.Run("Without a cache nothing is written to the source directory", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		src := td.NewTestFS(t, td.NewFS(t))
+		src.Write("a.txt", "a")
+		src.Write("sub/b.txt", "b")
+		before := src.Ls(".")
+
+		staging, err := NewStaging(src.FS, lib.Path{}, nil, nil, nil, td.NewFS(t), wstd.StagingMonitor())
+		assert.NoError(err)
+		finalized, err := staging.Finalize()
+		assert.NoError(err)
+		assert.Equal([]TestStagingEntryInfo{
+			{"a.txt", 0o600, td.SHA256("a")},
+			{"sub", 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"sub/b.txt", 0o600, td.SHA256("b")},
+		}, wstd.StagingEntryInfos(finalized))
+
+		// `Ls` covers every path, mode, size, and content, but skips `.cling`,
+		// where the cache would live, so that one is checked separately.
+		assert.Equal(before, src.Ls("."))
+		_, err = src.FS.Stat(".cling")
+		assert.ErrorIs(err, fs.ErrNotExist)
+	})
+
 	t.Run("Cache detects same-size content changes", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
@@ -511,7 +560,15 @@ func TestStagingCache(t *testing.T) {
 
 		// Build the cache by running staging.
 		// This seeds the cache with the hash of "aaa".
-		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, false, w.TempFS, wstd.StagingMonitor())
+		staging, err := NewStaging(
+			w.Workspace.FS,
+			lib.Path{},
+			nil,
+			nil,
+			stagingCache(t, w, false),
+			w.TempFS,
+			wstd.StagingMonitor(),
+		)
 		assert.NoError(err)
 		finalized, err := staging.Finalize()
 		assert.NoError(err)
@@ -526,7 +583,15 @@ func TestStagingCache(t *testing.T) {
 		// Run staging WITH cache. The cache has the hash for "aaa" but the file
 		// now contains "bbb" (same size). HasChanged() should detect the ctime
 		// change and the staging should return the hash of "bbb".
-		staging, err = NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, true, w.TempFS, wstd.StagingMonitor())
+		staging, err = NewStaging(
+			w.Workspace.FS,
+			lib.Path{},
+			nil,
+			nil,
+			stagingCache(t, w, true),
+			w.TempFS,
+			wstd.StagingMonitor(),
+		)
 		assert.NoError(err)
 		finalized, err = staging.Finalize()
 		assert.NoError(err)
@@ -534,6 +599,13 @@ func TestStagingCache(t *testing.T) {
 			{"a.txt", 0o600, td.SHA256("bbb")},
 		}, wstd.StagingEntryInfos(finalized))
 	})
+}
+
+func stagingCache(t *testing.T, w *TestWorkspace, useCache bool) *StagingCache {
+	t.Helper()
+	cache, err := NewStagingCache(w.Workspace.FS, useCache)
+	lib.NewAssert(t).NoError(err)
+	return cache
 }
 
 func readAllStagingEntries(t *testing.T, temp *lib.Temp[*StagingEntry]) []*StagingEntry {

@@ -401,6 +401,7 @@ func TestMerge(t *testing.T) {
 		w2.Write("b.txt", "bb")
 
 		// Merge first commit into workspace.
+		//nolint:exhaustruct
 		mockMon := &changeRemoteCommitMonitor{TestCommitMonitor{}, r.Repository, t, assert, false}
 		mergeOptions := wstd.MergeOptions()
 		mergeOptions.CommitMonitor = mockMon
@@ -1086,40 +1087,6 @@ func TestForceCommit(t *testing.T) {
 		_, err := Merge(t.Context(), w.Workspace, r.Repository, opts)
 		assert.ErrorIs(err, lib.ErrCancel)
 	})
-}
-
-type cancelCommitMonitor struct {
-	TestCommitMonitor
-}
-
-func newCancelCommitMonitor() *cancelCommitMonitor {
-	return &cancelCommitMonitor{TestCommitMonitor: TestCommitMonitor{}}
-}
-
-func (m *cancelCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
-	return lib.ErrCancel
-}
-
-type changeRemoteCommitMonitor struct {
-	TestCommitMonitor
-	repository *lib.Repository
-	t          *testing.T
-	assert     lib.Assert
-	committed  bool
-}
-
-func (m *changeRemoteCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
-	if m.committed {
-		return nil
-	}
-	m.committed = true
-	commit, err := lib.NewCommit(m.t.Context(), m.repository, td.NewFS(m.t))
-	m.assert.NoError(err)
-	err = commit.Add(td.RevisionEntry("update.txt", lib.RevisionEntryKindAdd))
-	m.assert.NoError(err)
-	_, err = commit.Commit(m.t.Context(), td.CommitInfo())
-	m.assert.NoError(err)
-	return nil
 }
 
 func TestMergeSymlinks(t *testing.T) {

@@ -88,10 +88,10 @@ find the revision id, then:
 All commands operate on the current directory's workspace unless noted.
 Run `cling-sync <command> --help` for the full flag list.
 
-The commands that only read a repository (`cat`, `check`, `cp`, `ls`,
-`log`, `serve`) accept `--repository <path-or-uri>` to operate on a
-repository directly, bypassing the workspace. The argument is a local
-path or an `s3+...` URI, opened the same way as `attach`.
+The commands that do not need a workspace (`cat`, `check`, `cp`,
+`import`, `ls`, `log`, `serve`) accept `--repository <path-or-uri>` to
+operate on a repository directly, bypassing the workspace. The argument
+is a local path or an `s3+...` URI, opened the same way as `attach`. 
 
 ### Paths and filters
 
@@ -102,11 +102,11 @@ path `look/here/dir/f.txt` as `dir/f.txt`, and that is what `cat`, `cp`,
 `log`, `ls`, and `status` accept and print. Without a prefix, or under
 `--repository`, the relative space is the repository root.
 
-The four read commands that take paths (`cat`, `cp`, `log`, `ls`) accept
-`--path-prefix <dir>/` to use a different subtree for one invocation,
-and `--path-prefix /` to use the whole repository from its root.
-`merge`, `reset`, and `status` are pinned to the workspace's own prefix,
-because their other side is the local directory.
+The commands that name repository paths (`cat`, `cp`, `import`, `log`,
+`ls`) accept `--path-prefix <dir>/` to use a different subtree for one
+invocation, and `--path-prefix /` to use the whole repository from its
+root. `merge`, `reset`, and `status` are pinned to the workspace's own
+prefix, because their other side is the workspace tree itself.
 
     cling-sync ls                            # the subtree
     cling-sync ls --path-prefix dir1/        # another subtree
@@ -142,8 +142,10 @@ can be repeated, and `cp`, `ls`, `status`, and `log` all take it.
 
     cling-sync ls --exclude 'build' --exclude '**/*.tmp'
 
-`log` is the only command with a matching **`--include`**, because it works
-mainly on revisions, a pattern argument would feel wrong.
+**`--include`** exists on `log` and `import`, and is not anchored either.
+Neither command takes a pattern argument: `log` works mainly on
+revisions, and `import` already spends both of its arguments on the
+source and the destination.
 
 #### How filters combine
 
@@ -215,6 +217,50 @@ filesystems), so the default is to leave them alone. The `--chown`,
 invocation. The same flags govern both directions: detection of local
 changes during commit, and restoration of metadata onto files written
 back from the repository.
+
+### `import <source> <destination>/`
+
+Add a local directory to the repository as a new revision. The directory
+does not have to be a workspace and is not attached as one. Use it to
+put a tree into a repository once, where `merge` would mean binding that
+tree to it forever.
+
+The source is placed below `<destination>` under its own name, so
+`import ~/Photos backup/` creates `backup/Photos/...`. The destination
+must end with `/` and, like every other path argument, is relative to
+the path prefix. Use `/` for the root of that prefix.
+
+    cling-sync import ~/Photos backup/
+    cling-sync import --repository /path/to/repo ~/Photos /
+
+The changes are shown first, in the same form and the same path space as
+`status`, together with the author and message, and nothing is written
+until you confirm. `--yes` skips the prompt, `--dry-run` only prints.
+Without a terminal to confirm on, `--yes` is required.
+
+An import never removes anything from the repository. Paths in
+`<destination>` that the source does not have are left as they are, so
+importing is always safe to repeat. Removing a path from a repository
+needs a workspace and `merge`.
+
+Only new paths are committed. If the import would overwrite a path that
+is already in `<destination>`, the changes are shown and the import
+stops, telling you to re-run with `--overwrite`.
+
+`--chown`, `--chmod`, and `--chtime` mean what they do for `merge`, but
+only for paths that are already there: a new path always records all
+three. They decide whether a file whose contents did not change but
+whose metadata did counts as an overwrite, so they require
+`--overwrite`.
+
+`--include` and `--exclude` are filters, so they are not anchored and
+match against paths relative to `<source>`. See
+[Pattern reference](#pattern-reference). `.gitignore` and `.clingignore`
+are respected as everywhere else. Symlinks are refused: their target is
+only meaningful relative to a workspace, and an imported directory is
+not one.
+
+    cling-sync import --include '**/*.jpg' --exclude 'raw' ~/Photos backup/
 
 ### `status`
 
@@ -569,6 +615,8 @@ Constraints:
   outside the prefix is silently skipped on restore. The repository
   still holds the link. Another workspace that covers both ends will
   see and materialise it.
+- `import` refuses symlinks outright. A stored target is only meaningful
+  relative to a workspace, and an imported directory is not one.
 
 ## How it works
 

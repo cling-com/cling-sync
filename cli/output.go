@@ -2,7 +2,9 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -10,6 +12,20 @@ import (
 	ws "github.com/flunderpero/cling-sync/workspace"
 	"golang.org/x/term"
 )
+
+// Ask the user to confirm an action. Anything but `y` or `yes` is a no.
+func Confirm(question string) (bool, error) {
+	if !IsTerm(os.Stdin) {
+		return false, lib.Errorf("cannot ask for confirmation because stdin is not a terminal, use --yes")
+	}
+	fmt.Printf("%s [y/N] ", question)
+	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return false, lib.WrapErrorf(err, "failed to read answer")
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y" || answer == "yes", nil
+}
 
 func IsTerm(f *os.File) bool {
 	return term.IsTerminal(int(f.Fd())) //nolint:gosec
@@ -35,9 +51,10 @@ func CLIMonitorMode(verbose, noProgress bool) ws.DefaultMonitorMode {
 }
 
 type (
-	cliStagingMonitor     struct{ *ws.DefaultStagingMonitor }
-	cliCommitMonitor      struct{ *ws.DefaultCommitMonitor }
-	cliHealthCheckMonitor struct{ *ws.DefaultHealthCheckMonitor }
+	cliStagingMonitor       struct{ *ws.DefaultStagingMonitor }
+	cliImportStagingMonitor struct{ *cliStagingMonitor }
+	cliCommitMonitor        struct{ *ws.DefaultCommitMonitor }
+	cliHealthCheckMonitor   struct{ *ws.DefaultHealthCheckMonitor }
 )
 
 type cliCpMonitor struct {
@@ -73,6 +90,22 @@ func NewMergeMonitors(mode ws.DefaultMonitorMode) (*cliStagingMonitor, *cliCpMon
 	commit := &cliCommitMonitor{DefaultCommitMonitor: nil}
 	commit.DefaultCommitMonitor = ws.NewDefaultCommitMonitor(mode, nil, commit.emit)
 	return staging, cp, commit
+}
+
+func NewImportMonitors(mode ws.DefaultMonitorMode) (*cliImportStagingMonitor, *cliCommitMonitor) {
+	staging := &cliImportStagingMonitor{cliStagingMonitor: NewStatusMonitor(mode)}
+	commit := &cliCommitMonitor{DefaultCommitMonitor: nil}
+	commit.DefaultCommitMonitor = ws.NewDefaultCommitMonitor(mode, nil, commit.emit)
+	return staging, commit
+}
+
+// A symlink target is only meaningful relative to the workspace it lives in,
+// and an imported directory is not one.
+func (m *cliImportStagingMonitor) OnStart(path lib.Path, dirEntry fs.DirEntry) error {
+	if dirEntry.Type()&fs.ModeSymlink != 0 {
+		return lib.Errorf("cannot import symlink %s, exclude it or import its target instead", path)
+	}
+	return m.cliStagingMonitor.OnStart(path, dirEntry) //nolint:wrapcheck
 }
 
 func NewHeathCheckMonitor(mode ws.DefaultMonitorMode) *cliHealthCheckMonitor {

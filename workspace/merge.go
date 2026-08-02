@@ -2,9 +2,7 @@
 package workspace
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -20,15 +18,6 @@ var (
 	ErrUpToDate      = lib.Errorf("workspace is up to date")
 	ErrRemoteChanged = lib.Errorf("remote repository has changed during merge")
 )
-
-type CommitMonitor interface {
-	OnStart(entry *lib.RevisionEntry) error
-	// bytesWritten: if nil, the block already existed; otherwise, the total block size (including
-	// header) written.
-	OnAddBlock(entry *lib.RevisionEntry, blockId lib.BlockId, dataSize int, bytesWritten *int) error
-	OnEnd(entry *lib.RevisionEntry) error
-	OnBeforeCommit() error
-}
 
 type MergeOptions struct {
 	StagingMonitor         StagingEntryMonitor
@@ -116,18 +105,7 @@ func Merge(ctx context.Context, ws *Workspace, repository *lib.Repository, opts 
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to apply remote changes")
 	}
 	if localChanges.Source.Chunks() > 0 {
-		err := opts.CommitMonitor.OnBeforeCommit()
-		if err != nil {
-			return lib.RevisionId{}, err //nolint:wrapcheck
-		}
-		newHead, err := merger.commitLocalChanges(
-			ctx,
-			localChanges.Source,
-			remoteRevision,
-			opts.CommitMonitor,
-			opts.Author,
-			opts.Message,
-		)
+		newHead, err := merger.commitLocalChanges(ctx, localChanges.Source, remoteRevision)
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to commit local changes")
 		}
@@ -146,7 +124,7 @@ type ForceCommitOptions struct {
 // Commit all local changes ignoring possible conflicts.
 // Afterwards, merge the repository into the workspace.
 // Return a `lib.EmptyCommit` error if there are no local changes.
-func ForceCommit( //nolint:funlen
+func ForceCommit(
 	ctx context.Context,
 	ws *Workspace,
 	repository *lib.Repository,
@@ -191,14 +169,7 @@ func ForceCommit( //nolint:funlen
 		&opts.MergeOptions,
 		lib.NewBlockBuf(),
 	}
-	newHead, err := merger.commitLocalChanges(
-		ctx,
-		localChanges.Source,
-		remoteRevision,
-		opts.CommitMonitor,
-		opts.Author,
-		opts.Message,
-	)
+	newHead, err := merger.commitLocalChanges(ctx, localChanges.Source, remoteRevision)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to commit local changes")
 	}
@@ -226,109 +197,28 @@ func hasRemoteChanged(ctx context.Context, repository *lib.Repository, revisionI
 	return ErrRemoteChanged
 }
 
-func (m *Merger) commitLocalChanges( //nolint:funlen
+func (m *Merger) commitLocalChanges(
 	ctx context.Context,
 	localChanges *lib.Temp[*lib.RevisionEntry],
 	remoteRevision *lib.TempCache[*lib.RevisionEntry],
-	mon CommitMonitor,
-	author string,
-	message string,
 ) (lib.RevisionId, error) {
 	tmpFS, err := m.tempFS.MkSub("commit")
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create commit tmp dir")
 	}
-	commit, err := lib.NewCommit(ctx, m.repository, tmpFS)
-	if err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create commit")
+	src := &CommitFilesSrc{Src: m.ws.FS, SrcPrefix: m.ws.PathPrefix, Files: localChanges}
+	dest := &CommitFilesDest{
+		Repository: m.repository,
+		RevisionId: m.remoteRevisionId,
+		Snapshot:   remoteRevision,
 	}
-	r := localChanges.Reader(nil)
-	for {
-		entry, err := r.Read(m.blockBuf)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to read revision snapshot")
-		}
-		localPath, _ := entry.Path.TrimBase(m.ws.PathPrefix)
-		if err := mon.OnStart(entry); err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor start failed for %s", entry.Path)
-		}
-		if entry.Kind == lib.RevisionEntryKindDelete {
-			if err := commit.Add(entry); err != nil {
-				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add revision entry to commit")
-			}
-			if err := mon.OnEnd(entry); err != nil {
-				return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor end failed for %s", entry.Path)
-			}
-			continue
-		}
-		stat, err := m.ws.FS.Stat(localPath.String())
-		if errors.Is(err, fs.ErrNotExist) {
-			// todo: make special errors out of these so we can distinguish them later.
-			return lib.RevisionId{}, lib.Errorf("file %s was deleted during merge - aborting merge", localPath)
-		}
-		if err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat %s", localPath)
-		}
-		remoteEntry, existsInRemote, err := remoteRevision.Get(lib.RevisionEntryPathCompareString(entry))
-		if err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(
-				err,
-				"failed to get entry from repository snapshot cache for %s",
-				entry.Path,
-			)
-		}
-		var md lib.PathMetadata
-		if existsInRemote && entry.Metadata.FileHash == remoteEntry.Metadata.FileHash {
-			if entry.Metadata.IsEqualRestorableAttributes(remoteEntry.Metadata, m.opts.RestorableMetadataFlag) {
-				// The file did not change at all, we can skip it completely.
-				if err := mon.OnEnd(entry); err != nil {
-					return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor end failed for %s", entry.Path)
-				}
-				continue
-			}
-			// Only metadata changed.
-			md = entry.Metadata
-			md.BlockIds = remoteEntry.Metadata.BlockIds
-		} else {
-			uploadedMD, err := AddFileToRepository(ctx, m.ws.FS, localPath, stat, m.repository, entry, mon)
-			if err != nil {
-				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add blocks and get metadata for %s", localPath)
-			}
-			md = uploadedMD
-		}
-		if md.FileHash != entry.Metadata.FileHash {
-			return lib.RevisionId{}, lib.Errorf(
-				"file %s was modified during merge - aborting merge (hash: %s vs %s)",
-				localPath,
-				md.FileHash,
-				entry.Metadata.FileHash,
-			)
-		}
-		entry.Metadata = md
-		if err := commit.Add(entry); err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add revision entry to commit")
-		}
-		if err := mon.OnEnd(entry); err != nil {
-			return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor end failed for %s", entry.Path)
-		}
+	opts := &CommitFilesOptions{
+		Author:                 m.opts.Author,
+		Message:                m.opts.Message,
+		Monitor:                m.opts.CommitMonitor,
+		RestorableMetadataFlag: m.opts.RestorableMetadataFlag,
 	}
-	// Make sure the path prefix exists in the repository after the commit.
-	if err := commit.EnsureDirExists(m.ws.PathPrefix, remoteRevision, m.remoteRevisionId); err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(
-			err,
-			"failed to ensure path %s exists in the repository",
-			m.ws.PathPrefix,
-		)
-	}
-	info := &lib.CommitInfo{Author: author, Message: message}
-	revisionId, err := commit.Commit(ctx, info)
-	if err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to commit")
-	}
-	return revisionId, nil
+	return CommitFiles(ctx, src, dest, opts, tmpFS)
 }
 
 func (m *Merger) findConflicts(
@@ -816,71 +706,6 @@ func (m *Merger) restoreFromRepository( //nolint:funlen
 	return nil
 }
 
-// Add the file contents to the repository and return the file metadata.
-func AddFileToRepository(
-	ctx context.Context,
-	srcFS lib.FS,
-	path lib.Path,
-	fileInfo fs.FileInfo,
-	repository *lib.Repository,
-	entry *lib.RevisionEntry,
-	mon CommitMonitor,
-) (lib.PathMetadata, error) {
-	if fileInfo.IsDir() {
-		return lib.NewPathMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil), nil
-	}
-	if fileInfo.Mode()&fs.ModeSymlink != 0 {
-		md := lib.NewPathMetadataFromFileInfo(fileInfo, lib.Sha256{}, nil)
-		md.SymLinkTarget = entry.Metadata.SymLinkTarget
-		return md, nil
-	}
-	// Fast path: If the entry already has BlockIds and the size of the file did
-	// not change, only calculate the hash.
-	// If the hash is the same, we can skip the whole block calculation.
-	if entry != nil && len(entry.Metadata.BlockIds) > 0 &&
-		entry.Metadata.Size == fileInfo.Size() {
-		md, err := computeFileHash(srcFS, path, fileInfo)
-		if err != nil {
-			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to create file metadata")
-		}
-		if bytes.Equal(md.FileHash[:], entry.Metadata.FileHash[:]) {
-			md.BlockIds = entry.Metadata.BlockIds
-			return md, nil
-		}
-	}
-	blockIds := []lib.BlockId{}
-	fileHash := sha256.New()
-	f, err := srcFS.OpenRead(path.String())
-	if err != nil {
-		return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to open file %s", path)
-	}
-	defer f.Close() //nolint:errcheck
-	// Read blocks and add them to the repository.
-	cdc := lib.NewGearCDCWithDefaults(f, repository.GearCDCTable())
-	writeBuf := lib.NewBlockBuf()
-	for {
-		data, err := cdc.Read()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to read file %s", path)
-		}
-		if _, err := fileHash.Write(data); err != nil {
-			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to update file hash")
-		}
-		blockId, bytesWritten, err := repository.WriteBlock(ctx, data, writeBuf)
-		if err != nil {
-			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to write block")
-		}
-		if err := mon.OnAddBlock(entry, blockId, len(data), bytesWritten); err != nil {
-			return lib.PathMetadata{}, lib.WrapErrorf(err, "commit monitor add block failed for %s", path)
-		}
-		blockIds = append(blockIds, blockId)
-	}
-	return lib.NewPathMetadataFromFileInfo(fileInfo, lib.Sha256(fileHash.Sum(nil)), blockIds), nil
-}
-
 // Create a `Staging` from `ws.WorkspacePath` and a `lib.RevisionSnapshot` based on the
 // workspace `head` revision.
 // Then compute the local changes between the `Staging` and the `head` revision.
@@ -924,7 +749,11 @@ func buildLocalChanges(
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create revision temp cache")
 	}
-	staging, err := NewStaging(ws.FS, ws.PathPrefix, nil, nil, opts.UseStagingCache, stagingTmpDir, opts.StagingMonitor)
+	cache, err := NewStagingCache(ws.FS, opts.UseStagingCache)
+	if err != nil {
+		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create staging cache")
+	}
+	staging, err := NewStaging(ws.FS, ws.PathPrefix, nil, nil, cache, stagingTmpDir, opts.StagingMonitor)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to detect local changes")
 	}

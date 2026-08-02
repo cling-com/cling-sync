@@ -35,7 +35,10 @@ type Staging struct {
 }
 
 // Build a `Staging` from the `src` directory.
-// `.cling` is always ignored.
+// `.cling` is always ignored, and stale `.cling_sync_tmp_*` files left by an
+// interrupted restore are deleted.
+// A nil `cache` scans without reading or writing a staging cache, so nothing
+// else in `src` is written.
 // If `pathPrefix` is not empty, it will be prepended to all paths *after* the
 // filters are applied.
 func NewStaging( //nolint:funlen
@@ -43,18 +46,16 @@ func NewStaging( //nolint:funlen
 	pathPrefix lib.Path,
 	include *lib.PathInclusionFilter,
 	exclude *lib.PathExclusionFilter,
-	useCache bool,
+	cache *StagingCache,
 	tmp lib.FS,
 	mon StagingEntryMonitor,
 ) (*Staging, error) {
 	revisionEntryWriter := NewStagingCacheWriter(tmp, lib.DefaultTempChunkSize)
-	cache, err := NewStagingCache(src, useCache)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to create staging cache")
+	if cache != nil {
+		defer cache.Cleanup() //nolint:errcheck
 	}
-	defer cache.Cleanup() //nolint:errcheck
 	staging := &Staging{include, exclude, pathPrefix, revisionEntryWriter, nil, tmp}
-	err = lib.WalkDirIgnore(src, ".", func(path_ string, d fs.DirEntry, err error) (retErr error) {
+	err := lib.WalkDirIgnore(src, ".", func(path_ string, d fs.DirEntry, err error) (retErr error) {
 		if err != nil {
 			return err
 		}
@@ -62,6 +63,8 @@ func NewStaging( //nolint:funlen
 			return nil
 		}
 		if lib.IsAtomicWriteTempFile(path_) {
+			// Staging it would commit it as a real path, and this walk is the
+			// only pass that sees it.
 			_ = src.Remove(path_)
 			return nil
 		}
@@ -108,7 +111,8 @@ func NewStaging( //nolint:funlen
 		}
 		repoPath := pathPrefix.Join(localPath)
 		var entry *StagingEntry
-		if isSymlink {
+		switch {
+		case isSymlink:
 			target, err := src.ReadLink(localPath.String())
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to read symlink target for %s", localPath)
@@ -132,8 +136,17 @@ func NewStaging( //nolint:funlen
 				return lib.WrapErrorf(err, "failed to build staging entry for %s", localPath)
 			}
 			entry.Metadata.SymLinkTarget = &repoTarget
-		} else {
+		case cache != nil:
 			entry, err = cache.Handle(localPath, repoPath, fileInfo)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to stage %s", localPath)
+			}
+		default:
+			md, err := computeFileHash(src, localPath, fileInfo)
+			if err != nil {
+				return lib.WrapErrorf(err, "failed to get metadata for %s", localPath)
+			}
+			entry, err = NewStagingEntry(repoPath, fileInfo, md.Size, md.FileHash, md.BlockIds)
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to stage %s", localPath)
 			}
@@ -147,8 +160,10 @@ func NewStaging( //nolint:funlen
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to walk directory %s", src)
 	}
-	if err := cache.Finalize(); err != nil {
-		return nil, lib.WrapErrorf(err, "failed to close cache")
+	if cache != nil {
+		if err := cache.Finalize(); err != nil {
+			return nil, lib.WrapErrorf(err, "failed to close cache")
+		}
 	}
 	return staging, nil
 }

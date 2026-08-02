@@ -66,7 +66,7 @@ func (wstd WorkspaceTestData) StagingMonitor() *TestStagingMonitor {
 }
 
 func (wstd WorkspaceTestData) CommitMonitor() *TestCommitMonitor {
-	return &TestCommitMonitor{}
+	return &TestCommitMonitor{} //nolint:exhaustruct
 }
 
 func (wstd WorkspaceTestData) StatusOptions() *StatusOptions {
@@ -82,6 +82,27 @@ func (wstd WorkspaceTestData) MergeOptions() *MergeOptions {
 		"message",
 		lib.RestorableMetadataAll,
 		false,
+	}
+}
+
+func (wstd WorkspaceTestData) CommitFilesOptions() *CommitFilesOptions {
+	return &CommitFilesOptions{
+		"author",
+		"message",
+		wstd.CommitMonitor(),
+		lib.RestorableMetadataAll,
+	}
+}
+
+func (wstd WorkspaceTestData) ImportOptions(dest lib.Path) *ImportOptions {
+	return &ImportOptions{
+		lib.Path{},
+		dest,
+		nil,
+		nil,
+		wstd.StagingMonitor(),
+		wstd.CommitMonitor(),
+		lib.RestorableMetadataAll,
 	}
 }
 
@@ -180,13 +201,18 @@ func (m *TestStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *lib.P
 func (m *TestStagingMonitor) Close() {
 }
 
-type TestCommitMonitor struct{}
+type TestCommitMonitor struct {
+	OnStartCalls    []*lib.RevisionEntry
+	OnAddBlockCalls []*lib.RevisionEntry
+	OnEndCalls      []*lib.RevisionEntry
+}
 
 func (m *TestCommitMonitor) OnBeforeCommit() error {
 	return nil
 }
 
 func (m *TestCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
+	m.OnStartCalls = append(m.OnStartCalls, entry)
 	return nil
 }
 
@@ -196,10 +222,12 @@ func (m *TestCommitMonitor) OnAddBlock(
 	dataSize int,
 	dataBytesWritten *int,
 ) error {
+	m.OnAddBlockCalls = append(m.OnAddBlockCalls, entry)
 	return nil
 }
 
 func (m *TestCommitMonitor) OnEnd(entry *lib.RevisionEntry) error {
+	m.OnEndCalls = append(m.OnEndCalls, entry)
 	return nil
 }
 
