@@ -138,6 +138,17 @@ latest_version() {
         | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1
 }
 
+# Latest vMAJOR.MINOR.PATCH release tag that exists on the remote, excluding $1
+# if given, or empty if there are none. The remote is the source of truth for
+# what has been released: a local tag from a release run that failed before
+# `upload` is not one.
+latest_pushed_version() {
+    git ls-remote --tags origin 'v*' \
+        | sed -n 's|.*refs/tags/\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' \
+        | grep -vxF "${1:-}" \
+        | sort -t. -k1.2,1n -k2,2n -k3,3n | tail -n1
+}
+
 # Verify the current HEAD has a green CI build on GitHub.
 run_check_release() {
     cd "$root"
@@ -159,24 +170,30 @@ run_check_release() {
     esac
 }
 
-# Tag HEAD with the next patch version: the latest release tag with its patch
-# bumped.
+# Tag HEAD with the next patch version after the latest *pushed* release. If a
+# previous release run already created that tag but died before pushing it, reuse
+# it rather than bumping again, so a resumed run releases the version it started.
 run_tag_release() {
     cd "$root"
     if [ -n "$(git status --porcelain)" ]; then
         echo "Working tree is not clean. Commit or stash your changes before releasing."
         exit 1
     fi
-    local latest ver major minor patch new
-    latest=$(latest_version)
-    [ -n "$latest" ] || { echo "No release tag found. Create the first release tag by hand."; exit 1; }
-    ver="${latest#v}"
+    local pushed ver major minor patch new
+    pushed=$(latest_pushed_version)
+    [ -n "$pushed" ] || { echo "No pushed release tag found. Create the first release tag by hand."; exit 1; }
+    ver="${pushed#v}"
     major="${ver%%.*}"
     minor="${ver#*.}"; minor="${minor%%.*}"
     patch="${ver##*.}"
     new="v$major.$minor.$((patch + 1))"
-    echo ">>> Tagging $new (previous: $latest)"
-    git tag "$new"
+    if git rev-parse -q --verify "refs/tags/$new^{commit}" >/dev/null; then
+        echo ">>> Reusing $new, tagged by an earlier run that never pushed it"
+    else
+        echo ">>> Tagging $new (latest pushed: $pushed)"
+    fi
+    # -f so a reused tag follows HEAD if it moved since that run.
+    git tag -f "$new"
 }
 
 # Build the CLI for darwin and linux (arm64 and amd64) and a source archive for
@@ -190,7 +207,7 @@ run_build_release() {
     echo ">>> Building release artifacts for $version"
     rm -rf dist
     mkdir -p dist
-    local platform os arch cgo bin help
+    local platform os arch cgo bin help status
     for platform in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
         os="${platform%/*}"
         arch="${platform#*/}"
@@ -202,13 +219,20 @@ run_build_release() {
             bash "$root/build.sh" build cli -ldflags "-X main.version=$version"
         bin="cling-sync-$os-$arch"
         mv cling-sync "dist/$bin"
-        # Run each binary and confirm it reports the release version.
+        # Run each binary and confirm it reports the release version. A failure
+        # here is as often the runner (podman auth, a missing Rosetta) as the
+        # binary, so always show what actually happened.
+        status=0
         case "$os" in
-            darwin) help=$("$root/dist/$bin" --help 2>&1 || true) ;;
+            darwin) help=$("$root/dist/$bin" --help 2>&1) || status=$? ;;
             linux)  help=$(podman run --rm --platform "linux/$arch" -v "$root/dist:/dist:ro" \
-                        docker.io/library/alpine "/dist/$bin" --help 2>&1 || true) ;;
+                        docker.io/library/alpine "/dist/$bin" --help 2>&1) || status=$? ;;
         esac
-        echo "$help" | grep -qF "$version" || { echo "FAIL: $bin did not report $version"; exit 1; }
+        if [ "$status" -ne 0 ] || ! echo "$help" | grep -qF "$version"; then
+            echo "FAIL: $bin did not report $version (exit $status). Output was:"
+            echo "$help" | sed 's/^/    | /'
+            exit 1
+        fi
         echo "    $bin runs and reports $version"
     done
     git archive --format=tar.gz --prefix="cling-sync-$version/" -o "dist/cling-sync-$version-src.tgz" "$version"
@@ -221,12 +245,13 @@ run_upload_release() {
     local version prev
     version=$(latest_version)
     [ -n "$version" ] || { echo "No release tag found. Run \`release tag\` first."; exit 1; }
+    # Excluding the version being released keeps the notes right when a partial
+    # upload is re-run and the tag is already on the remote.
+    prev=$(latest_pushed_version "$version")
     echo ">>> Pushing git tag $version"
     git push origin "$version"
     echo ">>> Uploading release $version"
     # Release notes are the commit log since the previous release tag.
-    prev=$(git for-each-ref --sort=-v:refname --format='%(refname:short)' 'refs/tags/*' \
-        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
     git log --format='- %s (%h) by %an' "$prev..$version" \
         | gh release create "$version" dist/* --title "$version" --notes-file -
     echo
