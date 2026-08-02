@@ -182,14 +182,13 @@ func NewFileStorage(fs FS, purpose StoragePurpose) (*FileStorage, error) {
 var _ Storage = (*FileStorage)(nil)
 
 func (s *FileStorage) Init(_ context.Context, config Toml, headerComment string) error {
-	stat, err := s.FS.Stat(".")
-	if err != nil {
-		return WrapErrorf(err, "failed to stat %s", s.FS)
-	} else if !stat.IsDir() {
-		return Errorf("%s is not a directory", s.FS)
+	// `Stat` does not follow symlinks, and a symlinked directory is a fine place
+	// for a repository or a workspace, so ask whether it can be read as one.
+	if _, err := s.FS.ReadDir("."); err != nil {
+		return WrapErrorf(err, "%s is not a usable directory", s.FS)
 	}
 	purposeDir := filepath.Join(".cling", string(s.Purpose))
-	_, err = s.FS.Stat(purposeDir)
+	_, err := s.FS.Stat(purposeDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return WrapErrorf(err, "failed to stat %s", purposeDir)
 	}

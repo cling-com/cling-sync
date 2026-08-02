@@ -53,6 +53,28 @@ func TestRealFS(t *testing.T) {
 		assert.Equal(true, stat.IsDir())
 	})
 
+	t.Run("WalkDir over a symlinked root", func(t *testing.T) {
+		// Without resolving the root, `filepath.WalkDir` lstats it, reports a
+		// single link and stops, so the whole tree looks empty.
+		t.Parallel()
+		assert := NewAssert(t)
+		target := td.NewRealFS(t)
+		assert.NoError(WriteFile(target, "a.txt", []byte("a")))
+		_, err := target.MkSub("sub")
+		assert.NoError(err)
+		assert.NoError(WriteFile(target, "sub/b.txt", []byte("b")))
+		link := filepath.Join(t.TempDir(), "link")
+		assert.NoError(os.Symlink(target.BasePath, link)) //nolint:forbidigo
+
+		var paths []string
+		err = NewRealFS(link).WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+			paths = append(paths, path)
+			return err
+		})
+		assert.NoError(err)
+		assert.Equal([]string{".", "a.txt", "sub", "sub/b.txt"}, paths)
+	})
+
 	checkConsistency(t, func() FS {
 		return td.NewRealFS(t)
 	})

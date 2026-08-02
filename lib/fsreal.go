@@ -161,11 +161,18 @@ func (f *RealFS) MkSub(path string) (FS, error) {
 }
 
 func (f *RealFS) WalkDir(path string, fn fs.WalkDirFunc) error {
-	return filepath.WalkDir(filepath.Join(f.BasePath, path), func(path string, d fs.DirEntry, err error) error {
+	// `filepath.WalkDir` lstats its root, so a symlinked base would arrive as a
+	// single link and the walk would end there. Only the base is resolved,
+	// symlinks below it are still reported as symlinks.
+	base := f.BasePath
+	if resolved, err := filepath.EvalSymlinks(base); err == nil {
+		base = resolved
+	}
+	return filepath.WalkDir(filepath.Join(base, path), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		relPath, err := filepath.Rel(f.BasePath, path)
+		relPath, err := filepath.Rel(base, path)
 		if err != nil {
 			return err
 		}

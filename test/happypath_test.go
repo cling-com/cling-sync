@@ -552,6 +552,13 @@ func TestHappyPath(t *testing.T) {
 				"--repository", "../repository", "../to-import", "elsewhere/"),
 			"--repository must reach the same revision the workspace does")
 
+		// A symlinked source is resolved. Walking it unresolved would visit the
+		// link and stop, and report that there is nothing to import.
+		err = os.Symlink(srcDir, sut.Path("../to-import-link"))
+		assert.NoError(err, "failed to create the source symlink")
+		sut.ClingSync("import", "--yes", "--no-progress", "../to-import-link", "linked/")
+		assert.Equal("img", sut.ClingSync("cat", "linked/to-import-link/2026/img.jpg"))
+
 		// A symlink cannot be imported, because its target only means something
 		// relative to a workspace.
 		err = os.Symlink("2026/img.jpg", filepath.Join(srcDir, "link.jpg"))
