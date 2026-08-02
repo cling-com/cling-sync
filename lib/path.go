@@ -47,6 +47,9 @@ func (p Path) String() string {
 }
 
 func (p Path) Base() Path {
+	if p.p == "" {
+		return Path{""}
+	}
 	return Path{filepath.Base(p.p)}
 }
 
@@ -60,6 +63,14 @@ func (p Path) Dir() Path {
 
 func (p Path) Len() int {
 	return len(p.p)
+}
+
+// The number of path segments. The empty path has depth 0.
+func (p Path) Depth() int {
+	if p.p == "" {
+		return 0
+	}
+	return strings.Count(p.p, PathDelim) + 1
 }
 
 func (p Path) IsEmpty() bool {

@@ -120,6 +120,16 @@ func TestPath(t *testing.T) {
 		assert.Equal(Path{"a/b/c"}, res)
 	})
 
+	t.Run("Base", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+
+		assert.Equal("c", Path{"a/b/c"}.Base().String())
+		assert.Equal("b", Path{"a/b"}.Base().String())
+		assert.Equal("a", Path{"a"}.Base().String())
+		assert.Equal("", Path{""}.Base().String())
+	})
+
 	t.Run("Dir", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -128,6 +138,16 @@ func TestPath(t *testing.T) {
 		assert.Equal("a", Path{"a/b"}.Dir().String())
 		assert.Equal("", Path{"a"}.Dir().String())
 		assert.Equal("", Path{""}.Dir().String())
+	})
+
+	t.Run("Depth", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+
+		assert.Equal(0, Path{""}.Depth())
+		assert.Equal(1, Path{"a"}.Depth())
+		assert.Equal(2, Path{"a/b"}.Depth())
+		assert.Equal(3, Path{"a/b/c"}.Depth())
 	})
 }
 
