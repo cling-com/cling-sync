@@ -49,6 +49,14 @@ func TestFileLock(t *testing.T) {
 		ok, err = lock2.TryLock()
 		assert.NoError(err)
 		assert.Equal(false, ok)
+
+		// `lock` has to stay reachable up to here. The moment it is not, the
+		// garbage collector may run the `os.File` finalizer, which closes the
+		// descriptor and silently drops the flock, letting `lock2` succeed.
+		assert.NoError(lock.Unlock())
+		ok, err = lock2.TryLock()
+		assert.NoError(err)
+		assert.Equal(true, ok)
 	})
 
 	t.Run("Lock already acquired", func(t *testing.T) {
