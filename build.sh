@@ -47,6 +47,7 @@ if [ $# -eq 0 ]; then
     echo "  fuzz [project] [duration]"
     echo "      Run each fuzz target sequentially for the given duration (default 30s)."
     echo "      If no project is specified, run for all projects with fuzz targets."
+    echo "      Pass an empty project to set only the duration, e.g. \`fuzz '' 10s\`."
     echo
     echo "  tools"
     echo "      Build tools needed for development."
@@ -424,13 +425,12 @@ case "$cmd" in
         fi
         ;;
     fuzz)
+        proj_list="${1:-$projects}"
         fuzz_dur="${2:-30s}"
-        if [ $# -gt 0 ]; then
-            proj_list="$1"
-        else
-            proj_list="$projects"
-        fi
         echo ">>> Running fuzz tests (${fuzz_dur} per target)"
+        # Every target runs even after one fails, so a single crasher does not
+        # hide the rest. The failures are reported together at the end.
+        failed=""
         for project in $proj_list; do
             [ -d "$project" ] || continue
             targets=$(cd "$project" && go test -list '^Fuzz' ./... 2>/dev/null | grep -E '^Fuzz' || true)
@@ -438,9 +438,14 @@ case "$cmd" in
             echo "$project"
             for target in $targets; do
                 echo "  >>> $target"
-                (cd "$project" && go test ./... -run '^$' -fuzz "^${target}\$" -fuzztime "$fuzz_dur") || true
+                (cd "$project" && go test ./... -run '^$' -fuzz "^${target}\$" -fuzztime "$fuzz_dur") ||
+                    failed="$failed $project/$target"
             done
         done
+        if [ -n "$failed" ]; then
+            echo ">>> Failed fuzz targets:$failed"
+            exit 1
+        fi
         ;;
     precommit)
         bash $0 gen "$@"

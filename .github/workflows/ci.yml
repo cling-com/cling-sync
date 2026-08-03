@@ -34,6 +34,10 @@ jobs:
     - name: Test
       run: ./build.sh test
 
+    - name: Fuzz
+      if: matrix.os == 'ubuntu-latest'
+      run: ./build.sh fuzz '' 10s
+
     - name: Test race
       if: matrix.os == 'self-hosted'
       run: ./build.sh test --race
