@@ -25,6 +25,11 @@ import (
 // every entry point roots its own background context.
 func wasmContext() context.Context { return context.Background() }
 
+// There is no terminal to draw a progress line on.
+func silentSnapshotMonitor() *workspace.DefaultRevisionSnapshotMonitor {
+	return workspace.NewDefaultRevisionSnapshotMonitor(workspace.DefaultMonitorModeSilent, nil)
+}
+
 const MaxDownloadSize = 500 * 1024 * 1024
 
 var (
@@ -128,11 +133,12 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any { //nolint:funlen
 			exclude = lib.NewPathExclusionFilter(strings.Split(excludes, ","))
 		}
 		opts := &workspace.LsOptions{
-			RevisionId: revisionId,
-			Include:    nil,
-			Exclude:    exclude,
-			PathPrefix: lib.Path{},
-			Depth:      0,
+			RevisionId:      revisionId,
+			SnapshotMonitor: silentSnapshotMonitor(),
+			Include:         nil,
+			Exclude:         exclude,
+			PathPrefix:      lib.Path{},
+			Depth:           0,
 		}
 		files, err := workspace.Ls(wasmContext(), repository, tmpFS, opts)
 		if err != nil {
@@ -211,7 +217,13 @@ func (r RepositoryAPI) ReadFile(this js.Value, args []js.Value) any { //nolint:f
 			revisionId = lib.RevisionId([]byte(revisionIdArg))
 		}
 		tmpFS := lib.NewMemoryFS(10000000)
-		snapshot, err := lib.NewRevisionSnapshot(wasmContext(), repository, revisionId, tmpFS)
+		snapshot, err := lib.NewRevisionSnapshot(
+			wasmContext(),
+			repository,
+			revisionId,
+			tmpFS,
+			silentSnapshotMonitor(),
+		)
 		if err != nil {
 			reject(js.ValueOf(err.Error()))
 			return

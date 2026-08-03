@@ -36,6 +36,7 @@ type CpMonitor interface {
 type CpOptions struct {
 	RevisionId             lib.RevisionId
 	Monitor                CpMonitor
+	SnapshotMonitor        lib.RevisionSnapshotMonitor
 	Include                *lib.PathInclusionFilter
 	Exclude                *lib.PathExclusionFilter
 	PathPrefix             lib.Path
@@ -49,7 +50,7 @@ func Cp( //nolint:funlen
 	opts *CpOptions,
 	tmpFS lib.FS,
 ) error {
-	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS)
+	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
 	}

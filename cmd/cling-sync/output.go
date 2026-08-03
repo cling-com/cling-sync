@@ -55,6 +55,9 @@ type (
 	cliImportStagingMonitor struct{ *cliStagingMonitor }
 	cliCommitMonitor        struct{ *ws.DefaultCommitMonitor }
 	cliHealthCheckMonitor   struct{ *ws.DefaultHealthCheckMonitor }
+	cliSnapshotMonitor      struct {
+		*ws.DefaultRevisionSnapshotMonitor
+	}
 )
 
 type cliCpMonitor struct {
@@ -80,23 +83,34 @@ func NewStatusMonitor(mode ws.DefaultMonitorMode) *cliStagingMonitor {
 	return monitor
 }
 
-func NewResetMonitors(mode ws.DefaultMonitorMode) (*cliStagingMonitor, *cliCpMonitor) {
-	return NewStatusMonitor(mode), NewCpMonitor(mode, ws.CpOnExistsAbort, false)
+// Every command that reads a revision snapshot needs one: building the snapshot
+// runs before any other monitor reports anything.
+func NewSnapshotMonitor(mode ws.DefaultMonitorMode) *cliSnapshotMonitor {
+	monitor := &cliSnapshotMonitor{DefaultRevisionSnapshotMonitor: nil}
+	monitor.DefaultRevisionSnapshotMonitor = ws.NewDefaultRevisionSnapshotMonitor(mode, monitor.emit)
+	return monitor
 }
 
-func NewMergeMonitors(mode ws.DefaultMonitorMode) (*cliStagingMonitor, *cliCpMonitor, *cliCommitMonitor) {
+func NewResetMonitors(mode ws.DefaultMonitorMode) (*cliSnapshotMonitor, *cliStagingMonitor, *cliCpMonitor) {
+	return NewSnapshotMonitor(mode), NewStatusMonitor(mode), NewCpMonitor(mode, ws.CpOnExistsAbort, false)
+}
+
+func NewMergeMonitors(
+	mode ws.DefaultMonitorMode,
+) (*cliSnapshotMonitor, *cliStagingMonitor, *cliCpMonitor, *cliCommitMonitor) {
+	snapshot := NewSnapshotMonitor(mode)
 	staging := NewStatusMonitor(mode)
 	cp := NewCpMonitor(mode, ws.CpOnExistsAbort, false)
 	commit := &cliCommitMonitor{DefaultCommitMonitor: nil}
 	commit.DefaultCommitMonitor = ws.NewDefaultCommitMonitor(mode, nil, commit.emit)
-	return staging, cp, commit
+	return snapshot, staging, cp, commit
 }
 
-func NewImportMonitors(mode ws.DefaultMonitorMode) (*cliImportStagingMonitor, *cliCommitMonitor) {
+func NewImportMonitors(mode ws.DefaultMonitorMode) (*cliSnapshotMonitor, *cliImportStagingMonitor, *cliCommitMonitor) {
 	staging := &cliImportStagingMonitor{cliStagingMonitor: NewStatusMonitor(mode)}
 	commit := &cliCommitMonitor{DefaultCommitMonitor: nil}
 	commit.DefaultCommitMonitor = ws.NewDefaultCommitMonitor(mode, nil, commit.emit)
-	return staging, commit
+	return NewSnapshotMonitor(mode), staging, commit
 }
 
 // A symlink target is only meaningful relative to the workspace it lives in,
@@ -163,6 +177,19 @@ func (m *cliCommitMonitor) emit(text string) {
 }
 
 func (m *cliCommitMonitor) close() {
+	clearLineIfProgress(m.Mode)
+}
+
+func (m *cliSnapshotMonitor) emit(text string) {
+	if m.Mode == ws.DefaultMonitorModeProgress {
+		clearLine()
+		fmt.Fprintf(os.Stderr, "\r%s", text)
+		return
+	}
+	fmt.Printf("%s\n", text)
+}
+
+func (m *cliSnapshotMonitor) close() {
 	clearLineIfProgress(m.Mode)
 }
 

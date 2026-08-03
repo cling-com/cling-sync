@@ -32,7 +32,12 @@ func TestCat(t *testing.T) {
 			p, err := lib.NewPath(path)
 			assert.NoError(err)
 			var buf bytes.Buffer
-			opts := &CatOptions{RevisionId: rev, Path: p, PathPrefix: lib.Path{}}
+			opts := &CatOptions{
+				RevisionId:      rev,
+				SnapshotMonitor: wstd.SnapshotMonitor(),
+				Path:            p,
+				PathPrefix:      lib.Path{},
+			}
 			err = Cat(t.Context(), r.Repository, &buf, opts, td.NewFS(t))
 			return buf.String(), err
 		}
@@ -112,7 +117,7 @@ func TestCat(t *testing.T) {
 			p, err := lib.NewPath(path)
 			assert.NoError(err)
 			var buf bytes.Buffer
-			err = Cat(t.Context(), r.Repository, &buf, &CatOptions{rev, p, prefix}, td.NewFS(t))
+			err = Cat(t.Context(), r.Repository, &buf, &CatOptions{rev, wstd.SnapshotMonitor(), p, prefix}, td.NewFS(t))
 			return buf.String(), err
 		}
 		prefix, err := lib.NewPath("sub")

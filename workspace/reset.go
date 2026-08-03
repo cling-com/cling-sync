@@ -12,6 +12,7 @@ type ResetOptions struct {
 	Force                  bool
 	StagingMonitor         StagingEntryMonitor
 	CpMonitor              CpMonitor
+	SnapshotMonitor        lib.RevisionSnapshotMonitor
 	RestorableMetadataFlag lib.RestorableMetadataFlag
 	UseStagingCache        bool
 }
@@ -38,6 +39,7 @@ func Reset(ctx context.Context, ws *Workspace, repository *lib.Repository, opts 
 		StagingMonitor:         opts.StagingMonitor,
 		CpMonitor:              opts.CpMonitor,
 		CommitMonitor:          nil,
+		SnapshotMonitor:        opts.SnapshotMonitor,
 		Author:                 "unused",
 		Message:                "unused",
 		RestorableMetadataFlag: opts.RestorableMetadataFlag,
@@ -54,7 +56,7 @@ func Reset(ctx context.Context, ws *Workspace, repository *lib.Repository, opts 
 	}
 	// We ignore local changes.
 	localChanges = nil
-	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, opts.RevisionId)
+	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, opts.RevisionId, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to build remote changes")
 	}

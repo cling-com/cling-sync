@@ -86,17 +86,18 @@ func (f *LsFile) Format(format *LsFormat) string {
 }
 
 type LsOptions struct {
-	RevisionId lib.RevisionId
-	Include    *lib.PathInclusionFilter
-	Exclude    *lib.PathExclusionFilter
-	PathPrefix lib.Path
+	RevisionId      lib.RevisionId
+	SnapshotMonitor lib.RevisionSnapshotMonitor
+	Include         *lib.PathInclusionFilter
+	Exclude         *lib.PathExclusionFilter
+	PathPrefix      lib.Path
 	// Maximum number of path segments to list, counted from `PathPrefix`.
 	// 0 means unlimited.
 	Depth int
 }
 
 func Ls(ctx context.Context, repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, error) {
-	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS)
+	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS, opts.SnapshotMonitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}

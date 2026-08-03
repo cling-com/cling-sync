@@ -11,17 +11,26 @@ import (
 	"slices"
 )
 
+// Building a snapshot reads every revision down to the root, so it is the
+// longest silent phase of most commands.
+type RevisionSnapshotMonitor interface {
+	OnRevisionStart(revisionId RevisionId)
+	OnRevisionEntry(entry *RevisionEntry)
+}
+
 func NewRevisionSnapshot(
 	ctx context.Context,
 	repository *Repository,
 	revisionId RevisionId,
 	tmpFS FS,
+	mon RevisionSnapshotMonitor,
 ) (*Temp[*RevisionEntry], error) {
 	// Build a list of all revisions.
 	revisions := make([]*Revision, 0)
 	r := revisionId
 	buf := NewBlockBuf()
 	for !r.IsRoot() {
+		mon.OnRevisionStart(r)
 		revision, err := repository.ReadRevision(ctx, r, buf)
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to read revision: %s", r)
@@ -30,7 +39,7 @@ func NewRevisionSnapshot(
 		r = revision.ParentRevisionId
 	}
 	tempWriter := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
-	if err := revisionNWayMerge(ctx, repository, revisions, tempWriter, buf); err != nil {
+	if err := revisionNWayMerge(ctx, repository, revisions, tempWriter, buf, mon); err != nil {
 		return nil, WrapErrorf(err, "failed to revision n-way merge revisions")
 	}
 	// todo: we don't need to call `tempWriter.Finalize()` because the entries
@@ -48,6 +57,7 @@ func revisionNWayMerge(
 	revisions []*Revision,
 	tempWriter *TempWriter[*RevisionEntry],
 	buf BlockBuf,
+	mon RevisionSnapshotMonitor,
 ) error {
 	readers := make([]*RevisionReader, len(revisions))
 	heap := []*RevisionEntry{}
@@ -57,6 +67,7 @@ func revisionNWayMerge(
 		if err != nil {
 			return WrapErrorf(err, "failed to read revision")
 		}
+		mon.OnRevisionEntry(re)
 		heap = append(heap, re)
 	}
 	// We are done if the heap only contains `nil` values.
@@ -89,6 +100,7 @@ func revisionNWayMerge(
 				if err != nil {
 					return WrapErrorf(err, "failed to read revision")
 				}
+				mon.OnRevisionEntry(re)
 				heap[i] = re
 			}
 		}

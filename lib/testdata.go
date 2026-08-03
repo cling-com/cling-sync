@@ -147,6 +147,22 @@ func (td TestData) NewHealthCheckMonitor() *TestHealthCheckMonitor {
 	return &TestHealthCheckMonitor{[]MockCall{}}
 }
 
+type TestRevisionSnapshotMonitor struct {
+	Calls []MockCall
+}
+
+func (m *TestRevisionSnapshotMonitor) OnRevisionStart(revisionId RevisionId) {
+	m.Calls = append(m.Calls, NewMockCall("OnRevisionStart", revisionId))
+}
+
+func (m *TestRevisionSnapshotMonitor) OnRevisionEntry(entry *RevisionEntry) {
+	m.Calls = append(m.Calls, NewMockCall("OnRevisionEntry", entry))
+}
+
+func (td TestData) NewRevisionSnapshotMonitor() *TestRevisionSnapshotMonitor {
+	return &TestRevisionSnapshotMonitor{[]MockCall{}}
+}
+
 func (td TestData) SHA256(content string) Sha256 {
 	if len(content) == 0 {
 		return Sha256{}
@@ -471,7 +487,13 @@ func (r *TestRepository) RevisionSnapshot(revisionId RevisionId, pathFilter Path
 	r.t.Helper()
 	tmpFS := td.NewFS(r.t)
 	defer tmpFS.RemoveAll(".") //nolint:errcheck
-	snapshot, err := NewRevisionSnapshot(r.t.Context(), r.Repository, revisionId, tmpFS)
+	snapshot, err := NewRevisionSnapshot(
+		r.t.Context(),
+		r.Repository,
+		revisionId,
+		tmpFS,
+		td.NewRevisionSnapshotMonitor(),
+	)
 	r.assert.NoError(err)
 	defer snapshot.Remove() //nolint:errcheck
 	reader := snapshot.Reader(RevisionEntryPathFilter(pathFilter))

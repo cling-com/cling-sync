@@ -56,7 +56,13 @@ func TestStaging(t *testing.T) {
 		}, wstd.StagingEntryInfos(finalized))
 
 		// Merge the staging with a snapshot of the remote revision.
-		snapshot, err := lib.NewRevisionSnapshot(t.Context(), r.Repository, remoteRev1, td.NewFS(t))
+		snapshot, err := lib.NewRevisionSnapshot(
+			t.Context(),
+			r.Repository,
+			remoteRev1,
+			td.NewFS(t),
+			wstd.SnapshotMonitor(),
+		)
 		assert.NoError(err)
 		merged, err := staging.MergeWithSnapshot(snapshot, lib.RestorableMetadataAll, false)
 		assert.NoError(err)
@@ -93,7 +99,13 @@ func TestStaging(t *testing.T) {
 
 		staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, wstd.StagingMonitor())
 		assert.NoError(err)
-		snapshot, err := lib.NewRevisionSnapshot(t.Context(), r.Repository, remoteRev, td.NewFS(t))
+		snapshot, err := lib.NewRevisionSnapshot(
+			t.Context(),
+			r.Repository,
+			remoteRev,
+			td.NewFS(t),
+			wstd.SnapshotMonitor(),
+		)
 		assert.NoError(err)
 
 		// With suppressDeletes=true the DELETE for `b/remote.txt` is skipped;
@@ -269,7 +281,13 @@ func TestStaging(t *testing.T) {
 
 		// The snapshot holds repository paths. Neither the filtered out
 		// `look/here/docs/c.md` nor `other.txt` outside the prefix may be deleted.
-		snapshot, err := lib.NewRevisionSnapshot(t.Context(), r.Repository, remoteRev, td.NewFS(t))
+		snapshot, err := lib.NewRevisionSnapshot(
+			t.Context(),
+			r.Repository,
+			remoteRev,
+			td.NewFS(t),
+			wstd.SnapshotMonitor(),
+		)
 		assert.NoError(err)
 		merged, err := staging.MergeWithSnapshot(snapshot, lib.RestorableMetadataAll, false)
 		assert.NoError(err)

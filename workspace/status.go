@@ -62,6 +62,7 @@ type StatusOptions struct {
 	Include                *lib.PathInclusionFilter
 	Exclude                *lib.PathExclusionFilter
 	Monitor                StagingEntryMonitor
+	SnapshotMonitor        lib.RevisionSnapshotMonitor
 	RestorableMetadataFlag lib.RestorableMetadataFlag
 	UseStagingCache        bool
 }
@@ -97,7 +98,7 @@ func Status( //nolint:funlen
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create temporary staging directory")
 	}
-	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, head, snapshotFS)
+	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, head, snapshotFS, opts.SnapshotMonitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}

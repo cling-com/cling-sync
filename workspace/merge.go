@@ -23,6 +23,7 @@ type MergeOptions struct {
 	StagingMonitor         StagingEntryMonitor
 	CpMonitor              CpMonitor
 	CommitMonitor          CommitMonitor
+	SnapshotMonitor        lib.RevisionSnapshotMonitor
 	Author                 string
 	Message                string
 	RestorableMetadataFlag lib.RestorableMetadataFlag
@@ -89,7 +90,7 @@ func Merge(ctx context.Context, ws *Workspace, repository *lib.Repository, opts 
 			return lib.RevisionId{}, lib.Errorf("workspace head %s is not in the repository's revision chain", wsHead)
 		}
 	}
-	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, head)
+	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, head, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
@@ -155,7 +156,7 @@ func ForceCommit(
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get repository head")
 	}
-	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, head)
+	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, head, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
@@ -173,7 +174,7 @@ func ForceCommit(
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to commit local changes")
 	}
-	remoteRevision, err = buildRemoteChanges(ctx, tempFS, repository, newHead)
+	remoteRevision, err = buildRemoteChanges(ctx, tempFS, repository, newHead, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
@@ -713,7 +714,7 @@ func (m *Merger) restoreFromRepository( //nolint:funlen
 // When the workspace head is the root revision (the workspace was attached
 // but never merged), the repository head is used as the diff baseline and
 // `Delete` entries are filtered out of `localChanges`.
-func buildLocalChanges(
+func buildLocalChanges( //nolint:funlen
 	ctx context.Context,
 	ws *Workspace,
 	tempFS lib.FS,
@@ -741,7 +742,13 @@ func buildLocalChanges(
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create snapshot tmp dir")
 	}
-	wsRevisionSnapshot, err := lib.NewRevisionSnapshot(ctx, repository, baselineHead, wsSnapshotTmpDir)
+	wsRevisionSnapshot, err := lib.NewRevisionSnapshot(
+		ctx,
+		repository,
+		baselineHead,
+		wsSnapshotTmpDir,
+		opts.SnapshotMonitor,
+	)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
@@ -782,12 +789,13 @@ func buildRemoteChanges(
 	tempFS lib.FS,
 	repository *lib.Repository,
 	head lib.RevisionId,
+	mon lib.RevisionSnapshotMonitor,
 ) (remoteRevisionCache *lib.TempCache[*lib.RevisionEntry], err error) {
 	tmp, err := tempFS.MkSub("repository-snapshot")
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create repository snapshot tmp dir")
 	}
-	remoteRevisionSnapshot, err := lib.NewRevisionSnapshot(ctx, repository, head, tmp)
+	remoteRevisionSnapshot, err := lib.NewRevisionSnapshot(ctx, repository, head, tmp, mon)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create remote revision snapshot")
 	}

@@ -180,6 +180,34 @@ func TestRevisionSnapshot(t *testing.T) {
 			td.RevisionEntry("a/2.txt", RevisionEntryKindAdd),
 		}, entries)
 	})
+
+	t.Run("Monitor should report every revision and every entry read", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		e1 := td.RevisionEntry("a/1.txt", RevisionEntryKindAdd)
+		e2 := td.RevisionEntry("a/2.txt", RevisionEntryKindAdd)
+		revId1, err := testCommit(t, r.Repository, e1, e2)
+		assert.NoError(err)
+		e3 := td.RevisionEntry("b/3.txt", RevisionEntryKindAdd)
+		revId2, err := testCommit(t, r.Repository, e3)
+		assert.NoError(err)
+
+		monitor := td.NewRevisionSnapshotMonitor()
+		snapshot, err := NewRevisionSnapshot(t.Context(), r.Repository, revId2, td.NewFS(t), monitor)
+		assert.NoError(err)
+		defer snapshot.Remove() //nolint:errcheck
+
+		// The chain is walked head to root, then every entry of every revision
+		// is read: `revId2` holds `b/3.txt`, `revId1` holds `a/1.txt` and `a/2.txt`.
+		assert.Calls([]MockCall{
+			NewMockCall("OnRevisionStart", revId2),
+			NewMockCall("OnRevisionStart", revId1),
+			NewMockCall("OnRevisionEntry", e3),
+			NewMockCall("OnRevisionEntry", e1),
+			NewMockCall("OnRevisionEntry", e2),
+		}, monitor.Calls)
+	})
 }
 
 func testCommit(t *testing.T, repo *Repository, entries ...*RevisionEntry) (RevisionId, error) {
@@ -204,7 +232,7 @@ func readRevisionSnapshot(
 ) []*RevisionEntry {
 	t.Helper()
 	assert := NewAssert(t)
-	snapshot, err := NewRevisionSnapshot(t.Context(), repo, revisionId, td.NewFS(t))
+	snapshot, err := NewRevisionSnapshot(t.Context(), repo, revisionId, td.NewFS(t), td.NewRevisionSnapshotMonitor())
 	assert.NoError(err)
 	defer snapshot.Remove() //nolint:errcheck
 	reader := snapshot.Reader(RevisionEntryPathFilter(pathFilter))

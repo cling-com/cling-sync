@@ -9,7 +9,8 @@ import (
 )
 
 type CatOptions struct {
-	RevisionId lib.RevisionId
+	RevisionId      lib.RevisionId
+	SnapshotMonitor lib.RevisionSnapshotMonitor
 	// Path is relative to PathPrefix.
 	Path       lib.Path
 	PathPrefix lib.Path
@@ -17,7 +18,7 @@ type CatOptions struct {
 
 // Cat writes the contents of a single regular file from the repository to w.
 func Cat(ctx context.Context, repository *lib.Repository, w io.Writer, opts *CatOptions, tmpFS lib.FS) error {
-	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS)
+	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
 	}

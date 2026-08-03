@@ -307,12 +307,14 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		Repository string
 		PathPrefix string
 		Stdout     bool
+		NoProgress bool
 	}{}
 	flags := flag.NewFlagSet("cat", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to read from")
 	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
 	flags.StringVar(&args.PathPrefix, "path-prefix", "", pathPrefixFlagDescription)
+	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Stdout, "stdout", false, "Write to stdout even when it is a terminal (do not page)")
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s cat <path>\n\n", appName)
@@ -374,12 +376,23 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		return err
 	}
 	defer cleanup()
-	opts := &ws.CatOptions{RevisionId: revisionId, Path: path, PathPrefix: pathPrefix}
+	snapshotMon := NewSnapshotMonitor(CLIMonitorMode(false, args.NoProgress))
+	opts := &ws.CatOptions{
+		RevisionId:      revisionId,
+		SnapshotMonitor: snapshotMon,
+		Path:            path,
+		PathPrefix:      pathPrefix,
+	}
+	snapshotMon.Preparing()
 	if args.Stdout || !IsTerm(os.Stdout) {
-		return ws.Cat(ctx, repository, os.Stdout, opts, tmpFS) //nolint:wrapcheck
+		err := ws.Cat(ctx, repository, os.Stdout, opts, tmpFS)
+		snapshotMon.close()
+		return err //nolint:wrapcheck
 	}
 	var buf bytes.Buffer
-	if err := ws.Cat(ctx, repository, &buf, opts, tmpFS); err != nil {
+	err = ws.Cat(ctx, repository, &buf, opts, tmpFS)
+	snapshotMon.close()
+	if err != nil {
 		return err //nolint:wrapcheck
 	}
 	return NewPager(os.Stdin, os.Stdout).Show(buf.Bytes())
@@ -477,7 +490,9 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if args.Overwrite {
 		cpOnExists = ws.CpOnExistsOverwrite
 	}
-	mon := NewCpMonitor(CLIMonitorMode(args.Verbose, args.NoProgress), cpOnExists, args.IgnoreErrors)
+	mode := CLIMonitorMode(args.Verbose, args.NoProgress)
+	snapshotMon := NewSnapshotMonitor(mode)
+	mon := NewCpMonitor(mode, cpOnExists, args.IgnoreErrors)
 	revisionId, err := revisionId(ctx, repository, args.Revision)
 	if err != nil {
 		return err
@@ -487,6 +502,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		Exclude:                exclude,
 		PathPrefix:             pathPrefix,
 		Monitor:                mon,
+		SnapshotMonitor:        snapshotMon,
 		RevisionId:             revisionId,
 		RestorableMetadataFlag: lib.RestorableMetadataAll,
 	}
@@ -498,8 +514,9 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		return err
 	}
 	defer cleanup()
-	mon.Preparing()
+	snapshotMon.Preparing()
 	err = ws.Cp(ctx, repository, lib.NewRealFS(flags.Arg(1)), opts, tmpFS)
+	snapshotMon.close()
 	mon.close()
 	if args.IgnoreErrors && mon.Errors > 0 {
 		fmt.Printf("%d errors ignored\n", mon.Errors)
@@ -567,7 +584,7 @@ func ResetCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	if err != nil {
 		return err
 	}
-	stagingMonitor, cpMonitor := NewResetMonitors(CLIMonitorMode(args.Verbose, args.NoProgress))
+	snapshotMonitor, stagingMonitor, cpMonitor := NewResetMonitors(CLIMonitorMode(args.Verbose, args.NoProgress))
 	restorableMetadataFlag := lib.RestorableMetadataAll
 	if !args.Chown {
 		restorableMetadataFlag ^= lib.RestorableMetadataOwnership
@@ -583,15 +600,18 @@ func ResetCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		Force:                  args.Force,
 		StagingMonitor:         stagingMonitor,
 		CpMonitor:              cpMonitor,
+		SnapshotMonitor:        snapshotMonitor,
 		RestorableMetadataFlag: restorableMetadataFlag,
 		UseStagingCache:        args.FastScan,
 	}
-	stagingMonitor.Preparing()
+	snapshotMonitor.Preparing()
 	if err := ws.Reset(ctx, workspace, repository, opts); err != nil {
+		snapshotMonitor.close()
 		stagingMonitor.close()
 		cpMonitor.close()
 		return err //nolint:wrapcheck
 	}
+	snapshotMonitor.close()
 	stagingMonitor.close()
 	cpMonitor.close()
 	wsHead, err := workspace.Head(ctx)
@@ -660,7 +680,7 @@ func MergeCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		return err
 	}
 	defer repository.Close() //nolint:errcheck
-	stagingMonitor, cpMonitor, commitMonitor := NewMergeMonitors(
+	snapshotMonitor, stagingMonitor, cpMonitor, commitMonitor := NewMergeMonitors(
 		CLIMonitorMode(args.Verbose, args.NoProgress),
 	)
 	restorableMetadataFlag := lib.RestorableMetadataAll
@@ -679,16 +699,18 @@ func MergeCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		StagingMonitor:         stagingMonitor,
 		CpMonitor:              cpMonitor,
 		CommitMonitor:          commitMonitor,
+		SnapshotMonitor:        snapshotMonitor,
 		RestorableMetadataFlag: restorableMetadataFlag,
 		UseStagingCache:        args.FastScan,
 	}
-	stagingMonitor.Preparing()
+	snapshotMonitor.Preparing()
 	var revisionId lib.RevisionId
 	if args.AcceptLocal {
 		revisionId, err = ws.ForceCommit(ctx, workspace, repository, &ws.ForceCommitOptions{MergeOptions: *opts})
 	} else {
 		revisionId, err = ws.Merge(ctx, workspace, repository, opts)
 	}
+	snapshotMonitor.close()
 	stagingMonitor.close()
 	cpMonitor.close()
 	commitMonitor.close()
@@ -884,7 +906,7 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	if len(args.Exclude) > 0 {
 		exclude = &lib.PathExclusionFilter{args.Exclude}
 	}
-	stagingMonitor, commitMonitor := NewImportMonitors(CLIMonitorMode(args.Verbose, args.NoProgress))
+	snapshotMonitor, stagingMonitor, commitMonitor := NewImportMonitors(CLIMonitorMode(args.Verbose, args.NoProgress))
 	opts := &ws.ImportOptions{
 		PathPrefix:             pathPrefix,
 		Dest:                   dest,
@@ -892,6 +914,7 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 		Exclude:                exclude,
 		StagingMonitor:         stagingMonitor,
 		CommitMonitor:          commitMonitor,
+		SnapshotMonitor:        snapshotMonitor,
 		RestorableMetadataFlag: restorableMetadataFlag,
 	}
 	tmpFS, cleanup, err := newTempFS("import")
@@ -899,8 +922,9 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 		return err
 	}
 	defer cleanup()
-	stagingMonitor.Preparing()
+	snapshotMonitor.Preparing()
 	imp, err := ws.NewImport(ctx, repository, lib.NewRealFS(sourcePath), opts, tmpFS)
+	snapshotMonitor.close()
 	stagingMonitor.close()
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -1039,7 +1063,9 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	if err != nil {
 		return err //nolint:wrapcheck
 	}
-	mon := NewStatusMonitor(CLIMonitorMode(args.Verbose, args.NoProgress))
+	mode := CLIMonitorMode(args.Verbose, args.NoProgress)
+	snapshotMon := NewSnapshotMonitor(mode)
+	mon := NewStatusMonitor(mode)
 	restorableMetadataFlag := lib.RestorableMetadataAll
 	if !args.Chown {
 		restorableMetadataFlag ^= lib.RestorableMetadataOwnership
@@ -1054,11 +1080,13 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 		Include:                include,
 		Exclude:                exclude,
 		Monitor:                mon,
+		SnapshotMonitor:        snapshotMon,
 		RestorableMetadataFlag: restorableMetadataFlag,
 		UseStagingCache:        args.FastScan,
 	}
-	mon.Preparing()
+	snapshotMon.Preparing()
 	result, err := ws.Status(ctx, workspace, repository, opts, tmpFS)
+	snapshotMon.close()
 	mon.close()
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -1104,6 +1132,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		PathPrefix      string
 		Exclude         lib.ExtendedGlobPatterns
 		Depth           int
+		NoProgress      bool
 	}{
 		TimestampFormat: time.RFC3339,
 	}
@@ -1112,6 +1141,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	flags.StringVar(&args.Revision, "revision", "HEAD", "Revision to show")
 	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
 	flags.StringVar(&args.PathPrefix, "path-prefix", "", pathPrefixFlagDescription)
+	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	globPatternFlag(flags, "exclude", excludeFlagDescription, &args.Exclude)
 	flags.BoolVar(&args.Short, "short", false, "Show short listing (same as --timestamp-format=relative)")
 	flags.BoolVar(&args.FileHash, "file-hash", false, "Show file hash")
@@ -1207,19 +1237,23 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if err != nil {
 		return err
 	}
+	snapshotMon := NewSnapshotMonitor(CLIMonitorMode(false, args.NoProgress))
 	opts := &ws.LsOptions{
-		RevisionId: revisionId,
-		Include:    include,
-		Exclude:    exclude,
-		PathPrefix: pathPrefix,
-		Depth:      args.Depth,
+		RevisionId:      revisionId,
+		SnapshotMonitor: snapshotMon,
+		Include:         include,
+		Exclude:         exclude,
+		PathPrefix:      pathPrefix,
+		Depth:           args.Depth,
 	}
 	tmpFS, cleanup, err := newTempFS("ls")
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+	snapshotMon.Preparing()
 	files, err := ws.Ls(ctx, repository, tmpFS, opts)
+	snapshotMon.close()
 	if err != nil {
 		return err //nolint:wrapcheck
 	}

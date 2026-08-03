@@ -19,6 +19,7 @@ type ImportOptions struct {
 	Exclude                *lib.PathExclusionFilter
 	StagingMonitor         StagingEntryMonitor
 	CommitMonitor          CommitMonitor
+	SnapshotMonitor        lib.RevisionSnapshotMonitor
 	RestorableMetadataFlag lib.RestorableMetadataFlag
 }
 
@@ -55,7 +56,7 @@ func NewImport(
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create temporary staging directory")
 	}
-	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, head, snapshotTmpFS)
+	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, head, snapshotTmpFS, opts.SnapshotMonitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}

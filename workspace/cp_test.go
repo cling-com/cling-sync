@@ -65,7 +65,7 @@ func TestCp(t *testing.T) {
 		assert.NoError(err)
 		cpOpts := func(pattern string) *CpOptions {
 			return &CpOptions{
-				rev, wstd.CpMonitor(),
+				rev, wstd.CpMonitor(), wstd.SnapshotMonitor(),
 				lib.NewPathInclusionFilter([]string{pattern}), nil, prefixA, lib.RestorableMetadataAll,
 			}
 		}

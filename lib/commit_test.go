@@ -131,7 +131,13 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
 		assert.NoError(err)
 
-		snapshot, err := NewRevisionSnapshot(t.Context(), r.Repository, r.Head(), td.NewFS(t))
+		snapshot, err := NewRevisionSnapshot(
+			t.Context(),
+			r.Repository,
+			r.Head(),
+			td.NewFS(t),
+			td.NewRevisionSnapshotMonitor(),
+		)
 		assert.NoError(err)
 		snapshotCache, err := NewRevisionEntryTempCache(snapshot, 10)
 		assert.NoError(err)
@@ -193,7 +199,13 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		err = commit.Add(entry)
 		assert.NoError(err)
 
-		snapshot, err := NewRevisionSnapshot(t.Context(), r.Repository, r.Head(), td.NewFS(t))
+		snapshot, err := NewRevisionSnapshot(
+			t.Context(),
+			r.Repository,
+			r.Head(),
+			td.NewFS(t),
+			td.NewRevisionSnapshotMonitor(),
+		)
 		assert.NoError(err)
 		snapshotCache, err := NewRevisionEntryTempCache(snapshot, 10)
 		assert.NoError(err)

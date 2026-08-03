@@ -69,8 +69,19 @@ func (wstd WorkspaceTestData) CommitMonitor() *TestCommitMonitor {
 	return &TestCommitMonitor{} //nolint:exhaustruct
 }
 
+func (wstd WorkspaceTestData) SnapshotMonitor() *lib.TestRevisionSnapshotMonitor {
+	return td.NewRevisionSnapshotMonitor()
+}
+
 func (wstd WorkspaceTestData) StatusOptions() *StatusOptions {
-	return &StatusOptions{nil, nil, wstd.StagingMonitor(), lib.RestorableMetadataAll, false}
+	return &StatusOptions{
+		nil,
+		nil,
+		wstd.StagingMonitor(),
+		wstd.SnapshotMonitor(),
+		lib.RestorableMetadataAll,
+		false,
+	}
 }
 
 func (wstd WorkspaceTestData) MergeOptions() *MergeOptions {
@@ -78,6 +89,7 @@ func (wstd WorkspaceTestData) MergeOptions() *MergeOptions {
 		wstd.StagingMonitor(),
 		wstd.CpMonitor(),
 		wstd.CommitMonitor(),
+		wstd.SnapshotMonitor(),
 		"author",
 		"message",
 		lib.RestorableMetadataAll,
@@ -102,18 +114,21 @@ func (wstd WorkspaceTestData) ImportOptions(dest lib.Path) *ImportOptions {
 		nil,
 		wstd.StagingMonitor(),
 		wstd.CommitMonitor(),
+		wstd.SnapshotMonitor(),
 		lib.RestorableMetadataAll,
 	}
 }
 
 func (wstd WorkspaceTestData) LsOptions(revisionId lib.RevisionId) *LsOptions {
-	return &LsOptions{RevisionId: revisionId} //nolint:exhaustruct
+	//nolint:exhaustruct
+	return &LsOptions{RevisionId: revisionId, SnapshotMonitor: wstd.SnapshotMonitor()}
 }
 
 func (wstd WorkspaceTestData) CpOptions(revisionId lib.RevisionId) *CpOptions {
 	return &CpOptions{
 		revisionId,
 		wstd.CpMonitor(),
+		wstd.SnapshotMonitor(),
 		nil,
 		nil,
 		lib.Path{},
@@ -127,6 +142,7 @@ func (wstd WorkspaceTestData) ResetOptions(revisionId lib.RevisionId, force bool
 		force,
 		wstd.StagingMonitor(),
 		wstd.CpMonitor(),
+		wstd.SnapshotMonitor(),
 		lib.RestorableMetadataAll,
 		false,
 	}

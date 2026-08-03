@@ -22,10 +22,17 @@ const (
 
 type MonitorEmit func(text string)
 
+// A progress line is overwritten in place, so a terminal only ever shows the
+// last one drawn in a refresh. Anything emitted in between costs a `GetSize`
+// ioctl and two writes for a frame nobody sees.
+const defaultProgressInterval = 100 * time.Millisecond
+
 type defaultMonitorBase struct {
-	Mode   DefaultMonitorMode
-	cancel func() error
-	emit   MonitorEmit
+	Mode             DefaultMonitorMode
+	cancel           func() error
+	emit             MonitorEmit
+	progressInterval time.Duration
+	lastProgress     time.Time
 }
 
 func newDefaultMonitorBase(
@@ -39,7 +46,13 @@ func newDefaultMonitorBase(
 	if emit == nil {
 		emit = func(string) {}
 	}
-	return defaultMonitorBase{Mode: mode, cancel: cancel, emit: emit}
+	return defaultMonitorBase{
+		Mode:             mode,
+		cancel:           cancel,
+		emit:             emit,
+		progressInterval: defaultProgressInterval,
+		lastProgress:     time.Time{},
+	}
 }
 
 // Preparing emits a placeholder while an operation stays silent before its first real output.
@@ -48,6 +61,52 @@ func (m *defaultMonitorBase) Preparing() {
 		return
 	}
 	m.emit("preparing...")
+}
+
+// Report whether the next progress line is due, opening a new interval if it
+// is. Callers gate the whole line on this, so a throttled tick costs no
+// formatting. Only the in-place progress line is rate limited, the one line per
+// path that verbose mode writes is not.
+func (m *defaultMonitorBase) progressDue() bool {
+	if m.Mode != DefaultMonitorModeProgress || time.Since(m.lastProgress) < m.progressInterval {
+		return false
+	}
+	m.lastProgress = time.Now()
+	return true
+}
+
+type DefaultRevisionSnapshotMonitor struct {
+	defaultMonitorBase
+	Revisions int
+	Entries   int
+}
+
+func NewDefaultRevisionSnapshotMonitor(mode DefaultMonitorMode, emit MonitorEmit) *DefaultRevisionSnapshotMonitor {
+	return &DefaultRevisionSnapshotMonitor{
+		defaultMonitorBase: newDefaultMonitorBase(mode, nil, emit),
+		Revisions:          0,
+		Entries:            0,
+	}
+}
+
+func (m *DefaultRevisionSnapshotMonitor) OnRevisionStart(revisionId lib.RevisionId) {
+	m.Revisions++
+	m.emitProgress()
+	if m.Mode == DefaultMonitorModeVerbose {
+		m.emit("revision " + revisionId.String())
+	}
+}
+
+func (m *DefaultRevisionSnapshotMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
+	m.Entries++
+	m.emitProgress()
+}
+
+func (m *DefaultRevisionSnapshotMonitor) emitProgress() {
+	if !m.progressDue() {
+		return
+	}
+	m.emit(fmt.Sprintf("read %d revisions, %d path entries", m.Revisions, m.Entries))
 }
 
 type DefaultCommitMonitor struct {
@@ -163,7 +222,7 @@ func (m *DefaultCommitMonitor) OnEnd(entry *lib.RevisionEntry) error {
 }
 
 func (m *DefaultCommitMonitor) emitProgress() {
-	if m.Mode != DefaultMonitorModeProgress || m.StartTime.IsZero() {
+	if m.StartTime.IsZero() || !m.progressDue() {
 		return
 	}
 	elapsed := time.Since(m.StartTime).Seconds()
@@ -246,7 +305,7 @@ func (m *DefaultStagingMonitor) OnEnd(path lib.Path, excluded bool, metadata *li
 }
 
 func (m *DefaultStagingMonitor) emitProgress() {
-	if m.Mode != DefaultMonitorModeProgress || m.StartTime.IsZero() {
+	if m.StartTime.IsZero() || !m.progressDue() {
 		return
 	}
 	elapsed := time.Since(m.StartTime).Seconds()
@@ -367,7 +426,7 @@ func (m *DefaultCpMonitor) OnError(entry *lib.RevisionEntry, targetPath string, 
 }
 
 func (m *DefaultCpMonitor) emitProgress() {
-	if m.Mode != DefaultMonitorModeProgress || m.StartTime.IsZero() {
+	if m.StartTime.IsZero() || !m.progressDue() {
 		return
 	}
 	elapsed := time.Since(m.StartTime).Seconds()
@@ -548,7 +607,7 @@ func (m *DefaultHealthCheckMonitor) writeOrphanedBlocksFile(path string) error {
 }
 
 func (m *DefaultHealthCheckMonitor) emitProgress() {
-	if m.Mode != DefaultMonitorModeProgress || m.StartTime.IsZero() {
+	if m.StartTime.IsZero() || !m.progressDue() {
 		return
 	}
 	elapsed := time.Since(m.StartTime).Seconds()
@@ -636,7 +695,7 @@ func (m *DefaultSyncRepoMonitor) Preparing() {
 }
 
 func (m *DefaultSyncRepoMonitor) emitProgress() {
-	if m.Mode != DefaultMonitorModeProgress || m.StartTime.IsZero() {
+	if m.StartTime.IsZero() || !m.progressDue() {
 		return
 	}
 	elapsed := time.Since(m.StartTime).Seconds()
