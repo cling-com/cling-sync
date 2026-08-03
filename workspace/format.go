@@ -3,7 +3,7 @@
 //nolint:gocritic,exhaustruct,funlen,wrapcheck,nolintlint
 package workspace
 
-import "github.com/flunderpero/cling-sync/lib"
+import "github.com/cling-com/cling-sync/lib"
 
 type StagingEntry struct {
 	RepoPath lib.Path

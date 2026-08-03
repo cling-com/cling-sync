@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 // HTTP methods and status codes the S3 client cares about. They are defined

@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 const s3URIPrefix = "s3+"

@@ -3,8 +3,8 @@
 package workspace
 
 import (
-	clingHTTP "github.com/flunderpero/cling-sync/http"
-	"github.com/flunderpero/cling-sync/lib"
+	clingHTTP "github.com/cling-com/cling-sync/http"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 // OpenStorage opens a repository storage by URI. `s3+<http-url>` URIs need

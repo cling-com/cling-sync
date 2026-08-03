@@ -18,10 +18,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flunderpero/cling-sync/cli/keychain"
-	clingHTTP "github.com/flunderpero/cling-sync/http"
-	"github.com/flunderpero/cling-sync/lib"
-	ws "github.com/flunderpero/cling-sync/workspace"
+	clingHTTP "github.com/cling-com/cling-sync/http"
+	"github.com/cling-com/cling-sync/keychain"
+	"github.com/cling-com/cling-sync/lib"
+	ws "github.com/cling-com/cling-sync/workspace"
 	"golang.org/x/term"
 )
 

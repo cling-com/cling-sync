@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 	"golang.org/x/term"
 )
 

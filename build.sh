@@ -53,7 +53,7 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-projects="lib workspace http cli wasm test"
+projects="lib workspace http keychain cmd/cling-sync wasm test"
 
 # Per-platform tool cache (<os>-<arch>, matching Go's GOOS-GOARCH so the protoc
 # test helpers resolve it).
@@ -115,7 +115,7 @@ run_build() {
         case "$target" in
             cli)
                 echo ">>> Building CLI ($(go env GOOS)/$(go env GOARCH))"
-                go build "$@" -o cling-sync ./cli
+                go build "$@" -o cling-sync ./cmd/cling-sync
                 if [ -n "${CS_DARWIN_CODESIGN:-}" ] && [ "$(uname -s)" = "Darwin" ] && [ "$(go env GOOS)" = "darwin" ]; then
                     echo "Codesigning CLI"
                     codesign --sign "${CS_DARWIN_CODESIGN}" --force --options runtime ./cling-sync
@@ -287,11 +287,11 @@ run_project_cmd() {
         projects="$2"
     fi
     for project in $projects; do
-        cd "$project"
+        cd "$root/$project"
         echo "$project"
         eval "$cmd"
-        cd ..
     done
+    cd "$root"
 }
 
 build_tools() {

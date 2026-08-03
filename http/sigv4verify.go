@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 // VerifySigV4 re-signs the request with `secretAccessKey` and compares to the

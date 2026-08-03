@@ -2,6 +2,6 @@
 .cling
 .clingignore
 .env
-cling-sync
-dist
+/cling-sync
+/dist
 todo.md

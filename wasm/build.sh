@@ -44,7 +44,7 @@ build_wasm() {
             "--tinygo")
                 echo "    Using TinyGo compiler"
                 cp "$(tinygo env TINYGOROOT)/targets/wasm_exec.js" build
-                GOOS=js GOARCH=wasm tinygo build -no-debug -o build/main.wasm .
+                GOOS=js GOARCH=wasm tinygo build -no-debug -o build/main.wasm ./cmd
                 ;;
             *)
                 echo "Unknown build mode: $1"
@@ -54,7 +54,7 @@ build_wasm() {
     else
         echo "    Using Go compiler with debug symbols in dev mode"
         cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" build
-        GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o build/main.wasm .
+        GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o build/main.wasm ./cmd
     fi
     wasm_size=$(wc -c < build/main.wasm)
     if [ $wasm_size -gt 1048576 ]; then
@@ -72,14 +72,14 @@ deps_wasm() {
     if [ "${1:-}" = "--tinygo" ]; then
         command -v tinygo >/dev/null 2>&1 || { echo "TinyGo is not installed"; exit 1; }
         echo ">>> Wasm package sizes (TinyGo build)"
-        GOOS=js GOARCH=wasm tinygo build -size=full -o "$tmp/main.wasm" .
+        GOOS=js GOARCH=wasm tinygo build -size=full -o "$tmp/main.wasm" ./cmd
     elif [ -n "${1:-}" ]; then
         echo "Unknown flag: $1"
         exit 1
     else
         command -v twiggy >/dev/null 2>&1 || { echo "twiggy is not installed (cargo install twiggy)"; exit 1; }
         echo ">>> Largest wasm symbols (Go build)"
-        GOOS=js GOARCH=wasm go build -o "$tmp/main.wasm" .
+        GOOS=js GOARCH=wasm go build -o "$tmp/main.wasm" ./cmd
         twiggy top -n 25 "$tmp/main.wasm"
     fi
 }

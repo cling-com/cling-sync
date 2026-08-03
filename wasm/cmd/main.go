@@ -1,4 +1,4 @@
-//go:build wasm && !test
+//go:build wasm
 
 package main
 
@@ -7,10 +7,12 @@ import (
 	"runtime"
 	"syscall/js"
 	"time"
+
+	"github.com/cling-com/cling-sync/wasm"
 )
 
 func main() {
-	js.Global().Set("repositoryAPI", BuildRepositoryAPI())
+	js.Global().Set("repositoryAPI", wasm.BuildRepositoryAPI())
 	monitorMemory()
 
 	// Keep the program running, because the Wasm module is unloaded when `main` returns.

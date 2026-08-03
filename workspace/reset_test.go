@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 func TestReset(t *testing.T) {

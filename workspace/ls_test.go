@@ -3,7 +3,7 @@ package workspace
 import (
 	"testing"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 func TestLs(t *testing.T) {

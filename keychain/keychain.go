@@ -5,7 +5,7 @@ package keychain
 import (
 	"context"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 var (

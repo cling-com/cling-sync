@@ -1,7 +1,8 @@
 //go:build wasm
 
 // Basic utilities to interact with JavaScript.
-package main
+
+package wasm
 
 import (
 	"context"

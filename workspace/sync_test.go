@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 func TestValidateSyncTargetName(t *testing.T) {

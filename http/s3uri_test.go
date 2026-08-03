@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 var uriTestPassphrase = []byte("integration-test-passphrase-123") //nolint:gochecknoglobals

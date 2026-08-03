@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/flunderpero/cling-sync/lib"
-	ws "github.com/flunderpero/cling-sync/workspace"
+	"github.com/cling-com/cling-sync/lib"
+	ws "github.com/cling-com/cling-sync/workspace"
 	"golang.org/x/term"
 )
 

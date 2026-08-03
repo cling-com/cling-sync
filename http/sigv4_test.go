@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 func TestSigV4Roundtrip(t *testing.T) {

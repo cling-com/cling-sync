@@ -1,14 +1,12 @@
 //go:build !wasm
 
-// Native driver for the wasm tests: builds the wasm test binary once per
-// available compiler (Go always, TinyGo when installed) and runs it in Node.js.
+// Native driver for the wasm tests: builds a check package once per available
+// compiler (Go always, TinyGo when installed) and runs it in Node.js.
 //
-// Build tags pick what compiles, since TinyGo builds a whole package, not a
-// file list:
-//
-//	wasm && test && <check>  test build: testwasm.go harness + one *_check.go,
-//	                         selected by <check> (checkrepo or checkhttp)
-package main
+// Each set of checks is its own `main` package under `wasm/internal`, because
+// TinyGo builds a whole package, not a file list.
+
+package wasmtest
 
 import (
 	"bufio"
@@ -22,11 +20,10 @@ import (
 	"testing"
 )
 
-// RunWasmTests builds and runs the checks selected by `checkTag` (e.g.
-// "checkrepo") under each available compiler as a subtest. `extraEnv` is passed
-// to Node.js and read there via `process.env.<NAME>`. See the file header for
-// the overall design.
-func RunWasmTests(t *testing.T, checkTag string, extraEnv ...string) {
+// RunWasmTests builds the check package at `pkgDir` and runs it under each
+// available compiler as a subtest. `extraEnv` is passed to Node.js and read
+// there via `process.env.<NAME>`. See the file header for the overall design.
+func RunWasmTests(t *testing.T, pkgDir string, extraEnv ...string) {
 	t.Helper()
 	if err := skipIfNodeJSNotInstalled(t.Context()); err != nil {
 		t.Skip(err.Error())
@@ -38,7 +35,7 @@ func RunWasmTests(t *testing.T, checkTag string, extraEnv ...string) {
 				t.Skip(reason)
 			}
 			wasmPath := filepath.Join(t.TempDir(), "main_test.wasm")
-			c.build(t, wasmPath, "test "+checkTag)
+			c.build(t, wasmPath, pkgDir)
 			runNodeJS(t, c.wasmExecJS(t), wasmPath, extraEnv)
 		})
 	}
@@ -47,7 +44,7 @@ func RunWasmTests(t *testing.T, checkTag string, extraEnv ...string) {
 type wasmCompiler struct {
 	name       string
 	skip       func() string
-	build      func(t *testing.T, outPath, tags string)
+	build      func(t *testing.T, outPath, pkgDir string)
 	wasmExecJS func(t *testing.T) string
 }
 
@@ -56,9 +53,9 @@ func wasmCompilers() []wasmCompiler {
 		{
 			name: "go",
 			skip: func() string { return "" },
-			build: func(t *testing.T, outPath, tags string) {
+			build: func(t *testing.T, outPath, pkgDir string) {
 				t.Helper()
-				runBuild(t, "go", "build", "-tags", tags, "-o", outPath, ".")
+				runBuild(t, "go", "build", "-o", outPath, pkgDir)
 			},
 			wasmExecJS: func(t *testing.T) string {
 				t.Helper()
@@ -73,9 +70,9 @@ func wasmCompilers() []wasmCompiler {
 				}
 				return ""
 			},
-			build: func(t *testing.T, outPath, tags string) {
+			build: func(t *testing.T, outPath, pkgDir string) {
 				t.Helper()
-				runBuild(t, "tinygo", "build", "-no-debug", "-tags", tags, "-o", outPath, ".")
+				runBuild(t, "tinygo", "build", "-no-debug", "-o", outPath, pkgDir)
 			},
 			wasmExecJS: func(t *testing.T) string {
 				t.Helper()

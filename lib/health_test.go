@@ -431,7 +431,7 @@ func TestCheckHealthNonce(t *testing.T) {
 func TestFormatDoesNotChangeUnexpectedly(t *testing.T) {
 	t.Parallel()
 	assert := NewAssert(t)
-	want := "119c51dd05c7a50f321ec70ae5bbd51f6de311bcacf06e9436b0afea6c72e208"
+	want := "1a84696a18974772cc1e87b493a26b962a11405f8f74f8040923d40fe2f1e0b8"
 	data, err := os.ReadFile("format.proto") //nolint:forbidigo
 	assert.NoError(err)
 	sum := sha256.Sum256(data)

@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 var (

@@ -534,7 +534,7 @@ func (g *generator) gen() string {
 	g.write("//nolint:gocritic,exhaustruct,funlen,wrapcheck,nolintlint")
 	g.write("package %s\n", g.pkg)
 	if g.pkg != "lib" {
-		g.write("import \"github.com/flunderpero/cling-sync/lib\"\n")
+		g.write("import \"github.com/cling-com/cling-sync/lib\"\n")
 	}
 	for len(g.tokens) > 0 {
 		switch g.expect("word") {

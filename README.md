@@ -1041,6 +1041,22 @@ optionally uses [TinyGo](https://tinygo.org/) for size reduction.
 Mobile and desktop clients live at
 https://github.com/cling-com/cling-sync-clients.
 
+### Using cling-sync as a library
+
+The repository is a single Go module, `github.com/cling-com/cling-sync`.
+
+    go get github.com/cling-com/cling-sync@latest
+
+    lib        repository format, blocks, revisions, encryption
+    workspace  workspaces, staging, merge, and the read commands
+    http       S3 storage client and server, SigV4, s3+http:// URIs
+    keychain   passphrase storage in the OS keychain
+    wasm       the browser API, built with GOOS=js GOARCH=wasm
+
+Install the command:
+
+    go install github.com/cling-com/cling-sync/cmd/cling-sync@latest
+
 ### Wasm
 
 cling-sync compiles to WebAssembly. A sample page lives in `wasm/`.
@@ -1048,7 +1064,7 @@ cling-sync compiles to WebAssembly. A sample page lives in `wasm/`.
 Serve a repository, build the Wasm example, then open it:
 
     cling-sync serve --cors-allow-all --address 127.0.0.1:4242 --repository /path/to/repo
-    ./build.sh wasm dev
+    ./wasm/build.sh dev
     open http://127.0.0.1:8000/example.html
 
 The default Go compiler produces a Wasm binary of about 5 MiB. Building

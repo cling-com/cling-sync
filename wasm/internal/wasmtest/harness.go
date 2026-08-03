@@ -1,26 +1,23 @@
-//go:build wasm && test
+//go:build wasm
 
 // The wasm side of the test runner: a small `testing.T`-like harness (`WasmT`)
-// that JS drives through the exported `registerTests`. Checks register
-// themselves in an `init`, for example:
+// that JS drives through the `runTests` global. Checks register themselves in
+// an `init`, for example:
 //
-//	func init() { RegisterTest("My test", TestMyTest) }
+//	func init() { wasmtest.RegisterTest("My test", TestMyTest) }
 //
-// See `testgo.go` for how the whole wasm test system fits together.
+// See `driver.go` for how the whole wasm test system fits together.
 
-package main
+package wasmtest
 
 import (
 	"fmt"
 	"runtime"
 	"strings"
 	"syscall/js"
-)
 
-func main() {
-	// Keep the program running, because the Wasm module is unloaded when `main` returns.
-	select {}
-}
+	"github.com/cling-com/cling-sync/wasm"
+)
 
 type WasmT struct{}
 
@@ -49,14 +46,14 @@ func (w *WasmT) makeFailure(message string) testFailure {
 	return testFailure{message, file, line}
 }
 
-var tests []test
+var tests []test //nolint:gochecknoglobals
 
 type test struct {
 	Name string
 	Fn   func(t *WasmT)
 }
 
-type testFailure struct {
+type testFailure struct { //nolint:errname
 	Message string
 	File    string
 	Line    int
@@ -70,14 +67,15 @@ func RegisterTest(name string, fn func(t *WasmT)) {
 	tests = append(tests, test{Name: name, Fn: fn})
 }
 
-//go:wasmexport registerTests
-func registerTests() {
+// ExportRunTests publishes `runTests` to JS. Each check binary calls it from
+// its own `//go:wasmexport registerTests`.
+func ExportRunTests() {
 	js.Global().Set("runTests", js.FuncOf(runTests))
 }
 
 func runTests(this js.Value, args []js.Value) any {
 	runTest := func(test func(w *WasmT)) js.Value {
-		return Async(func(resolve func(js.Value), reject func(js.Value)) {
+		return wasm.Async(func(resolve func(js.Value), reject func(js.Value)) {
 			w := &WasmT{}
 			defer func() {
 				if r := recover(); r != nil {
@@ -97,10 +95,10 @@ func runTests(this js.Value, args []js.Value) any {
 			resolve(js.ValueOf("done"))
 		})
 	}
-	return Async(func(resolve func(js.Value), reject func(js.Value)) {
+	return wasm.Async(func(resolve func(js.Value), reject func(js.Value)) {
 		for _, test := range tests {
 			log("RUN ", test.Name)
-			_, err := Await(runTest(test.Fn))
+			_, err := wasm.Await(runTest(test.Fn))
 			if err != nil {
 				log("FAIL", test.Name)
 				reject(js.ValueOf(err.Error()))

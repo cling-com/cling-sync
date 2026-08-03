@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 var td = lib.TestData{} //nolint:gochecknoglobals
@@ -1869,7 +1869,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("CS_TEST_NO_MOCK") == "" {
 		buildArgs = append(buildArgs, "-tags", "mock")
 	}
-	buildArgs = append(buildArgs, "-o", clingSyncBin, "../cli")
+	buildArgs = append(buildArgs, "-o", clingSyncBin, "../cmd/cling-sync")
 	cmd := exec.Command("go", buildArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build cling-sync: %v\n%s\n", err, string(out))

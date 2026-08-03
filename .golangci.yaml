@@ -63,10 +63,11 @@ linters:
           - gofumpt
           - goimports
   settings:
+    # Direct imports only. `test/deps_test.go` pins the transitive closure.
     depguard:
       rules:
         lib:
-          files: 
+          files:
             - "**/lib/*.go"
           list-mode: strict
           allow:
@@ -75,6 +76,81 @@ linters:
             - "golang.org/x/sync/errgroup"
             - "golang.org/x/crypto/argon2"
             - "golang.org/x/crypto/chacha20poly1305"
+        http:
+          files:
+            - "**/http/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - "github.com/cling-com/cling-sync/lib"
+        workspace:
+          files:
+            - "**/workspace/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - "github.com/cling-com/cling-sync/lib"
+            - "github.com/cling-com/cling-sync/http"
+        keychain:
+          files:
+            - "**/keychain/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - "github.com/cling-com/cling-sync/lib"
+        cli:
+          files:
+            - "**/cmd/cling-sync/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - "golang.org/x/term"
+            - "github.com/cling-com/cling-sync/lib"
+            - "github.com/cling-com/cling-sync/http"
+            - "github.com/cling-com/cling-sync/workspace"
+            - "github.com/cling-com/cling-sync/keychain"
+        wasm:
+          files:
+            - "**/wasm/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - "github.com/cling-com/cling-sync/lib"
+            - "github.com/cling-com/cling-sync/http"
+            - "github.com/cling-com/cling-sync/workspace"
+        wasm-cmd:
+          files:
+            - "**/wasm/cmd/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - "github.com/cling-com/cling-sync/wasm"
+        wasm-testharness:
+          files:
+            - "**/wasm/internal/wasmtest/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - "github.com/cling-com/cling-sync/lib"
+            - "github.com/cling-com/cling-sync/http"
+            - "github.com/cling-com/cling-sync/workspace"
+            - "github.com/cling-com/cling-sync/wasm"
+        wasm-checks:
+          files:
+            - "**/wasm/internal/checkrepo/*.go"
+            - "**/wasm/internal/checkhttp/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - "github.com/cling-com/cling-sync/wasm"
+            - "github.com/cling-com/cling-sync/wasm/internal/wasmtest"
+        test:
+          files:
+            - "**/test/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - "github.com/cling-com/cling-sync/lib"
     forbidigo:
       forbid:
         - pattern: '^os\.'
@@ -85,8 +161,6 @@ linters:
     godox:
       keywords:
         - fixme
-    gomoddirectives:
-      replace-local: true
     govet:
       disable:
         - composites

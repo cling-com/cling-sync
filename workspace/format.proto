@@ -22,4 +22,4 @@ message StagingEntryChunk {
 
 // The following is only needed when used with `protoc` (which we don't use).
 
-option go_package = "github.com/flunderpero/cling-sync/workspace";
+option go_package = "github.com/cling-com/cling-sync/workspace";

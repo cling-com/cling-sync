@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 func TestCp(t *testing.T) {

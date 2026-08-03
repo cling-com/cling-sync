@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 // protocPath returns the absolute path to the pinned protoc binary that

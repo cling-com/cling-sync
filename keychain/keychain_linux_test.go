@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 // Exercises the real secret-tool backend, so it only runs where a keyring is

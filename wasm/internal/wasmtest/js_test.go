@@ -1,8 +1,8 @@
 //go:build !wasm
 
-// Native entry point for the `WasmHTTPClient` checks (see `testgo.go`).
+// Native entry point for the `WasmHTTPClient` checks (see `driver.go`).
 
-package main
+package wasmtest
 
 import (
 	"errors"
@@ -61,5 +61,5 @@ func TestWasmHTTPClient(t *testing.T) {
 		}
 	})
 
-	RunWasmTests(t, "checkhttp")
+	RunWasmTests(t, "../checkhttp")
 }

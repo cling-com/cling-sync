@@ -1,6 +1,7 @@
 //go:build wasm
 
-package main
+// Package wasm exposes a cling-sync repository to JavaScript.
+package wasm
 
 import (
 	"bytes"
@@ -15,9 +16,9 @@ import (
 	"syscall/js"
 	"time"
 
-	clingHTTP "github.com/flunderpero/cling-sync/http"
-	"github.com/flunderpero/cling-sync/lib"
-	"github.com/flunderpero/cling-sync/workspace"
+	clingHTTP "github.com/cling-com/cling-sync/http"
+	"github.com/cling-com/cling-sync/lib"
+	"github.com/cling-com/cling-sync/workspace"
 )
 
 // wasm runs inside a JS event-loop callback with no cancellation source, so

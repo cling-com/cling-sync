@@ -105,7 +105,7 @@ message Revision {
 
 // The following is only needed when used with `protoc` (which we don't use).
 
-option go_package = "github.com/flunderpero/cling-sync/lib";
+option go_package = "github.com/cling-com/cling-sync/lib";
 
 import "google/protobuf/descriptor.proto";
 

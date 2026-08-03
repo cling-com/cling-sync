@@ -1,16 +1,16 @@
 //go:build !wasm
 
-// Native entry point for the repository checks (see `testgo.go`).
+// Native entry point for the repository checks (see `driver.go`).
 
-package main
+package wasmtest
 
 import (
 	"net/http"
 	"testing"
 
-	clingHTTP "github.com/flunderpero/cling-sync/http"
-	"github.com/flunderpero/cling-sync/lib"
-	"github.com/flunderpero/cling-sync/workspace"
+	clingHTTP "github.com/cling-com/cling-sync/http"
+	"github.com/cling-com/cling-sync/lib"
+	"github.com/cling-com/cling-sync/workspace"
 )
 
 var (
@@ -46,7 +46,7 @@ func TestWasm(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close() })                    // outlives the parallel compiler subtests
 	go server.ListenAndServe()                                  //nolint:errcheck
 
-	// `wasm/testdata.go` sets the passphrase the test repository uses. The
+	// `workspace/testdata.go` sets the passphrase the test repository uses. The
 	// wasm side decodes the encrypted URI with the same passphrase.
 	encryptedURI, err := clingHTTP.EncodeS3URI(
 		"s3+http://"+wasmTestAddress,
@@ -56,5 +56,5 @@ func TestWasm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	RunWasmTests(t, "checkrepo", "WASM_S3_URL="+encryptedURI, "WASM_HEAD_REVISION="+head.String())
+	RunWasmTests(t, "../checkrepo", "WASM_S3_URL="+encryptedURI, "WASM_HEAD_REVISION="+head.String())
 }

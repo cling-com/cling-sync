@@ -12,7 +12,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/flunderpero/cling-sync/lib"
+	"github.com/cling-com/cling-sync/lib"
 )
 
 type DefaultHTTPClient struct {
