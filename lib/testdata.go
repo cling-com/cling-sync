@@ -483,6 +483,36 @@ func (r *TestRepository) Head() RevisionId {
 	return head
 }
 
+// Write a revision with one entry block per argument, so a test can control the
+// block layout that `Commit` derives from `DefaultTempChunkSize`. Blocks must be
+// given in path order; entries within a block are sorted.
+func (r *TestRepository) AddRevision(parent RevisionId, blocks ...[]*RevisionEntry) RevisionId {
+	r.t.Helper()
+	blockIds := make([]BlockId, 0, len(blocks))
+	buf := NewBlockBuf()
+	for _, entries := range blocks {
+		slices.SortFunc(entries, RevisionEntryPathCompare)
+		chunk := &RevisionEntryChunk{Entries: entries}
+		data := make([]byte, chunk.MarshallSize())
+		pw := NewProtobufWriter(data)
+		r.assert.NoError(chunk.Marshall(pw))
+		blockId, _, err := r.WriteBlock(r.t.Context(), pw.Bytes(), buf)
+		r.assert.NoError(err)
+		blockIds = append(blockIds, blockId)
+	}
+	info := td.CommitInfo()
+	revision := &Revision{ //nolint:exhaustruct
+		Timestamp:        NewTimestampNow(),
+		Message:          &info.Message,
+		Author:           &info.Author,
+		ParentRevisionId: parent,
+		BlockIds:         blockIds,
+	}
+	revisionId, err := r.WriteRevision(r.t.Context(), revision)
+	r.assert.NoError(err)
+	return revisionId
+}
+
 func (r *TestRepository) RevisionSnapshot(revisionId RevisionId, pathFilter PathFilter) []*RevisionEntry {
 	r.t.Helper()
 	tmpFS := td.NewFS(r.t)

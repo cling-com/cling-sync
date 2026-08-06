@@ -704,6 +704,43 @@ func TestMerge(t *testing.T) {
 		}, w2.Ls("."))
 	})
 
+	t.Run("Path changes type", func(t *testing.T) {
+		// The snapshot merge relies on this shape: a path that changes type is
+		// committed as a delete of the old entry plus an add of the new one. A
+		// file and a directory of one path sort to different keys, so without
+		// the delete both would survive into the snapshot.
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("x", "a file")
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// File becomes a directory. The delete sorts first, at key `0x`.
+		w.Rm("x")
+		w.Write("x/inner.txt", "inner")
+		rev, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"x", lib.RevisionEntryKindDelete, 0o600, td.SHA256("a file")},
+			{"x", lib.RevisionEntryKindAdd, 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"x/inner.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("inner")},
+		}, r.RevisionInfos(rev))
+
+		// And back. Now the add sorts first, because `0x` precedes `x`.
+		w.RmAll("x")
+		w.Write("x", "a file again")
+		rev, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"x", lib.RevisionEntryKindAdd, 0o600, td.SHA256("a file again")},
+			{"x", lib.RevisionEntryKindDelete, 0o700 | fs.ModeDir, lib.Sha256{}},
+			{"x/inner.txt", lib.RevisionEntryKindDelete, 0o600, td.SHA256("inner")},
+		}, r.RevisionInfos(rev))
+	})
+
 	// todo: implement
 	// t.Run("MTime is restored", func(t *testing.T) {
 	// 	// Make sure that mtime is restored even for directories.

@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"slices"
 )
 
 // Building a snapshot reads every revision down to the root, so it is the
@@ -51,6 +50,14 @@ func NewRevisionSnapshot(
 	return temp, nil
 }
 
+// Merge the entries of `revisions`, newest first, into `tempWriter`.
+//
+// Each revision lists its entries in `RevisionEntryPathCompare` order, so one
+// k-way merge visits every path once. Where several revisions hold a path the
+// newest one wins, and if that entry is a delete the path is left out.
+//
+// Memory is one cursor and one decoded block per revision. Nothing grows with
+// the number of paths.
 func revisionNWayMerge(
 	ctx context.Context,
 	repository *Repository,
@@ -59,55 +66,62 @@ func revisionNWayMerge(
 	buf BlockBuf,
 	mon RevisionSnapshotMonitor,
 ) error {
-	readers := make([]*RevisionReader, len(revisions))
-	heap := []*RevisionEntry{}
-	for i, revision := range revisions {
-		readers[i] = NewRevisionReader(repository, revision)
-		re, err := readers[i].Read(ctx, buf)
-		if err != nil {
-			return WrapErrorf(err, "failed to read revision")
-		}
-		mon.OnRevisionEntry(re)
-		heap = append(heap, re)
+	// One revision's position in the merge.
+	type mergeCursor struct {
+		entry  *RevisionEntry
+		reader *RevisionReader
+		// Position in the revision list. Lowest is newest and wins a tie.
+		index int
 	}
-	// We are done if the heap only contains `nil` values.
-	for slices.IndexFunc(heap, func(e *RevisionEntry) bool { return e != nil }) != -1 {
-		// Find the smallest revision entry (by path).
-		// Making sure to use RevisionEntryPathCompare to guarantee our established sorting order.
-		smallest := heap[0]
-		for _, re := range heap {
-			if re == nil {
-				continue
-			}
-			if smallest == nil || RevisionEntryPathCompare(re, smallest) == -1 {
-				smallest = re
+
+	// Ordered by path, then by revision index so the newest revision holding a
+	// path comes out first.
+	queue := NewHeap(func(a, b mergeCursor) int {
+		if c := RevisionEntryPathCompare(a.entry, b.entry); c != 0 {
+			return c
+		}
+		return a.index - b.index
+	}, len(revisions))
+	// Put the cursor's next entry back into the queue. A revision that has no
+	// entries left drops out of the merge.
+	advance := func(c mergeCursor) error {
+		entry, err := c.reader.Read(ctx, buf)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return WrapErrorf(err, "failed to read revision entry")
+		}
+		mon.OnRevisionEntry(entry)
+		c.entry = entry
+		queue.Push(c)
+		return nil
+	}
+	for i, revision := range revisions {
+		cursor := mergeCursor{entry: nil, reader: NewRevisionReader(repository, revision), index: i}
+		if err := advance(cursor); err != nil {
+			return err
+		}
+	}
+	for queue.Len() > 0 {
+		winner := queue.Pop()
+		if winner.entry.Kind != RevisionEntryKindDelete {
+			if err := tempWriter.Add(winner.entry); err != nil {
+				return WrapErrorf(err, "failed to write entry %s", winner.entry.Path)
 			}
 		}
-		fullPath := smallest.Path
-		// Find the newest entry and read the next entries for all revisions
-		// that match the fullPath
-		var newest *RevisionEntry
-		for i, re := range heap {
-			if re != nil && re.Path == fullPath {
-				if newest == nil {
-					newest = re
-				}
-				re, err := readers[i].Read(ctx, buf)
-				if errors.Is(err, io.EOF) {
-					heap[i] = nil
-					continue
-				}
-				if err != nil {
-					return WrapErrorf(err, "failed to read revision")
-				}
-				mon.OnRevisionEntry(re)
-				heap[i] = re
+		// Any other revision holding the same entry is outdated. A revision
+		// lists each entry once, so what replaces them sorts strictly after the
+		// winner and cannot be mistaken for it. Comparing paths alone would be
+		// wrong, because a file and a directory of one path are different
+		// entries.
+		for queue.Len() > 0 && RevisionEntryPathCompare(queue.Peek().entry, winner.entry) == 0 {
+			if err := advance(queue.Pop()); err != nil {
+				return err
 			}
 		}
-		if newest.Kind != RevisionEntryKindDelete {
-			if err := tempWriter.Add(newest); err != nil {
-				return WrapErrorf(err, "failed to write entry")
-			}
+		if err := advance(winner); err != nil {
+			return err
 		}
 	}
 	return nil

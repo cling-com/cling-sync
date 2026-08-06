@@ -2,7 +2,12 @@ package lib
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"maps"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -121,6 +126,182 @@ func TestRevisionSnapshot(t *testing.T) {
 		}, entries)
 	})
 
+	t.Run("Newest revision wins", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		_, err := testCommit(t, r.Repository, td.RevisionEntryExt("a.txt", RevisionEntryKindAdd, 0o600, "one"))
+		assert.NoError(err)
+		_, err = testCommit(t, r.Repository, td.RevisionEntryExt("a.txt", RevisionEntryKindUpdate, 0o600, "two"))
+		assert.NoError(err)
+		revId, err := testCommit(
+			t,
+			r.Repository,
+			td.RevisionEntryExt("a.txt", RevisionEntryKindUpdate, 0o600, "three"),
+		)
+		assert.NoError(err)
+
+		assert.Equal([]*RevisionEntry{
+			td.RevisionEntryExt("a.txt", RevisionEntryKindUpdate, 0o600, "three"),
+		}, readRevisionSnapshot(t, r.Repository, revId, nil))
+	})
+
+	t.Run("Delete without an older entry", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		revId, err := testCommit(
+			t,
+			r.Repository,
+			td.RevisionEntry("a.txt", RevisionEntryKindDelete),
+			td.RevisionEntry("b.txt", RevisionEntryKindAdd),
+		)
+		assert.NoError(err)
+
+		assert.Equal([]*RevisionEntry{
+			td.RevisionEntry("b.txt", RevisionEntryKindAdd),
+		}, readRevisionSnapshot(t, r.Repository, revId, nil))
+	})
+
+	t.Run("File replaced by a directory", func(t *testing.T) {
+		// A file and a directory of the same path sort to different keys, so
+		// both could survive the merge if the delete were missed.
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		_, err := testCommit(t, r.Repository, td.RevisionEntry("x", RevisionEntryKindAdd))
+		assert.NoError(err)
+		revId, err := testCommit(
+			t,
+			r.Repository,
+			td.RevisionEntry("x", RevisionEntryKindDelete),
+			td.RevisionEntryExt("x", RevisionEntryKindAdd, FileModeDir, ""),
+		)
+		assert.NoError(err)
+
+		assert.Equal([]*RevisionEntry{
+			td.RevisionEntryExt("x", RevisionEntryKindAdd, FileModeDir, ""),
+		}, readRevisionSnapshot(t, r.Repository, revId, nil))
+	})
+
+	t.Run("Directory replaced by a file", func(t *testing.T) {
+		// The reverse ordering: the added file sorts before the deleted
+		// directory, so the merge emits the winner before the delete that
+		// clears the old entry.
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		_, err := testCommit(
+			t,
+			r.Repository,
+			td.RevisionEntryExt("x", RevisionEntryKindAdd, FileModeDir, ""),
+			td.RevisionEntry("x/inner.txt", RevisionEntryKindAdd),
+		)
+		assert.NoError(err)
+		revId, err := testCommit(
+			t,
+			r.Repository,
+			td.RevisionEntry("x", RevisionEntryKindAdd),
+			td.RevisionEntryExt("x", RevisionEntryKindDelete, FileModeDir, ""),
+			td.RevisionEntry("x/inner.txt", RevisionEntryKindDelete),
+		)
+		assert.NoError(err)
+
+		assert.Equal([]*RevisionEntry{
+			td.RevisionEntry("x", RevisionEntryKindAdd),
+		}, readRevisionSnapshot(t, r.Repository, revId, nil))
+	})
+
+	t.Run("Revision spanning several blocks", func(t *testing.T) {
+		// `Commit` splits entries into blocks by size, so build the blocks by
+		// hand to reach the boundary with a handful of entries.
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		revId1 := r.AddRevision(r.Head(),
+			[]*RevisionEntry{
+				td.RevisionEntryExt("a.txt", RevisionEntryKindAdd, 0o600, "old"),
+				td.RevisionEntry("b.txt", RevisionEntryKindAdd),
+			},
+			[]*RevisionEntry{
+				td.RevisionEntryExt("c.txt", RevisionEntryKindAdd, 0o600, "old"),
+				td.RevisionEntry("d.txt", RevisionEntryKindAdd),
+			},
+		)
+		revId2 := r.AddRevision(revId1,
+			[]*RevisionEntry{td.RevisionEntryExt("a.txt", RevisionEntryKindUpdate, 0o600, "new")},
+			[]*RevisionEntry{td.RevisionEntryExt("c.txt", RevisionEntryKindUpdate, 0o600, "new")},
+		)
+
+		assert.Equal([]*RevisionEntry{
+			td.RevisionEntryExt("a.txt", RevisionEntryKindUpdate, 0o600, "new"),
+			td.RevisionEntry("b.txt", RevisionEntryKindAdd),
+			td.RevisionEntryExt("c.txt", RevisionEntryKindUpdate, 0o600, "new"),
+			td.RevisionEntry("d.txt", RevisionEntryKindAdd),
+		}, readRevisionSnapshot(t, r.Repository, revId2, nil))
+	})
+
+	t.Run("Many overlapping revisions", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		const revs, paths = 25, 40
+		var revId RevisionId
+		want := map[string]*RevisionEntry{}
+		// Revision `v` touches every path divisible by `v+1`, so later
+		// revisions overwrite `want`.
+		for v := range revs {
+			entries := []*RevisionEntry{}
+			for p := range paths {
+				if p%(v+1) != 0 {
+					continue
+				}
+				path := fmt.Sprintf("d%02d/f%02d.txt", p%5, p)
+				entry := td.RevisionEntryExt(path, RevisionEntryKindUpdate, 0o600, strings.Repeat("x", v+1))
+				entries = append(entries, entry)
+				want[path] = entry
+			}
+			var err error
+			revId, err = testCommit(t, r.Repository, entries...)
+			assert.NoError(err)
+		}
+		expected := slices.Collect(maps.Values(want))
+		slices.SortFunc(expected, RevisionEntryPathCompare)
+
+		assert.Equal(expected, readRevisionSnapshot(t, r.Repository, revId, nil))
+	})
+
+	t.Run("File and directory of the same path", func(t *testing.T) {
+		// Known gap. `PathCompareString` gives a file and a directory of one
+		// path different keys, and everything else in the same parent can sort
+		// between them, so the merge cannot pair them up without holding a
+		// directory's worth of paths. Both therefore survive.
+		//
+		// A commit can never produce this: `TestMerge/File replaced by a
+		// directory` pins that a type change is committed as a delete plus an
+		// add, and the delete removes the old entry by key. Only a repository
+		// written by something other than `Commit` can reach it.
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		older := r.AddRevision(r.Head(), []*RevisionEntry{td.RevisionEntry("a/b", RevisionEntryKindAdd)})
+		newer := r.AddRevision(older, []*RevisionEntry{
+			td.RevisionEntryExt("a/b", RevisionEntryKindAdd, FileModeDir, ""),
+		})
+
+		assert.Equal([]*RevisionEntry{
+			td.RevisionEntry("a/b", RevisionEntryKindAdd),
+			td.RevisionEntryExt("a/b", RevisionEntryKindAdd, FileModeDir, ""),
+		}, readRevisionSnapshot(t, r.Repository, newer, nil))
+	})
+
 	t.Run("PathFilter", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -181,7 +362,7 @@ func TestRevisionSnapshot(t *testing.T) {
 		}, entries)
 	})
 
-	t.Run("Monitor should report every revision and every entry read", func(t *testing.T) {
+	t.Run("Monitor", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
@@ -248,4 +429,114 @@ func readRevisionSnapshot(
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+// Building a snapshot is a k-way merge over the whole revision chain, so cost
+// grows with the length of the chain as well as with the number of paths.
+func BenchmarkRevisionSnapshot(b *testing.B) {
+	const paths, churn = 20000, 200
+	assert := NewAssert(b)
+	for _, revs := range []int{10, 100, 1000} {
+		b.Run(strconv.Itoa(revs)+"Revisions", func(b *testing.B) {
+			r := td.NewTestRepository(b, td.NewFS(b))
+			path := func(i int) string { return fmt.Sprintf("d%03d/f%06d.txt", i%100, i) }
+			entries := make([]*RevisionEntry, 0, paths)
+			for i := range paths {
+				entries = append(entries, td.RevisionEntry(path(i), RevisionEntryKindAdd))
+			}
+			revId := r.AddRevision(r.Head(), entries)
+			for v := 1; v < revs; v++ {
+				changed := make([]*RevisionEntry, 0, churn)
+				for i := range churn {
+					changed = append(changed, td.RevisionEntry(path((v*churn+i)%paths), RevisionEntryKindUpdate))
+				}
+				revId = r.AddRevision(revId, changed)
+			}
+			mon := benchRevisionSnapshotMonitor{}
+			b.ResetTimer()
+			for b.Loop() {
+				tmpFS := NewMemoryFS(256 * 1024 * 1024)
+				_, err := NewRevisionSnapshot(b.Context(), r.Repository, revId, tmpFS, mon)
+				assert.NoError(err)
+			}
+		})
+	}
+}
+
+// `TestRevisionSnapshotMonitor` records every call, which would dominate the
+// benchmark's allocations.
+type benchRevisionSnapshotMonitor struct{}
+
+func (benchRevisionSnapshotMonitor) OnRevisionStart(RevisionId)     {}
+func (benchRevisionSnapshotMonitor) OnRevisionEntry(*RevisionEntry) {}
+
+// Build revisions from `data` and check the snapshot against a reference built
+// with a map. Every input gets its own repository, because `WriteRevision`
+// requires the parent to be the current head, so a shared one would carry the
+// previous input's revisions into this input's snapshot.
+func FuzzRevisionSnapshot(f *testing.F) {
+	f.Add([]byte{0, 1, 2, 0, 3, 0})
+	f.Add([]byte{1, 1, 1, 2, 2, 2, 0, 0})
+	f.Add([]byte{7, 3, 9, 0, 4, 4})
+	paths := []string{"a", "a/b", "a/b/c", "ab", "b", "b/c", "z.txt", "a/z.txt"}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) < 2 || len(data) > 64 {
+			return
+		}
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, NewMemoryFS(64*1024*1024))
+		// Each byte is one entry: which path, which kind, and whether the next
+		// entry starts a new revision.
+		revisions := [][]*RevisionEntry{{}}
+		for _, b := range data {
+			path := paths[int(b>>3)%len(paths)]
+			kind := []RevisionEntryKind{
+				RevisionEntryKindAdd, RevisionEntryKindUpdate, RevisionEntryKindDelete,
+			}[int(b>>1)%3]
+			mode := FileMode(0o600)
+			if b&1 == 1 {
+				mode = FileModeDir
+			}
+			entry := td.RevisionEntryExt(path, kind, mode, path)
+			last := revisions[len(revisions)-1]
+			// A revision holds each key once, and starts a new one otherwise.
+			if slices.ContainsFunc(last, func(e *RevisionEntry) bool {
+				return RevisionEntryPathCompare(e, entry) == 0
+			}) {
+				revisions = append(revisions, []*RevisionEntry{entry})
+				continue
+			}
+			revisions[len(revisions)-1] = append(last, entry)
+		}
+		revId := r.Head()
+		for _, entries := range revisions {
+			if len(entries) == 0 {
+				continue
+			}
+			revId = r.AddRevision(revId, entries)
+		}
+
+		// Reference: walk oldest to newest, newest write of a key wins.
+		want := map[string]*RevisionEntry{}
+		for _, entries := range revisions {
+			for _, entry := range entries {
+				want[RevisionEntryPathCompareString(entry)] = entry
+			}
+		}
+		expected := []*RevisionEntry{}
+		for _, entry := range want {
+			if entry.Kind != RevisionEntryKindDelete {
+				expected = append(expected, entry)
+			}
+		}
+		slices.SortFunc(expected, RevisionEntryPathCompare)
+
+		got := readRevisionSnapshot(t, r.Repository, revId, nil)
+		assert.Equal(expected, got)
+		// The snapshot must be strictly ordered, so no key may repeat.
+		for i := 1; i < len(got); i++ {
+			assert.Less(RevisionEntryPathCompareString(got[i-1]), RevisionEntryPathCompareString(got[i]))
+		}
+	})
 }

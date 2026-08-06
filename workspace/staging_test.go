@@ -77,6 +77,50 @@ func TestStaging(t *testing.T) {
 		}, r.RevisionTempInfos(merged))
 	})
 
+	t.Run("Path changes type", func(t *testing.T) {
+		// A file and a directory of one path compare by different keys, so a
+		// type change comes out as a delete of the old entry plus an add of the
+		// new one. The snapshot merge relies on that delete.
+		t.Parallel()
+		assert := lib.NewAssert(t)
+
+		// A file that became a directory. The delete sorts first, at key `0x`.
+		r1 := td.NewTestRepository(t, td.NewFS(t))
+		w1 := wstd.NewTestWorkspace(t, r1.Repository)
+		w1.Write("x/inner.txt", "inner")
+		commit1, err := lib.NewCommit(t.Context(), r1.Repository, td.NewFS(t))
+		assert.NoError(err)
+		assert.NoError(commit1.Add(td.RevisionEntryExt("x", lib.RevisionEntryKindAdd, 0o600, "a file")))
+		rev1, err := commit1.Commit(t.Context(), td.CommitInfo())
+		assert.NoError(err)
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"x", lib.RevisionEntryKindDelete, 0o600, td.SHA256("a file")},
+			{"x", lib.RevisionEntryKindAdd, 0o700 | fs.ModeDir, td.SHA256("")},
+			{"x/inner.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("inner")},
+		}, stagingDiff(t, r1, w1, rev1))
+
+		// A directory that became a file. Now the add sorts first. The
+		// directory is created first so the revision holds a real one.
+		r2 := td.NewTestRepository(t, td.NewFS(t))
+		w2 := wstd.NewTestWorkspace(t, r2.Repository)
+		w2.Write("x/inner.txt", "inner")
+		commit2, err := lib.NewCommit(t.Context(), r2.Repository, td.NewFS(t))
+		assert.NoError(err)
+		xDirEntry := td.RevisionEntry("x", lib.RevisionEntryKindAdd)
+		xDirEntry.Metadata = *w2.PathMetadata("x")
+		assert.NoError(commit2.Add(xDirEntry))
+		assert.NoError(commit2.Add(td.RevisionEntryExt("x/inner.txt", lib.RevisionEntryKindAdd, 0o600, "inner")))
+		rev2, err := commit2.Commit(t.Context(), td.CommitInfo())
+		assert.NoError(err)
+		w2.RmAll("x")
+		w2.Write("x", "a file")
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"x", lib.RevisionEntryKindAdd, 0o600, td.SHA256("a file")},
+			{"x", lib.RevisionEntryKindDelete, 0o700 | fs.ModeDir, td.SHA256("")},
+			{"x/inner.txt", lib.RevisionEntryKindDelete, 0o600, td.SHA256("inner")},
+		}, stagingDiff(t, r2, w2, rev2))
+	})
+
 	t.Run("MergeWithSnapshot with suppressDeletes drops delete entries", func(t *testing.T) {
 		// Used by the attach --allow-non-empty merge path: paths that only
 		// exist in the snapshot are fetched on merge rather than deleted.
@@ -651,4 +695,22 @@ func findEntry(entries []*StagingEntry, path string) *StagingEntry {
 		}
 	}
 	return nil
+}
+
+// Scan the workspace and diff it against `revisionId`, the way `Merge` does.
+func stagingDiff(
+	t *testing.T,
+	r *lib.TestRepository,
+	w *TestWorkspace,
+	revisionId lib.RevisionId,
+) []lib.TestRevisionEntryInfo {
+	t.Helper()
+	assert := lib.NewAssert(t)
+	staging, err := NewStaging(w.Workspace.FS, lib.Path{}, nil, nil, nil, w.TempFS, wstd.StagingMonitor())
+	assert.NoError(err)
+	snapshot, err := lib.NewRevisionSnapshot(t.Context(), r.Repository, revisionId, td.NewFS(t), wstd.SnapshotMonitor())
+	assert.NoError(err)
+	merged, err := staging.MergeWithSnapshot(snapshot, lib.RestorableMetadataAll, false)
+	assert.NoError(err)
+	return r.RevisionTempInfos(merged)
 }
