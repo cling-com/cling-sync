@@ -282,55 +282,42 @@ func (tw *TempWriter[T]) Finalize() (*Temp[T], error) { //nolint:funlen
 		readers = append(readers, r)
 		heads = append(heads, e)
 	}
-	for len(readers) > 0 {
-		minIdx := 0
-		for i := 1; i < len(readers); i++ {
-			c := tw.compare(heads[i], heads[minIdx])
-			if c == 0 && !tw.ignoreDuplicates {
-				return nil, WrapErrorf(ErrDuplicateTempEntry, "duplicate entry: %v", heads[i])
-			}
-			if c < 0 {
-				minIdx = i
-			}
+	queue := NewHeap(func(a, b int) int { return tw.compare(heads[a], heads[b]) }, len(readers))
+	for i := range readers {
+		queue.Push(i)
+	}
+	// Refill the queue's smallest chunk from its own reader. An exhausted chunk
+	// leaves the queue and is closed by the deferred cleanup.
+	advance := func() error {
+		i := queue.Pop()
+		e, err := readers[i].Read()
+		if errors.Is(err, io.EOF) {
+			return nil
 		}
-		minHead := heads[minIdx]
+		if err != nil {
+			return err
+		}
+		heads[i] = e
+		queue.Push(i)
+		return nil
+	}
+	for queue.Len() > 0 {
+		minHead := heads[queue.Peek()]
 		if err := sorted.Add(minHead); err != nil {
 			return nil, WrapErrorf(err, "failed to write to target file")
 		}
-		if tw.ignoreDuplicates {
-			// Advance every reader whose head matches `minHead`; several
-			// may since the min-find loop tolerated duplicates.
-			i := 0
-			for i < len(readers) {
-				if tw.compare(heads[i], minHead) != 0 {
-					i++
-					continue
-				}
-				e, err := readers[i].Read()
-				if errors.Is(err, io.EOF) {
-					_ = readers[i].Close()
-					readers = slices.Delete(readers, i, i+1)
-					heads = slices.Delete(heads, i, i+1)
-					continue
-				}
-				if err != nil {
-					return nil, err
-				}
-				heads[i] = e
-				i++
+		if err := advance(); err != nil {
+			return nil, err
+		}
+		// Equal entries sort next to each other, so a duplicate of `minHead` is
+		// now at the top of the queue.
+		for queue.Len() > 0 && tw.compare(heads[queue.Peek()], minHead) == 0 {
+			if !tw.ignoreDuplicates {
+				return nil, WrapErrorf(ErrDuplicateTempEntry, "duplicate entry: %v", minHead)
 			}
-		} else {
-			e, err := readers[minIdx].Read()
-			if errors.Is(err, io.EOF) {
-				_ = readers[minIdx].Close()
-				readers = slices.Delete(readers, minIdx, minIdx+1)
-				heads = slices.Delete(heads, minIdx, minIdx+1)
-				continue
-			}
-			if err != nil {
+			if err := advance(); err != nil {
 				return nil, err
 			}
-			heads[minIdx] = e
 		}
 	}
 	if err := sorted.rotateChunk(); err != nil {
