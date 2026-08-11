@@ -2,7 +2,6 @@ package lib
 
 import (
 	"fmt"
-	"strings"
 )
 
 func (k RevisionEntryKind) String() string {
@@ -20,15 +19,14 @@ func (k RevisionEntryKind) String() string {
 
 // Compare two revision entries by their full path.
 func RevisionEntryPathCompare(a, b *RevisionEntry) int {
-	return strings.Compare(
-		PathCompareString(a.Path, a.Metadata.FileMode.IsDir()),
-		PathCompareString(b.Path, b.Metadata.FileMode.IsDir()),
-	)
+	return PathCompare(a.Path, a.Metadata.FileMode.IsDir(), b.Path, b.Metadata.FileMode.IsDir())
 }
 
-func RevisionEntryPathCompareString(e *RevisionEntry) string {
-	return PathCompareString(e.Path, e.Metadata.FileMode.IsDir())
+func RevisionEntryPathKey(e *RevisionEntry) PathKey {
+	return PathKey{e.Path, e.Metadata.FileMode.IsDir()}
 }
+
+type RevisionEntryCache = TempCache[*RevisionEntry, PathKey]
 
 func RevisionEntryPathFilter(pathFilter PathFilter) func(e *RevisionEntry) bool {
 	if pathFilter == nil {
@@ -72,6 +70,6 @@ func (revisionEntryChunkMarshaller) EntrySize(entry *RevisionEntry) int {
 func NewRevisionEntryTempCache(
 	temp *Temp[*RevisionEntry],
 	maxChunksInCache int,
-) (*TempCache[*RevisionEntry], error) {
-	return NewTempCache(temp, RevisionEntryPathCompareString, maxChunksInCache)
+) (*RevisionEntryCache, error) {
+	return NewTempCache(temp, RevisionEntryPathKey, ComparePathKey, maxChunksInCache)
 }

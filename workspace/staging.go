@@ -287,9 +287,9 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 				return nil, lib.WrapErrorf(err, "failed to read revision snapshot")
 			}
 		}
-		c := strings.Compare(
-			lib.PathCompareString(stg.RepoPath, stg.Metadata.FileMode.IsDir()),
-			lib.PathCompareString(rev.Path, rev.Metadata.FileMode.IsDir()),
+		c := lib.PathCompare(
+			stg.RepoPath, stg.Metadata.FileMode.IsDir(),
+			rev.Path, rev.Metadata.FileMode.IsDir(),
 		)
 		if c == 0 { //nolint:gocritic
 			if !stg.Metadata.IsEqualRestorableAttributes(rev.Metadata, restorableMetadataFlag) {
@@ -338,7 +338,7 @@ type StagingCache struct {
 	src          lib.FS
 	cacheTempDir string
 	cacheWriter  *lib.TempWriter[*StagingEntry]
-	cache        *lib.TempCache[*StagingEntry]
+	cache        *StagingEntryCache
 }
 
 func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
@@ -348,7 +348,7 @@ func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
 	}
 	cacheTempDir := filepath.Join(cacheDir, cacheTempDirPrefix+rand)
 	var cacheWriter *lib.TempWriter[*StagingEntry]
-	var cache *lib.TempCache[*StagingEntry]
+	var cache *StagingEntryCache
 	cacheTempFS, err := src.MkSub(cacheTempDir)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create cache tmp dir")
@@ -381,7 +381,7 @@ func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs
 	var stagingEntry *StagingEntry
 	var err error
 	if c.cache != nil {
-		existingEntry, ok, err := c.cache.Get(lib.PathCompareString(repoPath, fileInfo.IsDir()))
+		existingEntry, ok, err := c.cache.Get(lib.PathKey{Path: repoPath, IsDir: fileInfo.IsDir()})
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}

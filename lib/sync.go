@@ -122,7 +122,7 @@ func SyncRepository( //nolint:funlen
 	if dstCount%blockIdReadProgressEvery != 0 {
 		opts.Monitor.OnDstBlockIdsRead(dstCount)
 	}
-	dstCache, err := NewTempCache(dstTemp, func(id BlockId) string { return string(id[:]) }, 4)
+	dstCache, err := NewTempCache(dstTemp, func(id BlockId) BlockId { return id }, BlockIdCompare, 4)
 	if err != nil {
 		return WrapErrorf(err, "failed to open dst block id cache")
 	}
@@ -169,7 +169,7 @@ func SyncRepository( //nolint:funlen
 			if err != nil {
 				return WrapErrorf(err, "failed to read src block id")
 			}
-			_, present, err := dstCache.Get(string(id[:]))
+			_, present, err := dstCache.Get(id)
 			if err != nil {
 				return WrapErrorf(err, "failed to look up block %s in dst", id)
 			}

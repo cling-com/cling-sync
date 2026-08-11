@@ -34,12 +34,12 @@ func TestStagingEntry(t *testing.T) {
 		cache, err := OpenStagingCache(fs, 2)
 		assert.NoError(err)
 
-		entry, ok, err := cache.Get(lib.PathCompareString(a.RepoPath, a.Metadata.FileMode.IsDir()))
+		entry, ok, err := cache.Get(lib.PathKey{a.RepoPath, a.Metadata.FileMode.IsDir()})
 		assert.NoError(err)
 		assert.Equal(true, ok)
 		assert.Equal(a, *entry)
 
-		entry, ok, err = cache.Get(lib.PathCompareString(b.RepoPath, b.Metadata.FileMode.IsDir()))
+		entry, ok, err = cache.Get(lib.PathKey{b.RepoPath, b.Metadata.FileMode.IsDir()})
 		assert.NoError(err)
 		assert.Equal(true, ok)
 		assert.Equal(b, *entry)

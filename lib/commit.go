@@ -38,7 +38,7 @@ func (c *Commit) Add(entry *RevisionEntry) error {
 // `NewEmptyDirPathMetadata` metadata.
 func (c *Commit) EnsureDirExists(
 	path Path,
-	snapshotCache *TempCache[*RevisionEntry],
+	snapshotCache *RevisionEntryCache,
 	snapshotRevisionId RevisionId,
 ) error {
 	if path.IsEmpty() {
@@ -61,11 +61,11 @@ func (c *Commit) EnsureDirExists(
 			}
 		}
 		// Check whether it is a file.
-		existing, found, err := snapshotCache.Get(PathCompareString(p, false))
+		_, found, err := snapshotCache.Get(PathKey{p, false})
 		if err != nil {
 			return WrapErrorf(err, "failed to get path %s from remote revision", p)
 		}
-		if found && !existing.Metadata.FileMode.IsDir() {
+		if found {
 			return Errorf(
 				"cannot ensure directory %s exists, because %s already exists and is not a directory",
 				path,
@@ -73,7 +73,7 @@ func (c *Commit) EnsureDirExists(
 			)
 		}
 		// Check whether the directory already exists.
-		_, found, err = snapshotCache.Get(PathCompareString(p, true))
+		_, found, err = snapshotCache.Get(PathKey{p, true})
 		if err != nil {
 			return WrapErrorf(err, "failed to get path %s from remote revision", p)
 		}
@@ -165,7 +165,7 @@ func (c *Commit) appendEnsureDirs(sorted *Temp[*RevisionEntry]) (*Temp[*Revision
 		return nil, WrapErrorf(err, "failed to create revision temp cache")
 	}
 	for _, entry := range c.ensureDirs {
-		_, found, err := cache.Get(PathCompareString(entry.Path, true))
+		_, found, err := cache.Get(PathKey{entry.Path, true})
 		if err != nil {
 			return nil, WrapErrorf(err, "failed to get path %s from remote revision", entry.Path)
 		}

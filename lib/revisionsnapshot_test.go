@@ -277,9 +277,30 @@ func TestRevisionSnapshot(t *testing.T) {
 		assert.Equal(expected, readRevisionSnapshot(t, r.Repository, revId, nil))
 	})
 
+	t.Run("Root file and a directory named after its sort key", func(t *testing.T) {
+		// A root file is ordered as `0` plus its name, so file `b` and directory
+		// `0b` used to compare equal and the commit rejected the second as a
+		// duplicate. `PathCompare` breaks the tie, so both can be committed.
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		rev, err := testCommit(t, r.Repository,
+			td.RevisionEntry("b", RevisionEntryKindAdd),
+			td.RevisionEntryExt("0b", RevisionEntryKindAdd, FileModeDir, ""),
+		)
+		assert.NoError(err)
+
+		// The file sorts first, which is what keeps the two apart.
+		assert.Equal([]*RevisionEntry{
+			td.RevisionEntry("b", RevisionEntryKindAdd),
+			td.RevisionEntryExt("0b", RevisionEntryKindAdd, FileModeDir, ""),
+		}, readRevisionSnapshot(t, r.Repository, rev, nil))
+	})
+
 	t.Run("File and directory of the same path", func(t *testing.T) {
-		// Known gap. `PathCompareString` gives a file and a directory of one
-		// path different keys, and everything else in the same parent can sort
+		// Known gap. The sort order gives a file and a directory of one path
+		// different keys, and everything else in the same parent can sort
 		// between them, so the merge cannot pair them up without holding a
 		// directory's worth of paths. Both therefore survive.
 		//
@@ -518,10 +539,10 @@ func FuzzRevisionSnapshot(f *testing.F) {
 		}
 
 		// Reference: walk oldest to newest, newest write of a key wins.
-		want := map[string]*RevisionEntry{}
+		want := map[PathKey]*RevisionEntry{}
 		for _, entries := range revisions {
 			for _, entry := range entries {
-				want[RevisionEntryPathCompareString(entry)] = entry
+				want[RevisionEntryPathKey(entry)] = entry
 			}
 		}
 		expected := []*RevisionEntry{}
@@ -536,7 +557,7 @@ func FuzzRevisionSnapshot(f *testing.F) {
 		assert.Equal(expected, got)
 		// The snapshot must be strictly ordered, so no key may repeat.
 		for i := 1; i < len(got); i++ {
-			assert.Less(RevisionEntryPathCompareString(got[i-1]), RevisionEntryPathCompareString(got[i]))
+			assert.Equal(true, RevisionEntryPathCompare(got[i-1], got[i]) < 0, "at %d", i)
 		}
 	})
 }

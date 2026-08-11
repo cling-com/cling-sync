@@ -42,7 +42,7 @@ type CommitFilesDest struct {
 	// The revision `Files` were computed against, and the parent of the new one.
 	// Blocks `Snapshot` already holds are reused instead of read and uploaded again.
 	RevisionId lib.RevisionId
-	Snapshot   *lib.TempCache[*lib.RevisionEntry]
+	Snapshot   *lib.RevisionEntryCache
 }
 
 type CommitFilesOptions struct {
@@ -101,7 +101,7 @@ func CommitFiles( //nolint:funlen
 			if err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat %s", srcPath)
 			}
-			baselineEntry, inBaseline, err := dest.Snapshot.Get(lib.RevisionEntryPathCompareString(entry))
+			baselineEntry, inBaseline, err := dest.Snapshot.Get(lib.RevisionEntryPathKey(entry))
 			if err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get %s from the baseline", entry.Path)
 			}

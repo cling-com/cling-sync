@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"io/fs"
-	"strings"
 
 	"github.com/cling-com/cling-sync/lib"
 )
@@ -42,15 +41,17 @@ func (e *StagingEntry) HasChanged(other *StagingEntry) bool {
 }
 
 func StagingEntryPathCompare(a, b *StagingEntry) int {
-	return strings.Compare(
-		lib.PathCompareString(a.RepoPath, a.Metadata.FileMode.IsDir()),
-		lib.PathCompareString(b.RepoPath, b.Metadata.FileMode.IsDir()),
+	return lib.PathCompare(
+		a.RepoPath, a.Metadata.FileMode.IsDir(),
+		b.RepoPath, b.Metadata.FileMode.IsDir(),
 	)
 }
 
-func StagingCacheKey(stagingEntry *StagingEntry) string {
-	return lib.PathCompareString(stagingEntry.RepoPath, stagingEntry.Metadata.FileMode.IsDir())
+func StagingCacheKey(stagingEntry *StagingEntry) lib.PathKey {
+	return lib.PathKey{Path: stagingEntry.RepoPath, IsDir: stagingEntry.Metadata.FileMode.IsDir()}
 }
+
+type StagingEntryCache = lib.TempCache[*StagingEntry, lib.PathKey]
 
 func NewStagingCacheWriter(fs lib.FS, maxChunkSize int) *lib.TempWriter[*StagingEntry] {
 	return lib.NewTempWriter[*StagingEntry](
@@ -61,12 +62,12 @@ func NewStagingCacheWriter(fs lib.FS, maxChunkSize int) *lib.TempWriter[*Staging
 	)
 }
 
-func OpenStagingCache(fs lib.FS, maxChunksInCache int) (*lib.TempCache[*StagingEntry], error) {
+func OpenStagingCache(fs lib.FS, maxChunksInCache int) (*StagingEntryCache, error) {
 	temp, err := lib.OpenTemp[*StagingEntry](fs, stagingEntryChunkMarshaller{})
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to open temp")
 	}
-	cache, err := lib.NewTempCache(temp, StagingCacheKey, maxChunksInCache)
+	cache, err := lib.NewTempCache(temp, StagingCacheKey, lib.ComparePathKey, maxChunksInCache)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create new TempCache")
 	}

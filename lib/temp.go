@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -492,26 +491,30 @@ func (r *frameReader[T]) Close() error {
 	return r.closer.Close() //nolint:wrapcheck
 }
 
-type TempCache[T any] struct {
+// `K` keys the per-chunk maps and orders the chunks, so it must be comparable
+// and cheap to build. A string key would allocate on every lookup.
+type TempCache[T any, K comparable] struct {
 	Source           *Temp[T]
 	maxChunksInCache int
 	reader           *TempReader[T]
 	buf              BlockBuf
-	cache            []map[string]T
-	firstEntries     []string
+	cache            []map[K]T
+	firstEntries     []K
 	lastAccessed     []int64
 	chunksInCache    int
-	cacheKey         func(T) string
+	cacheKey         func(T) K
+	compareKey       func(a, b K) int
 	CacheMisses      int
 }
 
-func NewTempCache[T any](
+func NewTempCache[T any, K comparable](
 	temp *Temp[T],
-	cacheKey func(T) string,
+	cacheKey func(T) K,
+	compareKey func(a, b K) int,
 	maxChunksInCache int,
-) (*TempCache[T], error) {
-	firstEntries := make([]string, temp.Chunks())
-	cache := make([]map[string]T, temp.Chunks())
+) (*TempCache[T, K], error) {
+	firstEntries := make([]K, temp.Chunks())
+	cache := make([]map[K]T, temp.Chunks())
 	chunksInCache := 0
 	reader := temp.Reader(nil)
 	buf := NewBlockBuf()
@@ -525,7 +528,7 @@ func NewTempCache[T any](
 		}
 		firstEntries[i] = cacheKey(entries[0])
 	}
-	return &TempCache[T]{
+	return &TempCache[T, K]{
 		Source:           temp,
 		maxChunksInCache: maxChunksInCache,
 		reader:           reader,
@@ -535,11 +538,12 @@ func NewTempCache[T any](
 		lastAccessed:     make([]int64, temp.Chunks()),
 		CacheMisses:      0,
 		cacheKey:         cacheKey,
+		compareKey:       compareKey,
 		chunksInCache:    chunksInCache,
 	}, nil
 }
 
-func (tc *TempCache[T]) Get(key string) (T, bool, error) {
+func (tc *TempCache[T, K]) Get(key K) (T, bool, error) {
 	var zero T
 	if tc == nil {
 		return zero, false, nil
@@ -547,7 +551,7 @@ func (tc *TempCache[T]) Get(key string) (T, bool, error) {
 	// Find the chunk that contains the entry.
 	chunkIndex := tc.Source.Chunks() - 1
 	for i, firstEntry := range tc.firstEntries {
-		c := strings.Compare(key, firstEntry)
+		c := tc.compareKey(key, firstEntry)
 		if c < 0 {
 			if i == 0 {
 				return zero, false, nil
@@ -576,7 +580,7 @@ func (tc *TempCache[T]) Get(key string) (T, bool, error) {
 		} else {
 			tc.chunksInCache++
 		}
-		cache = make(map[string]T)
+		cache = make(map[K]T)
 		tc.cache[chunkIndex] = cache
 		tc.CacheMisses++
 		entries, err := tc.reader.ReadChunk(chunkIndex, tc.buf)

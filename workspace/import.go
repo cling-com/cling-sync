@@ -29,7 +29,7 @@ type Import struct {
 	src        lib.FS
 	dest       lib.Path
 	head       lib.RevisionId
-	baseline   *lib.TempCache[*lib.RevisionEntry]
+	baseline   *lib.RevisionEntryCache
 	entries    *lib.Temp[*lib.RevisionEntry]
 	opts       *ImportOptions
 	tmpFS      lib.FS

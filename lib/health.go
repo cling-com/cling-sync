@@ -162,7 +162,7 @@ func checkOrphanedBlocks(
 	defer stored.Remove() //nolint:errcheck
 
 	// Keep seen block ids in a cache for lookup.
-	seenCache, err := NewTempCache(seen, func(id BlockId) string { return string(id[:]) }, 1)
+	seenCache, err := NewTempCache(seen, func(id BlockId) BlockId { return id }, BlockIdCompare, 1)
 	if err != nil {
 		return WrapErrorf(err, "failed to open seen cache")
 	}
@@ -178,7 +178,7 @@ func checkOrphanedBlocks(
 		if err != nil {
 			return WrapErrorf(err, "failed to read stored block id")
 		}
-		_, ok, err := seenCache.Get(string(id[:]))
+		_, ok, err := seenCache.Get(id)
 		if err != nil {
 			return WrapErrorf(err, "failed to look up block id %s in seen cache", id)
 		}

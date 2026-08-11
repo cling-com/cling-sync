@@ -355,7 +355,7 @@ func TestTempCache(t *testing.T) {
 		// First, check that we find all entries.
 		for _, path := range []string{"b.txt", "y.txt", "sub", "sub/a.txt", "sub/y.txt", "sub/sub", "sub/sub/a.txt", "sub/sub/y.txt"} {
 			isDir := path == "sub" || path == "sub/sub"
-			entry, ok, err := cache.Get(PathCompareString(Path{path}, isDir))
+			entry, ok, err := cache.Get(PathKey{Path{path}, isDir})
 			assert.NoError(err, path)
 			assert.Equal(true, ok, path)
 			assert.Equal(path, entry.Path.String(), path)
@@ -368,7 +368,7 @@ func TestTempCache(t *testing.T) {
 		// Check that we don't find entries.
 		for _, path := range []string{"a.txt", "z.txt", "sub/z.txt", "sub/sub/z.txt"} {
 			isDir := path == "sub" || path == "sub/sub"
-			entry, ok, err := cache.Get(PathCompareString(Path{path}, isDir))
+			entry, ok, err := cache.Get(PathKey{Path{path}, isDir})
 			assert.NoError(err, path)
 			assert.Equal(false, ok, path)
 			assert.Nil(entry, path)
@@ -402,7 +402,7 @@ func TestTempCache(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal(4, temp.Chunks())
 
-		loadedChunks := func(c *TempCache[*RevisionEntry]) []int {
+		loadedChunks := func(c *RevisionEntryCache) []int {
 			loaded := []int{}
 			for i, chunk := range c.cache {
 				if chunk != nil {
@@ -420,9 +420,9 @@ func TestTempCache(t *testing.T) {
 		// Figure out which chunk each entry lives in by looking up three
 		// entries that must reside in different chunks.
 		chunkOf := func(path string, isDir bool) int {
-			key := PathCompareString(Path{path}, isDir)
+			key := PathKey{Path{path}, isDir}
 			for i := len(cache.firstEntries) - 1; i >= 0; i-- {
-				if strings.Compare(key, cache.firstEntries[i]) >= 0 {
+				if ComparePathKey(key, cache.firstEntries[i]) >= 0 {
 					return i
 				}
 			}
@@ -437,20 +437,20 @@ func TestTempCache(t *testing.T) {
 			"entries must be in 3 distinct chunks: %d, %d, %d", chunkA, chunkB, chunkC)
 
 		// Load first entry - one chunk loaded.
-		_, ok, err := cache.Get(PathCompareString(Path{"sub/sub/a.txt"}, false))
+		_, ok, err := cache.Get(PathKey{Path{"sub/sub/a.txt"}, false})
 		assert.NoError(err)
 		assert.Equal(true, ok)
 		assert.Equal([]int{chunkC}, loadedChunks(cache))
 
 		// Load second entry in a different chunk - two chunks loaded (at the limit).
-		_, ok, err = cache.Get(PathCompareString(Path{"b.txt"}, false))
+		_, ok, err = cache.Get(PathKey{Path{"b.txt"}, false})
 		assert.NoError(err)
 		assert.Equal(true, ok)
 		loaded := loadedChunks(cache)
 		assert.Equal(2, len(loaded))
 
 		// Load third entry in yet another chunk - must evict one, keeping exactly 2.
-		_, ok, err = cache.Get(PathCompareString(Path{"sub/a.txt"}, false))
+		_, ok, err = cache.Get(PathKey{Path{"sub/a.txt"}, false})
 		assert.NoError(err)
 		assert.Equal(true, ok)
 		assert.Equal(2, len(loadedChunks(cache)),

@@ -18,28 +18,34 @@ type Path struct {
 
 func NewPath(path string) (Path, error) {
 	if len(path) > MaxPathLen {
-		return Path{""}, Errorf("invalid path, must not exceed %d bytes (got %d)", MaxPathLen, len(path))
+		return Path{}, Errorf("invalid path, must not exceed %d bytes (got %d)", MaxPathLen, len(path))
 	}
 	path = filepath.ToSlash(path)
 	if strings.HasPrefix(path, "./") || path == "." || strings.HasPrefix(path, "..") {
-		return Path{""}, Errorf("invalid path %q, must not be relative", path)
+		return Path{}, Errorf("invalid path %q, must not be relative", path)
 	}
 	if strings.HasPrefix(path, "../") {
-		return Path{""}, Errorf("invalid path %q, must not start with `.`", path)
+		return Path{}, Errorf("invalid path %q, must not start with `.`", path)
 	}
 	if strings.HasPrefix(path, "/") {
-		return Path{""}, Errorf("invalid path %q, must not start with `/`", path)
+		return Path{}, Errorf("invalid path %q, must not start with `/`", path)
 	}
 	if len(path) > 1 && path[1] == ':' {
-		return Path{""}, Errorf("invalid path %q, must not contain volume name", path)
+		return Path{}, Errorf("invalid path %q, must not contain volume name", path)
 	}
 	if path != "" && strings.HasSuffix(path, "/") {
-		return Path{""}, Errorf("invalid path %q, must not end with `/`", path)
+		return Path{}, Errorf("invalid path %q, must not end with `/`", path)
 	}
 	if path != "" && filepath.Clean(path) != path {
-		return Path{""}, Errorf("invalid path %q, must not contain `.` or `..`", path)
+		return Path{}, Errorf("invalid path %q, must not contain `.` or `..`", path)
 	}
 	return Path{path}, nil
+}
+
+// Wrap a string that is already known to be a valid path, such as one derived
+// from another `Path`. Use `NewPath` for anything coming from outside.
+func NewPathUnchecked(path string) Path {
+	return Path{path}
 }
 
 func (p Path) String() string {
@@ -50,7 +56,7 @@ func (p Path) Base() Path {
 	if p.p == "" {
 		return Path{""}
 	}
-	return Path{filepath.Base(p.p)}
+	return NewPathUnchecked(filepath.Base(p.p))
 }
 
 func (p Path) Dir() Path {
@@ -58,7 +64,7 @@ func (p Path) Dir() Path {
 	if d == "." {
 		return Path{""}
 	}
-	return Path{d}
+	return NewPathUnchecked(d)
 }
 
 func (p Path) Len() int {
@@ -105,11 +111,11 @@ func (p Path) TrimBase(base Path) (Path, bool) {
 	if len(result) == len(p.p) {
 		return p, false
 	}
-	return Path{result}, true
+	return NewPathUnchecked(result), true
 }
 
 func (p Path) Join(other Path) Path {
-	return Path{filepath.Join(p.p, other.p)}
+	return NewPathUnchecked(filepath.Join(p.p, other.p))
 }
 
 type PathFilter interface {
@@ -167,9 +173,7 @@ func (pif *PathInclusionFilter) Include(p Path, isDir bool) bool {
 	return pif.Includes.Match(p.p, isDir)
 }
 
-// Create a string that can be used to sort two paths.
-//
-// The sorting order is:
+// Order two paths according to this sorting order:
 //   - directory
 //   - files inside the directory
 //   - sub-directory
@@ -185,14 +189,88 @@ func (pif *PathInclusionFilter) Include(p Path, isDir bool) bool {
 //   - sub/sub/
 //   - sub/sub/a.txt
 //   - sub/sub/z.txt
-func PathCompareString(path Path, isDir bool) string {
-	p := strings.ReplaceAll(path.String(), "/", "/1")
-	if isDir {
-		return p
+//
+// A file at the root has no directory to sit in. It sorts as though its name
+// began with a `0`, so a directory named `.git` comes before it and `zzz` after.
+// There is no particular reason for this other than it being a bug in a previous
+// version.
+func PathCompare(a Path, aIsDir bool, b Path, bIsDir bool) int {
+	// todo: All of this should be a simple lexicographical compare with a special
+	//       case that takes `aIsDir` and `bIsDir` into account on equal paths.
+	//		 But this would change the on-disk format of existing repositories.
+	as, bs := a.String(), b.String()
+	// The separator before a file's last segment, the only position where a
+	// file sorts differently from a directory. Directories have none and keep
+	// -1, which no index in the loop below can match.
+	aSep, bSep := -1, -1
+	if !aIsDir {
+		aSep = strings.LastIndexByte(as, '/')
 	}
-	lastSlash := strings.LastIndex(p, "/")
-	if lastSlash == -1 || lastSlash == len(p)-1 {
-		return "0" + p
+	if !bIsDir {
+		bSep = strings.LastIndexByte(bs, '/')
 	}
-	return p[:lastSlash] + "/0" + p[lastSlash+2:]
+	// The previous implementation sorted a root-level file as if its name began
+	// with a `0`. That is a bug: the byte lands in the middle of the alphabet,
+	// so a directory named below it (`.git`) sorts ahead of every root file
+	// while one above it (`zzz`) sorts behind. Revisions are stored in that
+	// order, so compare against the literal `0` here. After it the names line
+	// up and the loop below decides the rest. This is purely for backwards
+	// compatibility.
+	aRootFile, bRootFile := !aIsDir && aSep < 0, !bIsDir && bSep < 0
+	if aRootFile != bRootFile {
+		file, other, sign := as, bs, 1
+		if bRootFile {
+			file, other, sign = bs, as, -1
+		}
+		switch {
+		case len(other) == 0 || other[0] < '0':
+			return sign
+		case other[0] > '0':
+			return -sign
+		}
+		// The file has no separator, so nothing past the `0` can distinguish it
+		// from a directory and the rest is a plain byte comparison.
+		if c := strings.Compare(file, other[1:]); c != 0 {
+			return sign * c
+		}
+		// The two names collide. Order the file first so they never compare equal.
+		return -sign
+	}
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		if as[i] != bs[i] {
+			if as[i] < bs[i] {
+				return -1
+			}
+			return 1
+		}
+		if as[i] == '/' {
+			// The paths agree up to here, so all that can still differ at a
+			// shared separator is whether it is a file's last one.
+			aLast, bLast := i == aSep, i == bSep
+			if aLast != bLast {
+				if aLast {
+					return -1
+				}
+				return 1
+			}
+		}
+	}
+	switch {
+	case len(as) < len(bs):
+		return -1
+	case len(as) > len(bs):
+		return 1
+	}
+	return 0
+}
+
+// A path together with its directory bit. The two identify an entry, and the
+// struct is comparable, so it can key a map without building a string.
+type PathKey struct {
+	Path  Path
+	IsDir bool
+}
+
+func ComparePathKey(a, b PathKey) int {
+	return PathCompare(a.Path, a.IsDir, b.Path, b.IsDir)
 }

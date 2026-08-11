@@ -579,7 +579,7 @@ func TestStagingCache(t *testing.T) {
 		}, wstd.StagingEntryInfos(finalized))
 		cache, err := OpenStagingCache(cacheFS, 2)
 		assert.NoError(err)
-		entry, ok, err := cache.Get(lib.PathCompareString(td.Path("dir/a.txt"), false))
+		entry, ok, err := cache.Get(lib.PathKey{td.Path("dir/a.txt"), false})
 		assert.NoError(err)
 		assert.Equal(true, ok)
 		assert.Equal(lib.FileMode(0o600), entry.Metadata.FileMode)

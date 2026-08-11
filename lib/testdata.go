@@ -59,7 +59,7 @@ func (td TestData) RevisionId(suffix string) RevisionId {
 }
 
 func (td TestData) Path(p string) Path {
-	return Path{p}
+	return NewPathUnchecked(p)
 }
 
 func (td TestData) PathMetadata(mode FileMode) *PathMetadata {

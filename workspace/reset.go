@@ -22,7 +22,7 @@ func (e ResetError) Error() string {
 }
 
 type ResetError struct {
-	LocalChanges *lib.TempCache[*lib.RevisionEntry]
+	LocalChanges *lib.RevisionEntryCache
 }
 
 // Reset the workspace to a specific revision.
