@@ -52,12 +52,15 @@ func NewRevisionSnapshot(
 
 // Merge the entries of `revisions`, newest first, into `tempWriter`.
 //
-// Each revision lists its entries in `RevisionEntryPathCompare` order, so one
-// k-way merge visits every path once. Where several revisions hold a path the
-// newest one wins, and if that entry is a delete the path is left out.
+// `RevisionReader` guarantees each revision comes out strictly increasing by
+// `RevisionEntry.PathCompare`, so one k-way merge visits every path once. Where
+// several revisions hold a path the newest one wins, and if that entry is a
+// delete the path is left out.
 //
-// Memory is one cursor and one decoded block per revision. Nothing grows with
-// the number of paths.
+// Picking the newest relies on that sorted order, because it is what brings
+// every copy of a path to the front of the queue at the same moment. Out of
+// order they arrive apart, and a delete is then skipped instead of cancelling
+// the entry it replaces, so a deleted path comes back.
 func revisionNWayMerge(
 	ctx context.Context,
 	repository *Repository,
@@ -77,7 +80,7 @@ func revisionNWayMerge(
 	// Ordered by path, then by revision index so the newest revision holding a
 	// path comes out first.
 	queue := NewHeap(func(a, b mergeCursor) int {
-		if c := RevisionEntryPathCompare(a.entry, b.entry); c != 0 {
+		if c := a.entry.PathCompare(b.entry); c != 0 {
 			return c
 		}
 		return a.index - b.index
@@ -115,7 +118,7 @@ func revisionNWayMerge(
 		// winner and cannot be mistaken for it. Comparing paths alone would be
 		// wrong, because a file and a directory of one path are different
 		// entries.
-		for queue.Len() > 0 && RevisionEntryPathCompare(queue.Peek().entry, winner.entry) == 0 {
+		for queue.Len() > 0 && queue.Peek().entry.PathCompare(winner.entry) == 0 {
 			if err := advance(queue.Pop()); err != nil {
 				return err
 			}

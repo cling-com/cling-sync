@@ -491,7 +491,7 @@ func (r *TestRepository) AddRevision(parent RevisionId, blocks ...[]*RevisionEnt
 	blockIds := make([]BlockId, 0, len(blocks))
 	buf := NewBlockBuf()
 	for _, entries := range blocks {
-		slices.SortFunc(entries, RevisionEntryPathCompare)
+		slices.SortFunc(entries, (*RevisionEntry).PathCompare)
 		chunk := &RevisionEntryChunk{Entries: entries}
 		data := make([]byte, chunk.MarshallSize())
 		pw := NewProtobufWriter(data)

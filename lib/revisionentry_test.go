@@ -34,7 +34,7 @@ func TestRevisionEntry(t *testing.T) {
 		rand.Shuffle(len(entries), func(i, j int) { entries[i], entries[j] = entries[j], entries[i] })
 		actual := make([]*RevisionEntry, len(entries))
 		copy(actual, entries)
-		slices.SortFunc(actual, RevisionEntryPathCompare)
+		slices.SortFunc(actual, (*RevisionEntry).PathCompare)
 		actualPaths := make([]string, len(actual))
 		for i, entry := range actual {
 			actualPaths[i] = entry.Path.String()
@@ -50,22 +50,22 @@ func TestRevisionEntry(t *testing.T) {
 		}, actualPaths)
 	})
 
-	t.Run("RevisionEntryPathCompare with different kinds", func(t *testing.T) {
+	t.Run("RevisionEntry.PathCompare with different kinds", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
 		sut := td.RevisionEntryExt("a", RevisionEntryKindDelete, FileModeDir, "")
 		assert.Equal(
 			0,
-			RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryKindDelete, FileModeDir, "")),
+			sut.PathCompare(td.RevisionEntryExt("a", RevisionEntryKindDelete, FileModeDir, "")),
 		)
-		assert.Equal(0, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryKindAdd, FileModeDir, "")))
+		assert.Equal(0, sut.PathCompare(td.RevisionEntryExt("a", RevisionEntryKindAdd, FileModeDir, "")))
 		assert.Equal(
 			0,
-			RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryKindUpdate, FileModeDir, "")),
+			sut.PathCompare(td.RevisionEntryExt("a", RevisionEntryKindUpdate, FileModeDir, "")),
 		)
 
 		// Files are greater than directories.
-		assert.Equal(1, RevisionEntryPathCompare(sut, td.RevisionEntryExt("a", RevisionEntryKindUpdate, 0, "")))
+		assert.Equal(1, sut.PathCompare(td.RevisionEntryExt("a", RevisionEntryKindUpdate, 0, "")))
 	})
 }
 
@@ -73,7 +73,7 @@ func TestRevisionEntryTemp(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Sort order is files, directories, and subdirectories", func(t *testing.T) {
-		// This basically makes sure that we always use `RevisionEntryPathCompare`.
+		// This basically makes sure that we always use `RevisionEntry.PathCompare`.
 		t.Parallel()
 		assert := NewAssert(t)
 		fs := td.NewFS(t)

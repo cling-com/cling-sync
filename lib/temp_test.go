@@ -152,7 +152,7 @@ func TestTemp(t *testing.T) {
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
 		sut := NewTempWriterWithIgnoreDuplicates[*RevisionEntry](
-			RevisionEntryPathCompare, revisionEntryChunkMarshaller{}, fs, DefaultTempChunkSize,
+			(*RevisionEntry).PathCompare, revisionEntryChunkMarshaller{}, fs, DefaultTempChunkSize,
 		)
 
 		for _, p := range []string{"b.txt", "a.txt", "b.txt", "c.txt", "a.txt"} {
@@ -175,7 +175,7 @@ func TestTemp(t *testing.T) {
 		// Tiny budget forces each Add into its own chunk so duplicates land in
 		// different chunks and the dedup has to happen in the Finalize merge.
 		sut := NewTempWriterWithIgnoreDuplicates[*RevisionEntry](
-			RevisionEntryPathCompare, revisionEntryChunkMarshaller{}, fs, 1,
+			(*RevisionEntry).PathCompare, revisionEntryChunkMarshaller{}, fs, 1,
 		)
 
 		for _, p := range []string{"a.txt", "b.txt", "a.txt", "c.txt", "b.txt", "a.txt"} {

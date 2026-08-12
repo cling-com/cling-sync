@@ -116,7 +116,7 @@ func walkRevisions(
 				return WrapErrorf(err, "failed to read revision entry #%d of revision %s", entryCount, revisionId)
 			}
 			entryCount++
-			if lastEntry != nil && RevisionEntryPathCompare(lastEntry, entry) >= 0 {
+			if lastEntry != nil && lastEntry.PathCompare(entry) >= 0 {
 				return Errorf("paths of revision %s are not strictly sorted at position %d: %s >= %s",
 					revisionId, entryCount, lastEntry.Path, entry.Path)
 			}

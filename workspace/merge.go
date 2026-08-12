@@ -238,9 +238,7 @@ func (m *Merger) findConflicts(
 			return nil, lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
 		path := localChange.Path
-		remoteChange, remoteChangeExists, err := remoteRevisionCache.Get(
-			lib.RevisionEntryPathKey(localChange),
-		)
+		remoteChange, remoteChangeExists, err := remoteRevisionCache.Get(localChange.PathKey())
 		if err != nil {
 			return nil, lib.WrapErrorf(
 				err,
@@ -255,7 +253,7 @@ func (m *Merger) findConflicts(
 				//       We overwrite the attributes of the directory. Contained files are not affected.
 				continue
 			}
-			wsChange, wsChangeExists, err := wsRevisionCache.Get(lib.RevisionEntryPathKey(localChange))
+			wsChange, wsChangeExists, err := wsRevisionCache.Get(localChange.PathKey())
 			if err != nil {
 				return nil, lib.WrapErrorf(
 					err,
@@ -390,11 +388,11 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		if err := m.makeDirsWritable(targetPath); err != nil {
 			return lib.WrapErrorf(err, "failed to make directories writable for %s", remoteEntry.Path)
 		}
-		stagingEntry, existsInStaging, err := staging.Get(lib.RevisionEntryPathKey(remoteEntry))
+		stagingEntry, existsInStaging, err := staging.Get(remoteEntry.PathKey())
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}
-		_, isLocalChange, err := localChanges.Get(lib.RevisionEntryPathKey(remoteEntry))
+		_, isLocalChange, err := localChanges.Get(remoteEntry.PathKey())
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}

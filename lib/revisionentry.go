@@ -18,11 +18,20 @@ func (k RevisionEntryKind) String() string {
 }
 
 // Compare two revision entries by their full path.
-func RevisionEntryPathCompare(a, b *RevisionEntry) int {
-	return PathCompare(a.Path, a.Metadata.FileMode.IsDir(), b.Path, b.Metadata.FileMode.IsDir())
+func (e *RevisionEntry) PathCompare(other *RevisionEntry) int {
+	return PathCompare(e.Path, e.Metadata.FileMode.IsDir(), other.Path, other.Metadata.FileMode.IsDir())
 }
 
-func RevisionEntryPathKey(e *RevisionEntry) PathKey {
+// The path, with a trailing separator for a directory, so that a file and a
+// directory of one path can be told apart.
+func (e *RevisionEntry) PathDesc() string {
+	if e.Metadata.FileMode.IsDir() {
+		return e.Path.String() + PathDelim
+	}
+	return e.Path.String()
+}
+
+func (e *RevisionEntry) PathKey() PathKey {
 	return PathKey{e.Path, e.Metadata.FileMode.IsDir()}
 }
 
@@ -39,7 +48,7 @@ func RevisionEntryPathFilter(pathFilter PathFilter) func(e *RevisionEntry) bool 
 
 func NewRevisionEntryTempWriter(fs FS, maxChunkSize int) *TempWriter[*RevisionEntry] {
 	return NewTempWriter[*RevisionEntry](
-		RevisionEntryPathCompare,
+		(*RevisionEntry).PathCompare,
 		revisionEntryChunkMarshaller{},
 		fs,
 		maxChunkSize,
@@ -71,5 +80,5 @@ func NewRevisionEntryTempCache(
 	temp *Temp[*RevisionEntry],
 	maxChunksInCache int,
 ) (*RevisionEntryCache, error) {
-	return NewTempCache(temp, RevisionEntryPathKey, ComparePathKey, maxChunksInCache)
+	return NewTempCache(temp, (*RevisionEntry).PathKey, ComparePathKey, maxChunksInCache)
 }

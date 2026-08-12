@@ -173,6 +173,7 @@ type RevisionReader struct {
 	current      []*RevisionEntry
 	currentIndex int
 	marshaller   revisionEntryChunkMarshaller
+	last         *RevisionEntry
 }
 
 func NewRevisionReader(repository *Repository, revision *Revision) *RevisionReader {
@@ -183,10 +184,14 @@ func NewRevisionReader(repository *Repository, revision *Revision) *RevisionRead
 		current:      nil,
 		currentIndex: 0,
 		marshaller:   revisionEntryChunkMarshaller{},
+		last:         nil,
 	}
 }
 
-// Return `io.EOF` if we are done.
+// Return the next entry of the revision, or `io.EOF`.
+//
+// Entries come out strictly increasing by `RevisionEntry.PathCompare`. A
+// revision with entries not in order will fail loudly.
 func (rr *RevisionReader) Read(ctx context.Context, buf BlockBuf) (*RevisionEntry, error) {
 	for rr.current == nil || rr.currentIndex == len(rr.current) {
 		if rr.blockIndex >= len(rr.revision.BlockIds) {
@@ -207,5 +212,10 @@ func (rr *RevisionReader) Read(ctx context.Context, buf BlockBuf) (*RevisionEntr
 	}
 	entry := rr.current[rr.currentIndex]
 	rr.currentIndex++
+	if rr.last != nil && rr.last.PathCompare(entry) >= 0 {
+		return nil, Errorf("entries are not strictly sorted: %s >= %s",
+			rr.last.PathDesc(), entry.PathDesc())
+	}
+	rr.last = entry
 	return entry, nil
 }

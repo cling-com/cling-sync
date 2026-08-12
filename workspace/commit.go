@@ -101,7 +101,7 @@ func CommitFiles( //nolint:funlen
 			if err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat %s", srcPath)
 			}
-			baselineEntry, inBaseline, err := dest.Snapshot.Get(lib.RevisionEntryPathKey(entry))
+			baselineEntry, inBaseline, err := dest.Snapshot.Get(entry.PathKey())
 			if err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get %s from the baseline", entry.Path)
 			}

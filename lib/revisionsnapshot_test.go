@@ -85,7 +85,7 @@ func TestRevisionSnapshot(t *testing.T) {
 	})
 
 	t.Run("Sort order is files, directories, and subdirectories", func(t *testing.T) {
-		// This basically makes sure that we always use `RevisionEntryPathCompare`.
+		// This basically makes sure that we always use `RevisionEntry.PathCompare`.
 		t.Parallel()
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
@@ -272,9 +272,49 @@ func TestRevisionSnapshot(t *testing.T) {
 			assert.NoError(err)
 		}
 		expected := slices.Collect(maps.Values(want))
-		slices.SortFunc(expected, RevisionEntryPathCompare)
+		slices.SortFunc(expected, (*RevisionEntry).PathCompare)
 
 		assert.Equal(expected, readRevisionSnapshot(t, r.Repository, revId, nil))
+	})
+
+	t.Run("Unsorted revision is rejected", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		revId := r.AddRevision(r.Head(),
+			[]*RevisionEntry{td.RevisionEntry("b.txt", RevisionEntryKindAdd)},
+			[]*RevisionEntry{td.RevisionEntry("a.txt", RevisionEntryKindAdd)},
+		)
+		_, err := NewRevisionSnapshot(t.Context(), r.Repository, revId, td.NewFS(t), td.NewRevisionSnapshotMonitor())
+		assert.Error(err, "not strictly sorted")
+		assert.Error(err, "b.txt >= a.txt")
+	})
+
+	t.Run("Revision holding a path twice is rejected", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		revId := r.AddRevision(r.Head(),
+			[]*RevisionEntry{td.RevisionEntry("a.txt", RevisionEntryKindAdd)},
+			[]*RevisionEntry{td.RevisionEntry("a.txt", RevisionEntryKindUpdate)},
+		)
+		_, err := NewRevisionSnapshot(t.Context(), r.Repository, revId, td.NewFS(t), td.NewRevisionSnapshotMonitor())
+		assert.Error(err, "a.txt >= a.txt")
+	})
+
+	t.Run("A directory before a file of the same path is rejected", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		revId := r.AddRevision(r.Head(),
+			[]*RevisionEntry{td.RevisionEntryExt("a", RevisionEntryKindAdd, FileModeDir, "")},
+			[]*RevisionEntry{td.RevisionEntry("a", RevisionEntryKindAdd)},
+		)
+		_, err := NewRevisionSnapshot(t.Context(), r.Repository, revId, td.NewFS(t), td.NewRevisionSnapshotMonitor())
+		assert.Error(err, "a/ >= a")
 	})
 
 	t.Run("Root file and a directory named after its sort key", func(t *testing.T) {
@@ -523,7 +563,7 @@ func FuzzRevisionSnapshot(f *testing.F) {
 			last := revisions[len(revisions)-1]
 			// A revision holds each key once, and starts a new one otherwise.
 			if slices.ContainsFunc(last, func(e *RevisionEntry) bool {
-				return RevisionEntryPathCompare(e, entry) == 0
+				return e.PathCompare(entry) == 0
 			}) {
 				revisions = append(revisions, []*RevisionEntry{entry})
 				continue
@@ -542,7 +582,7 @@ func FuzzRevisionSnapshot(f *testing.F) {
 		want := map[PathKey]*RevisionEntry{}
 		for _, entries := range revisions {
 			for _, entry := range entries {
-				want[RevisionEntryPathKey(entry)] = entry
+				want[entry.PathKey()] = entry
 			}
 		}
 		expected := []*RevisionEntry{}
@@ -551,13 +591,13 @@ func FuzzRevisionSnapshot(f *testing.F) {
 				expected = append(expected, entry)
 			}
 		}
-		slices.SortFunc(expected, RevisionEntryPathCompare)
+		slices.SortFunc(expected, (*RevisionEntry).PathCompare)
 
 		got := readRevisionSnapshot(t, r.Repository, revId, nil)
 		assert.Equal(expected, got)
 		// The snapshot must be strictly ordered, so no key may repeat.
 		for i := 1; i < len(got); i++ {
-			assert.Equal(true, RevisionEntryPathCompare(got[i-1], got[i]) < 0, "at %d", i)
+			assert.Equal(true, got[i-1].PathCompare(got[i]) < 0, "at %d", i)
 		}
 	})
 }
