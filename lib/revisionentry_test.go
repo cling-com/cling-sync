@@ -99,7 +99,7 @@ func TestRevisionEntryTemp(t *testing.T) {
 		add("sub/sub/a.txt", 0)
 		add("sub/sub/z.txt", 0)
 
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		assert.Equal(true, sut.chunks > 1, "should be multiple chunks")
 		merged := readAllRevsisionTemp(t, temp, nil)

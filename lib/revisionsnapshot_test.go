@@ -277,6 +277,29 @@ func TestRevisionSnapshot(t *testing.T) {
 		assert.Equal(expected, readRevisionSnapshot(t, r.Repository, revId, nil))
 	})
 
+	t.Run("Entries of two revisions come out interleaved", func(t *testing.T) {
+		// Nothing re-sorts the merged result, so the interleaving has to be
+		// right as it leaves the merge.
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		older := r.AddRevision(r.Head(), []*RevisionEntry{
+			td.RevisionEntry("a.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("m.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("z.txt", RevisionEntryKindAdd),
+		})
+		newer := r.AddRevision(older, []*RevisionEntry{
+			td.RevisionEntry("b.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("m.txt", RevisionEntryKindUpdate),
+		})
+		got := readRevisionSnapshot(t, r.Repository, newer, nil)
+		paths := make([]string, len(got))
+		for i, e := range got {
+			paths[i] = e.Path.String()
+		}
+		assert.Equal([]string{"a.txt", "b.txt", "m.txt", "z.txt"}, paths)
+	})
+
 	t.Run("Unsorted revision is rejected", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

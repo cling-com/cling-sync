@@ -29,7 +29,7 @@ func TestStagingEntry(t *testing.T) {
 		}
 		assert.NoError(tempWriter.Add(&a))
 		assert.NoError(tempWriter.Add(&b))
-		_, err := tempWriter.Finalize()
+		_, err := tempWriter.CloseAndSort()
 		assert.NoError(err)
 		cache, err := OpenStagingCache(fs, 2)
 		assert.NoError(err)

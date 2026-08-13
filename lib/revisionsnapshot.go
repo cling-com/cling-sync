@@ -41,9 +41,8 @@ func NewRevisionSnapshot(
 	if err := revisionNWayMerge(ctx, repository, revisions, tempWriter, buf, mon); err != nil {
 		return nil, WrapErrorf(err, "failed to revision n-way merge revisions")
 	}
-	// todo: we don't need to call `tempWriter.Finalize()` because the entries
-	// are already sorted.
-	temp, err := tempWriter.Finalize()
+	// The merge emits every path once and in order, so we don't need to sort it again.
+	temp, err := tempWriter.CloseWithoutSort()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to finalize temporary file")
 	}
@@ -61,7 +60,7 @@ func NewRevisionSnapshot(
 // every copy of a path to the front of the queue at the same moment. Out of
 // order they arrive apart, and a delete is then skipped instead of cancelling
 // the entry it replaces, so a deleted path comes back.
-func revisionNWayMerge(
+func revisionNWayMerge( //nolint:funlen
 	ctx context.Context,
 	repository *Repository,
 	revisions []*Revision,
@@ -106,8 +105,15 @@ func revisionNWayMerge(
 			return err
 		}
 	}
+	var last *RevisionEntry
 	for queue.Len() > 0 {
 		winner := queue.Pop()
+		// Just a sanity check that everything is in order.
+		if last != nil && last.PathCompare(winner.entry) >= 0 {
+			return Errorf("merged entries are not in order: %s after %s",
+				winner.entry.PathDesc(), last.PathDesc())
+		}
+		last = winner.entry
 		if winner.entry.Kind != RevisionEntryKindDelete {
 			if err := tempWriter.Add(winner.entry); err != nil {
 				return WrapErrorf(err, "failed to write entry %s", winner.entry.Path)

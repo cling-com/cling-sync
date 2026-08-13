@@ -102,7 +102,7 @@ func ReadSortedBlockIds(ctx context.Context, storage Storage, fs FS, inspect fun
 	if addErr != nil {
 		return nil, WrapErrorf(addErr, "failed to add block id")
 	}
-	temp, err := writer.Finalize()
+	temp, err := writer.CloseAndSort()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to sort block ids")
 	}

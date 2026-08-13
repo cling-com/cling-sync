@@ -170,7 +170,7 @@ func NewStaging( //nolint:funlen
 
 func (s *Staging) Finalize() (*lib.Temp[*StagingEntry], error) {
 	if s.temp == nil {
-		t, err := s.tempWriter.Finalize()
+		t, err := s.tempWriter.CloseAndSort()
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
 		}
@@ -317,7 +317,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			continue
 		}
 	}
-	temp, err := finalWriter.Finalize()
+	temp, err := finalWriter.CloseAndSort()
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to finalize commit")
 	}
@@ -433,7 +433,7 @@ func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs
 }
 
 func (c *StagingCache) Finalize() error {
-	if _, err := c.cacheWriter.Finalize(); err != nil {
+	if _, err := c.cacheWriter.CloseAndSort(); err != nil {
 		return lib.WrapErrorf(err, "failed to finalize cache writer")
 	}
 	// Move the cache to the final location.

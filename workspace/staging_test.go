@@ -516,7 +516,7 @@ func TestStagingCache(t *testing.T) {
 		a, err := NewStagingEntry(td.Path("dir/a.txt"), fileInfo, fileInfo.Size(), amd.FileHash, amd.BlockIds)
 		assert.NoError(err)
 		assert.NoError(tempWriter.Add(a))
-		_, err = tempWriter.Finalize()
+		_, err = tempWriter.CloseAndSort()
 		assert.NoError(err)
 
 		// Create a staging that should use the cache.

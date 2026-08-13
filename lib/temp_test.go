@@ -43,7 +43,7 @@ func TestTemp(t *testing.T) {
 		add("some/dir2", FileModeDir)
 		add("some", FileModeDir)
 
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		merged := readAllRevsisionTemp(t, temp, nil)
 		mergedPaths := make([]string, len(merged))
@@ -102,7 +102,7 @@ func TestTemp(t *testing.T) {
 		assert.NoError(err)
 		err = sut.Add(td.RevisionEntry("some/dir/filea", RevisionEntryKindAdd))
 		assert.NoError(err)
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		merged := readAllRevsisionTemp(t, temp, nil)
 		assert.Equal(2, len(merged))
@@ -112,6 +112,56 @@ func TestTemp(t *testing.T) {
 		}
 		slices.Sort(names)
 		assert.Equal([]string{"some/dir/filea", "some/dir/fileb"}, names)
+	})
+
+	t.Run("CloseWithoutSort keeps the order it was given", func(t *testing.T) {
+		// Nothing is sorted or merged, so the chunks have to read back in the
+		// order they were written.
+		t.Parallel()
+		assert := NewAssert(t)
+		fs := td.NewFS(t)
+		sut := NewRevisionEntryTempWriter(fs, 400+chunkFramingOverhead)
+
+		add := func(path string, mode FileMode) {
+			err := sut.Add(
+				&RevisionEntry{Kind: RevisionEntryKindAdd, Path: Path{path}, Metadata: *td.PathMetadata(mode)},
+			)
+			assert.NoError(err)
+		}
+
+		add("some", FileModeDir)
+		add("some/dir1", FileModeDir)
+		add("some/dir1/a", 0)
+		add("some/dir1/b", 0)
+		add("some/dir1/filea", 0)
+		add("some/dir1/fileb", 0)
+		add("some/dir2", FileModeDir)
+		add("some/dir2/filea", 0)
+		add("some/dir2/filec", 0)
+
+		temp, err := sut.CloseWithoutSort()
+		assert.NoError(err)
+		assert.Equal(true, temp.Chunks() > 1, "expected more than one chunk, got %d", temp.Chunks())
+
+		got := readAllRevsisionTemp(t, temp, nil)
+		gotPaths := make([]string, len(got))
+		for i, entry := range got {
+			gotPaths[i] = entry.Path.String()
+		}
+		assert.Equal([]string{
+			"some",
+			"some/dir1",
+			"some/dir1/a",
+			"some/dir1/b",
+			"some/dir1/filea",
+			"some/dir1/fileb",
+			"some/dir2",
+			"some/dir2/filea",
+			"some/dir2/filec",
+		}, gotPaths)
+		// The raw chunks were renamed, not copied.
+		files, _ := fs.ReadDir(".")
+		assert.Equal(temp.Chunks(), len(files))
 	})
 
 	t.Run("Duplicate entries in the same chunk are rejected", func(t *testing.T) {
@@ -142,7 +192,7 @@ func TestTemp(t *testing.T) {
 		err = sut.rotateChunk()
 		assert.NoError(err)
 		assert.Equal(2, sut.chunks)
-		_, err = sut.Finalize()
+		_, err = sut.CloseAndSort()
 		assert.Error(err, "duplicate entry")
 		assert.Error(err, "some/dir/file")
 	})
@@ -158,7 +208,7 @@ func TestTemp(t *testing.T) {
 		for _, p := range []string{"b.txt", "a.txt", "b.txt", "c.txt", "a.txt"} {
 			assert.NoError(sut.Add(td.RevisionEntry(p, RevisionEntryKindAdd)))
 		}
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		merged := readAllRevsisionTemp(t, temp, nil)
 		paths := make([]string, len(merged))
@@ -173,7 +223,7 @@ func TestTemp(t *testing.T) {
 		assert := NewAssert(t)
 		fs := td.NewFS(t)
 		// Tiny budget forces each Add into its own chunk so duplicates land in
-		// different chunks and the dedup has to happen in the Finalize merge.
+		// different chunks and the dedup has to happen in the CloseAndSort merge.
 		sut := NewTempWriterWithIgnoreDuplicates[*RevisionEntry](
 			(*RevisionEntry).PathCompare, revisionEntryChunkMarshaller{}, fs, 1,
 		)
@@ -182,7 +232,7 @@ func TestTemp(t *testing.T) {
 			assert.NoError(sut.Add(td.RevisionEntry(p, RevisionEntryKindAdd)))
 		}
 		assert.Greater(sut.chunks, 1, "test setup: duplicates must span multiple chunks")
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		merged := readAllRevsisionTemp(t, temp, nil)
 		paths := make([]string, len(merged))
@@ -204,7 +254,7 @@ func TestTemp(t *testing.T) {
 		}
 
 		filter := NewPathExclusionFilter([]string{"**/a.txt"})
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		merged := readAllRevsisionTemp(t, temp, filter)
 		assert.Equal(1, len(merged))
@@ -223,7 +273,7 @@ func TestTemp(t *testing.T) {
 		}
 
 		filter := NewPathExclusionFilter([]string{"**/*"})
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		merged := readAllRevsisionTemp(t, temp, filter)
 		assert.Equal(0, len(merged))
@@ -255,7 +305,7 @@ func TestTemp(t *testing.T) {
 			assert.NoError(sut.Add(td.RevisionEntry(p, RevisionEntryKindAdd)))
 		}
 		assert.Greater(sut.chunks, 10)
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		merged := readAllRevsisionTemp(t, temp, nil)
 		assert.Equal(len(paths), len(merged))
@@ -270,7 +320,7 @@ func TestTemp(t *testing.T) {
 	t.Run("Multi-frame chunk files", func(t *testing.T) {
 		t.Parallel()
 		// Push enough entries through that the writer produces multiple chunk
-		// files, each containing multiple frames. Then check Finalize streams
+		// files, each containing multiple frames. Then check CloseAndSort streams
 		// the merge correctly: count matches, output is sorted, every chunk
 		// file is multi-frame.
 		assert := NewAssert(t)
@@ -280,7 +330,7 @@ func TestTemp(t *testing.T) {
 			p := fmt.Sprintf("p-%d.txt", rand.Int())
 			assert.NoError(sut.Add(td.RevisionEntry(p, RevisionEntryKindAdd)))
 		}
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		assert.Greater(temp.Chunks(), 1)
 		for i := range temp.Chunks() {
@@ -345,7 +395,7 @@ func TestTempCache(t *testing.T) {
 		add("sub/sub/a.txt", 0)
 		add("sub/sub/y.txt", 0)
 
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		assert.Equal(4, temp.Chunks())
 
@@ -398,7 +448,7 @@ func TestTempCache(t *testing.T) {
 		add("sub/sub/a.txt", 0)
 		add("sub/sub/y.txt", 0)
 
-		temp, err := sut.Finalize()
+		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
 		assert.Equal(4, temp.Chunks())
 
@@ -473,7 +523,7 @@ func BenchmarkRevisionTemp(b *testing.B) {
 		for _, p := range paths {
 			_ = sut.Add(td.RevisionEntry(p, RevisionEntryKindAdd))
 		}
-		_, err := sut.Finalize()
+		_, err := sut.CloseAndSort()
 		assert.NoError(err)
 	}
 }

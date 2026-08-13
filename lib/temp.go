@@ -11,12 +11,11 @@ import (
 
 const DefaultTempChunkSize = 4 * 1024 * 1024
 
-// Returned by `TempWriter.Add` and `TempWriter.Finalize` when a writer that
+// Returned by `TempWriter.Add` and `TempWriter.CloseAndSort` when a writer that
 // does not ignore duplicates sees the same entry twice.
 var ErrDuplicateTempEntry = Errorf("duplicate entry")
 
-// Splitting a sorted chunk into this many frames lets Finalize stream the
-// k-way merge with only one frame per input file in memory.
+// Splitting a sorted chunk into this many frames.
 const framesPerChunk = 16
 
 // Worst-case `TempFrame` envelope overhead (tag + varint length) per frame
@@ -166,7 +165,7 @@ func (tr *TempReader[T]) ReadChunk(i int, buf BlockBuf) ([]T, error) {
 	if i < 0 || i >= tr.chunks {
 		return nil, Errorf("chunk index out of range")
 	}
-	fr, err := newFrameReader(tr.fs, tr.chunkFilename(i), tr.marshaller, buf)
+	fr, err := newFrameReader(tr.fs, sortedChunkFilename(i), tr.marshaller, buf)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +186,8 @@ func (tr *TempReader[T]) ReadChunk(i int, buf BlockBuf) ([]T, error) {
 	return entries, nil
 }
 
-func (tr *TempReader[T]) chunkFilename(index int) string {
+// The name a chunk file has once it is part of a `Temp`.
+func sortedChunkFilename(index int) string {
 	return fmt.Sprintf("%d.sorted", index)
 }
 
@@ -226,7 +226,7 @@ func NewTempWriter[T any](
 }
 
 // Like NewTempWriter, but duplicate entries (compare == 0) are silently
-// dropped in rotateChunk and the Finalize k-way merge instead of erroring.
+// dropped in rotateChunk and the CloseAndSort k-way merge instead of erroring.
 func NewTempWriterWithIgnoreDuplicates[T any](
 	compare func(a, b T) int,
 	marshaller chunkMarshaller[T],
@@ -251,8 +251,23 @@ func (tw *TempWriter[T]) Add(t T) error {
 	return nil
 }
 
-// Rotate the current chunk and then sort all chunks and return the merged result.
-func (tw *TempWriter[T]) Finalize() (*Temp[T], error) { //nolint:funlen
+// Close the writer and return the chunks as they are, for a caller that added
+// its entries in order. Nothing is sorted or merged, so the caller has to be
+// sure of that.
+func (tw *TempWriter[T]) CloseWithoutSort() (*Temp[T], error) {
+	if err := tw.rotateChunk(); err != nil {
+		return nil, WrapErrorf(err, "failed to rotate final chunk")
+	}
+	for i := range tw.chunks {
+		if err := tw.fs.Rename(tw.chunkFilename(i), sortedChunkFilename(i)); err != nil {
+			return nil, WrapErrorf(err, "failed to rename chunk file %d", i)
+		}
+	}
+	return &Temp[T]{tw.fs, tw.chunks, tw.marshaller}, nil
+}
+
+// Close the writer, sorting and merging every chunk into the result.
+func (tw *TempWriter[T]) CloseAndSort() (*Temp[T], error) { //nolint:funlen
 	if err := tw.rotateChunk(); err != nil {
 		return nil, WrapErrorf(err, "failed to rotate final chunk")
 	}

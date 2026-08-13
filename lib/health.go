@@ -55,7 +55,7 @@ func checkHealth(
 	if seenWriter == nil {
 		return nil
 	}
-	seen, err := seenWriter.Finalize()
+	seen, err := seenWriter.CloseAndSort()
 	if err != nil {
 		return WrapErrorf(err, "failed to sort seen block ids")
 	}
@@ -234,7 +234,7 @@ func checkBlocks(
 		}
 		monitor.OnBlockVerified(id, len(data))
 	}
-	sorted, err := nonces.Finalize()
+	sorted, err := nonces.CloseAndSort()
 	if err != nil {
 		return wrapNonceCheckError(err)
 	}

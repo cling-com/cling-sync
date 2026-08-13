@@ -101,7 +101,7 @@ func (c *Commit) Commit(ctx context.Context, info *CommitInfo) (RevisionId, erro
 	}
 	tw := c.tempWriter
 	c.tempWriter = nil
-	sorted, err := tw.Finalize()
+	sorted, err := tw.CloseAndSort()
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to finalize temp writer")
 	}
@@ -190,7 +190,7 @@ func (c *Commit) appendEnsureDirs(sorted *Temp[*RevisionEntry]) (*Temp[*Revision
 			return nil, WrapErrorf(err, "failed to add path %s to commit", entry.Path)
 		}
 	}
-	sorted, err = tempWriter.Finalize()
+	sorted, err = tempWriter.CloseAndSort()
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to finalize temp writer")
 	}
