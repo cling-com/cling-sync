@@ -84,7 +84,7 @@ func TestRevisionSnapshot(t *testing.T) {
 		assert.Equal([]*RevisionEntry{}, entries)
 	})
 
-	t.Run("Sort order is files, directories, and subdirectories", func(t *testing.T) {
+	t.Run("Sort order is the path alone", func(t *testing.T) {
 		// This basically makes sure that we always use `RevisionEntry.PathCompare`.
 		t.Parallel()
 		assert := NewAssert(t)
@@ -116,13 +116,13 @@ func TestRevisionSnapshot(t *testing.T) {
 
 		entries := readRevisionSnapshot(t, r.Repository, revId3, nil)
 		assert.Equal([]*RevisionEntry{
-			td.RevisionEntry("a.txt", RevisionEntryKindAdd),
-			td.RevisionEntry("z.txt", RevisionEntryKindAdd),
 			td.RevisionEntryExt("a", RevisionEntryKindAdd, FileModeDir, ""),
+			td.RevisionEntry("a.txt", RevisionEntryKindAdd),
 			td.RevisionEntry("a/1.txt", RevisionEntryKindAdd),
 			td.RevisionEntry("a/2.txt", RevisionEntryKindAdd),
 			td.RevisionEntryExt("a/b", RevisionEntryKindAdd, FileModeDir, ""),
 			td.RevisionEntry("a/b/3.txt", RevisionEntryKindAdd),
+			td.RevisionEntry("z.txt", RevisionEntryKindAdd),
 		}, entries)
 	})
 
@@ -340,37 +340,11 @@ func TestRevisionSnapshot(t *testing.T) {
 		assert.Error(err, "a/ >= a")
 	})
 
-	t.Run("Root file and a directory named after its sort key", func(t *testing.T) {
-		// A root file is ordered as `0` plus its name, so file `b` and directory
-		// `0b` used to compare equal and the commit rejected the second as a
-		// duplicate. `PathCompare` breaks the tie, so both can be committed.
-		t.Parallel()
-		assert := NewAssert(t)
-		r := td.NewTestRepository(t, td.NewFS(t))
-
-		rev, err := testCommit(t, r.Repository,
-			td.RevisionEntry("b", RevisionEntryKindAdd),
-			td.RevisionEntryExt("0b", RevisionEntryKindAdd, FileModeDir, ""),
-		)
-		assert.NoError(err)
-
-		// The file sorts first, which is what keeps the two apart.
-		assert.Equal([]*RevisionEntry{
-			td.RevisionEntry("b", RevisionEntryKindAdd),
-			td.RevisionEntryExt("0b", RevisionEntryKindAdd, FileModeDir, ""),
-		}, readRevisionSnapshot(t, r.Repository, rev, nil))
-	})
-
-	t.Run("File and directory of the same path", func(t *testing.T) {
-		// Known gap. The sort order gives a file and a directory of one path
-		// different keys, and everything else in the same parent can sort
-		// between them, so the merge cannot pair them up without holding a
-		// directory's worth of paths. Both therefore survive.
-		//
-		// A commit can never produce this: `TestMerge/File replaced by a
-		// directory` pins that a type change is committed as a delete plus an
-		// add, and the delete removes the old entry by key. Only a repository
-		// written by something other than `Commit` can reach it.
+	t.Run("File and directory of the same path is rejected", func(t *testing.T) {
+		// A newer revision turns `a/b` into a directory without deleting the
+		// file first, so both would end up in the snapshot. `Commit` never
+		// writes that: `TestMerge/File replaced by a directory` pins that a type
+		// change is a delete plus an add, and the delete cancels the old entry.
 		t.Parallel()
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
@@ -380,10 +354,8 @@ func TestRevisionSnapshot(t *testing.T) {
 			td.RevisionEntryExt("a/b", RevisionEntryKindAdd, FileModeDir, ""),
 		})
 
-		assert.Equal([]*RevisionEntry{
-			td.RevisionEntry("a/b", RevisionEntryKindAdd),
-			td.RevisionEntryExt("a/b", RevisionEntryKindAdd, FileModeDir, ""),
-		}, readRevisionSnapshot(t, r.Repository, newer, nil))
+		_, err := NewRevisionSnapshot(t.Context(), r.Repository, newer, td.NewFS(t), td.NewRevisionSnapshotMonitor())
+		assert.Error(err, "a/b is both a file and a directory")
 	})
 
 	t.Run("PathFilter", func(t *testing.T) {
@@ -570,28 +542,48 @@ func FuzzRevisionSnapshot(f *testing.F) {
 		}
 		assert := NewAssert(t)
 		r := td.NewTestRepository(t, NewMemoryFS(64*1024*1024))
-		// Each byte is one entry: which path, which kind, and whether the next
-		// entry starts a new revision.
 		revisions := [][]*RevisionEntry{{}}
-		for _, b := range data {
-			path := paths[int(b>>3)%len(paths)]
-			kind := []RevisionEntryKind{
-				RevisionEntryKindAdd, RevisionEntryKindUpdate, RevisionEntryKindDelete,
-			}[int(b>>1)%3]
-			mode := FileMode(0o600)
-			if b&1 == 1 {
-				mode = FileModeDir
-			}
-			entry := td.RevisionEntryExt(path, kind, mode, path)
+		add := func(entry *RevisionEntry) {
 			last := revisions[len(revisions)-1]
 			// A revision holds each key once, and starts a new one otherwise.
 			if slices.ContainsFunc(last, func(e *RevisionEntry) bool {
 				return e.PathCompare(entry) == 0
 			}) {
 				revisions = append(revisions, []*RevisionEntry{entry})
-				continue
+				return
 			}
 			revisions[len(revisions)-1] = append(last, entry)
+		}
+		mode := func(isDir bool) FileMode {
+			if isDir {
+				return FileModeDir
+			}
+			return FileMode(0o600)
+		}
+		// What each path currently is, so that a type change can be written the
+		// way `Commit` writes it.
+		type state struct{ isDir, exists bool }
+		current := map[string]state{}
+		// Each byte is one entry: which path, which kind, and which type.
+		for _, b := range data {
+			path := paths[int(b>>3)%len(paths)]
+			kind := []RevisionEntryKind{
+				RevisionEntryKindAdd, RevisionEntryKindUpdate, RevisionEntryKindDelete,
+			}[int(b>>1)%3]
+			isDir := b&1 == 1
+			was := current[path]
+			switch {
+			case kind == RevisionEntryKindDelete && was.exists:
+				// Only what is there can be deleted.
+				isDir = was.isDir
+			case was.exists && was.isDir != isDir:
+				// `Commit` turns a type change into a delete of the old entry
+				// plus an add of the new one. Without the delete both would
+				// reach the snapshot, which is not a state a filesystem has.
+				add(td.RevisionEntryExt(path, RevisionEntryKindDelete, mode(was.isDir), path))
+			}
+			add(td.RevisionEntryExt(path, kind, mode(isDir), path))
+			current[path] = state{isDir: isDir, exists: kind != RevisionEntryKindDelete}
 		}
 		revId := r.Head()
 		for _, entries := range revisions {

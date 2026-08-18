@@ -56,8 +56,8 @@ func TestStatus(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal([]string{
 			"D b.txt",
-			"A e.txt",
 			"M c/1.txt",
+			"A e.txt",
 		}, statusFilesString(status))
 	})
 

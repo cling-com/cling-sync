@@ -1,6 +1,8 @@
 package lib
 
 import (
+	"errors"
+	"io"
 	"testing"
 )
 
@@ -150,5 +152,52 @@ func TestReadRevisionChain(t *testing.T) {
 		chain, err := ReadRevisionChain(t.Context(), repo.Repository)
 		assert.NoError(err)
 		assert.Equal(RevisionChain{}, chain)
+	})
+}
+
+func TestRevisionReader(t *testing.T) {
+	t.Parallel()
+	t.Run("Unordered entries should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		// This is the sort order used prior to 2026-09, where a directory's
+		// files came before its subdirectories.
+		// `AddRevision` sorts internally, so we have to write the block by hand.
+		chunk := RevisionEntryChunk{Entries: []*RevisionEntry{
+			td.RevisionEntry("a/z.txt", RevisionEntryKindAdd),
+			td.RevisionEntryExt("a/b", RevisionEntryKindAdd, FileModeDir, ""),
+			td.RevisionEntry("a/b/c.txt", RevisionEntryKindAdd),
+		}}
+		buf := make([]byte, chunk.MarshallSize())
+		w := NewProtobufWriter(buf)
+		assert.NoError(chunk.Marshall(w))
+		blockId, _, err := r.WriteBlock(t.Context(), w.Bytes(), NewBlockBuf())
+		assert.NoError(err)
+		revisionId, err := r.WriteRevision(t.Context(), &Revision{ //nolint:exhaustruct
+			Timestamp:        NewTimestampNow(),
+			ParentRevisionId: RevisionId{},
+			BlockIds:         []BlockId{blockId},
+		})
+		assert.NoError(err)
+
+		revision, err := r.ReadRevision(t.Context(), revisionId, NewBlockBuf())
+		assert.NoError(err)
+		reader := NewRevisionReader(r.Repository, &revision)
+		readBuf := NewBlockBuf()
+		var readErr error
+		for {
+			_, err := reader.Read(t.Context(), readBuf)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				readErr = err
+				break
+			}
+		}
+		assert.Error(readErr, "not strictly sorted")
+		assert.Error(readErr, "a/z.txt >= a/b/")
 	})
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"time"
 )
 
 const DefaultTempChunkSize = 4 * 1024 * 1024
@@ -502,11 +501,14 @@ type TempCache[T any, K comparable] struct {
 	buf              BlockBuf
 	cache            []map[K]T
 	firstEntries     []K
-	lastAccessed     []int64
-	chunksInCache    int
-	cacheKey         func(T) K
-	compareKey       func(a, b K) int
-	CacheMisses      int
+	// Access order, not wall clock: two lookups can land in the same nanosecond
+	// and then the eviction picks whichever chunk it happens to scan first.
+	lastAccessed        []int64
+	lastAccessedCounter int64
+	chunksInCache       int
+	cacheKey            func(T) K
+	compareKey          func(a, b K) int
+	CacheMisses         int
 }
 
 func NewTempCache[T any, K comparable](
@@ -531,17 +533,18 @@ func NewTempCache[T any, K comparable](
 		firstEntries[i] = cacheKey(entries[0])
 	}
 	return &TempCache[T, K]{
-		Source:           temp,
-		maxChunksInCache: maxChunksInCache,
-		reader:           reader,
-		buf:              buf,
-		cache:            cache,
-		firstEntries:     firstEntries,
-		lastAccessed:     make([]int64, temp.Chunks()),
-		CacheMisses:      0,
-		cacheKey:         cacheKey,
-		compareKey:       compareKey,
-		chunksInCache:    chunksInCache,
+		Source:              temp,
+		maxChunksInCache:    maxChunksInCache,
+		reader:              reader,
+		buf:                 buf,
+		cache:               cache,
+		firstEntries:        firstEntries,
+		lastAccessed:        make([]int64, temp.Chunks()),
+		lastAccessedCounter: 0,
+		CacheMisses:         0,
+		cacheKey:            cacheKey,
+		compareKey:          compareKey,
+		chunksInCache:       chunksInCache,
 	}, nil
 }
 
@@ -593,7 +596,8 @@ func (tc *TempCache[T, K]) Get(key K) (T, bool, error) {
 			cache[tc.cacheKey(entry)] = entry
 		}
 	}
-	tc.lastAccessed[chunkIndex] = time.Now().UnixNano()
+	tc.lastAccessedCounter++
+	tc.lastAccessed[chunkIndex] = tc.lastAccessedCounter
 	re, ok := cache[key]
 	return re, ok, nil
 }

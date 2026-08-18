@@ -105,7 +105,7 @@ func revisionNWayMerge( //nolint:funlen
 			return err
 		}
 	}
-	var last *RevisionEntry
+	var last, lastWritten *RevisionEntry
 	for queue.Len() > 0 {
 		winner := queue.Pop()
 		// Just a sanity check that everything is in order.
@@ -115,9 +115,18 @@ func revisionNWayMerge( //nolint:funlen
 		}
 		last = winner.entry
 		if winner.entry.Kind != RevisionEntryKindDelete {
+			// Paths sort together, so a path written twice is written twice in
+			// a row. A revision may hold one path as both a file and a
+			// directory while it changes type, but then one of them is a delete
+			// and only the other reaches this. Two survivors mean the snapshot
+			// claims a path is both at once, which no filesystem is.
+			if lastWritten != nil && lastWritten.Path == winner.entry.Path {
+				return Errorf("%s is both a file and a directory", winner.entry.Path)
+			}
 			if err := tempWriter.Add(winner.entry); err != nil {
 				return WrapErrorf(err, "failed to write entry %s", winner.entry.Path)
 			}
+			lastWritten = winner.entry
 		}
 		// Any other revision holding the same entry is outdated. A revision
 		// lists each entry once, so what replaces them sorts strictly after the

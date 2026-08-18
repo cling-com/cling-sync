@@ -787,8 +787,8 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
 	flags.StringVar(&args.PathPrefix, "path-prefix", "", pathPrefixFlagDescription)
 	flags.BoolVar(&args.Overwrite, "overwrite", false, "Overwrite paths that are already in the destination")
-	flags.BoolVar(&args.Yes, "yes", false, "Do not ask for confirmation")
 	flags.BoolVar(&args.DryRun, "dry-run", false, "Only show what would be committed")
+	flags.BoolVar(&args.Yes, "yes", false, "Do not ask for confirmation")
 	flags.StringVar(&args.Author, "author", defaultAuthor, "Author name")
 	flags.StringVar(&args.Message, "message", "Imported with cling-sync", "Commit message")
 	flags.BoolVar(&args.Chown, "chown", false, "Include file ownership changes (requires --overwrite)")
@@ -1427,6 +1427,8 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		NoProgress     bool
 		Data           bool
 		OrphanedBlocks bool
+		FixRepo        bool
+		FixWorkspace   bool
 		Full           bool
 		Repository     string
 		ReportDir      string
@@ -1437,6 +1439,13 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	flags.BoolVar(&args.NoProgress, "no-progress", false, "Do not show progress")
 	flags.BoolVar(&args.Data, "data", false,
 		"Check all file data blocks of all paths in all revisions and that no block header nonce is reused")
+	flags.BoolVar(&args.FixRepo, "fix-repo", false,
+		"Rewrite every revision in the current sort order, for a repository written\n"+
+			"by an older version. No other check runs. Every revision id changes, so\n"+
+			"every workspace has to be fixed with --fix-workspace afterwards.")
+	flags.BoolVar(&args.FixWorkspace, "fix-workspace", false,
+		"Point this workspace at the revision that replaced the one it names,\n"+
+			"after the repository was migrated with --fix-repo. No other check runs.")
 	flags.BoolVar(&args.OrphanedBlocks, "orphaned-blocks", false,
 		"Detect blocks in storage that are not referenced by any revision")
 	flags.BoolVar(&args.Full, "full", false, "Run all checks (implies --data and --orphaned-blocks)")
@@ -1464,6 +1473,7 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	}
 	var (
 		repository *lib.Repository
+		workspace  *ws.Workspace
 		err        error
 	)
 	if args.Repository != "" {
@@ -1472,7 +1482,6 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 			return err
 		}
 	} else {
-		var workspace *ws.Workspace
 		workspace, err = openWorkspace(ctx)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to open workspace")
@@ -1484,12 +1493,30 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		}
 	}
 	defer repository.Close() //nolint:errcheck
+	if args.FixWorkspace {
+		if workspace == nil {
+			return lib.Errorf("--fix-workspace needs a workspace, not --repository")
+		}
+		from, to, err := ws.FixHeadAfterRewrite(ctx, workspace, repository)
+		if err != nil {
+			return err //nolint:wrapcheck
+		}
+		if from == to {
+			fmt.Println("The workspace head is already correct, nothing to do.")
+			return nil
+		}
+		fmt.Printf("Workspace head %s -> %s\n", from, to)
+		return nil
+	}
 	tempFS, cleanup, err := newTempFS("check")
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 	monitor := NewHeathCheckMonitor(CLIMonitorMode(args.Verbose, args.NoProgress))
+	if args.FixRepo {
+		return lib.RewriteRevisions(ctx, repository, tempFS, monitor, lib.DefaultTempChunkSize) //nolint:wrapcheck
+	}
 	monitor.Preparing()
 	err = lib.CheckHealth(ctx, repository, tempFS, lib.HealthCheckOptions{
 		Monitor:             monitor,

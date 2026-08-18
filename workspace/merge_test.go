@@ -903,8 +903,8 @@ func TestMergeWithPathPrefix(t *testing.T) {
 			{"a.txt", 0o600, 2, "aa"},
 			{"c.txt", 0o600, 1, "c"},
 			{"look", 0o700 | fs.ModeDir, 0, ""},
-			{"look/here.txt", 0o600, 4, "here"},
 			{"look/here", 0o700 | fs.ModeDir, 0, ""},
+			{"look/here.txt", 0o600, 4, "here"},
 			{"look/here/a.txt", 0o600, 24, "this is a different file"},
 			{"look/here/dir1", 0o700 | fs.ModeDir, 0, ""},
 		}, r.RevisionSnapshotFileInfos(rev, nil))

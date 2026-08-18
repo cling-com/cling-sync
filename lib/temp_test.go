@@ -42,6 +42,7 @@ func TestTemp(t *testing.T) {
 		add("some/dir2/filea", 0)
 		add("some/dir2", FileModeDir)
 		add("some", FileModeDir)
+		add("some/dir1.txt", 0)
 
 		temp, err := sut.CloseAndSort()
 		assert.NoError(err)
@@ -53,6 +54,9 @@ func TestTemp(t *testing.T) {
 		assert.Equal([]string{
 			"some",
 			"some/dir1",
+			// `.` sorts below `/`, so a sibling file separates a directory from
+			// its contents.
+			"some/dir1.txt",
 			"some/dir1/a",
 			"some/dir1/b",
 			"some/dir1/filea",
@@ -402,8 +406,18 @@ func TestTempCache(t *testing.T) {
 		cache, err := NewRevisionEntryTempCache(temp, 2)
 		assert.NoError(err)
 
-		// First, check that we find all entries.
-		for _, path := range []string{"b.txt", "y.txt", "sub", "sub/a.txt", "sub/y.txt", "sub/sub", "sub/sub/a.txt", "sub/sub/y.txt"} {
+		// First, check that we find all entries, looking them up in the order
+		// they are stored in.
+		for _, path := range []string{
+			"b.txt",
+			"sub",
+			"sub/a.txt",
+			"sub/sub",
+			"sub/sub/a.txt",
+			"sub/sub/y.txt",
+			"sub/y.txt",
+			"y.txt",
+		} {
 			isDir := path == "sub" || path == "sub/sub"
 			entry, ok, err := cache.Get(PathKey{Path{path}, isDir})
 			assert.NoError(err, path)
@@ -411,20 +425,21 @@ func TestTempCache(t *testing.T) {
 			assert.Equal(path, entry.Path.String(), path)
 		}
 
-		// We read all entries in order so we should never evict a chunk we
-		// need later.
-		assert.Equal(4, cache.CacheMisses)
+		// Reading in order never asks for a chunk again once it has moved on,
+		// so one miss per chunk is all it costs.
+		assert.Equal(temp.Chunks(), cache.CacheMisses)
 
 		// Check that we don't find entries.
-		for _, path := range []string{"a.txt", "z.txt", "sub/z.txt", "sub/sub/z.txt"} {
+		for _, path := range []string{"a.txt", "sub/sub/z.txt", "sub/z.txt", "z.txt"} {
 			isDir := path == "sub" || path == "sub/sub"
 			entry, ok, err := cache.Get(PathKey{Path{path}, isDir})
 			assert.NoError(err, path)
 			assert.Equal(false, ok, path)
 			assert.Nil(entry, path)
 		}
-		// The cache size is only two, so some more cache misses happened.
-		assert.Equal(7, cache.CacheMisses)
+		// Each of them falls outside every chunk's range or inside one that is
+		// still cached, so none of them costs a read.
+		assert.Equal(temp.Chunks(), cache.CacheMisses)
 	})
 
 	t.Run("LRU eviction respects maxChunksInCache", func(t *testing.T) {

@@ -173,95 +173,26 @@ func (pif *PathInclusionFilter) Include(p Path, isDir bool) bool {
 	return pif.Includes.Match(p.p, isDir)
 }
 
-// Order two paths according to this sorting order:
-//   - directory
-//   - files inside the directory
-//   - sub-directory
-//   - files inside the sub-directory
-//   - ...
+// Order two paths.
 //
-// Example:
-//   - a.txt
-//   - z.txt
-//   - sub/
-//   - sub/a.txt
-//   - sub/z.txt
-//   - sub/sub/
-//   - sub/sub/a.txt
-//   - sub/sub/z.txt
+// Entries are sorted by path alone. A directory therefore comes before its
+// contents, because its path is a prefix of theirs, and no marker or special
+// case is needed for that.
 //
-// A file at the root has no directory to sit in. It sorts as though its name
-// began with a `0`, so a directory named `.git` comes before it and `zzz` after.
-// There is no particular reason for this other than it being a bug in a previous
-// version.
+// The only thing the directory bit decides is a file and a directory of the
+// very same path, where the file comes first. That pair is not a filesystem
+// state, it is how one revision expresses a path changing type.
 func PathCompare(a Path, aIsDir bool, b Path, bIsDir bool) int {
-	// todo: All of this should be a simple lexicographical compare with a special
-	//       case that takes `aIsDir` and `bIsDir` into account on equal paths.
-	//		 But this would change the on-disk format of existing repositories.
-	as, bs := a.String(), b.String()
-	// The separator before a file's last segment, the only position where a
-	// file sorts differently from a directory. Directories have none and keep
-	// -1, which no index in the loop below can match.
-	aSep, bSep := -1, -1
-	if !aIsDir {
-		aSep = strings.LastIndexByte(as, '/')
-	}
-	if !bIsDir {
-		bSep = strings.LastIndexByte(bs, '/')
-	}
-	// The previous implementation sorted a root-level file as if its name began
-	// with a `0`. That is a bug: the byte lands in the middle of the alphabet,
-	// so a directory named below it (`.git`) sorts ahead of every root file
-	// while one above it (`zzz`) sorts behind. Revisions are stored in that
-	// order, so compare against the literal `0` here. After it the names line
-	// up and the loop below decides the rest. This is purely for backwards
-	// compatibility.
-	aRootFile, bRootFile := !aIsDir && aSep < 0, !bIsDir && bSep < 0
-	if aRootFile != bRootFile {
-		file, other, sign := as, bs, 1
-		if bRootFile {
-			file, other, sign = bs, as, -1
-		}
-		switch {
-		case len(other) == 0 || other[0] < '0':
-			return sign
-		case other[0] > '0':
-			return -sign
-		}
-		// The file has no separator, so nothing past the `0` can distinguish it
-		// from a directory and the rest is a plain byte comparison.
-		if c := strings.Compare(file, other[1:]); c != 0 {
-			return sign * c
-		}
-		// The two names collide. Order the file first so they never compare equal.
-		return -sign
-	}
-	for i := 0; i < len(as) && i < len(bs); i++ {
-		if as[i] != bs[i] {
-			if as[i] < bs[i] {
-				return -1
-			}
-			return 1
-		}
-		if as[i] == '/' {
-			// The paths agree up to here, so all that can still differ at a
-			// shared separator is whether it is a file's last one.
-			aLast, bLast := i == aSep, i == bSep
-			if aLast != bLast {
-				if aLast {
-					return -1
-				}
-				return 1
-			}
-		}
+	if c := strings.Compare(a.p, b.p); c != 0 {
+		return c
 	}
 	switch {
-	case len(as) < len(bs):
-		return -1
-	case len(as) > len(bs):
+	case aIsDir == bIsDir:
+		return 0
+	case aIsDir:
 		return 1
 	}
-	return 0
+	return -1
 }
 
 // A path together with its directory bit. The two identify an entry, and the

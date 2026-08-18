@@ -40,13 +40,13 @@ func TestRevisionEntry(t *testing.T) {
 			actualPaths[i] = entry.Path.String()
 		}
 		assert.Equal([]string{
-			"a.zip",
-			"abcd.txt",
 			"a",
+			"a.zip",
 			"a/1.md",
 			"a/2.md",
 			"abc",
 			"abc/1.md",
+			"abcd.txt",
 		}, actualPaths)
 	})
 
@@ -72,7 +72,7 @@ func TestRevisionEntry(t *testing.T) {
 func TestRevisionEntryTemp(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Sort order is files, directories, and subdirectories", func(t *testing.T) {
+	t.Run("Sort order", func(t *testing.T) {
 		// This basically makes sure that we always use `RevisionEntry.PathCompare`.
 		t.Parallel()
 		assert := NewAssert(t)
@@ -92,9 +92,11 @@ func TestRevisionEntryTemp(t *testing.T) {
 		add(".a.txt", 0)
 		add("a.txt", 0)
 		add("z.txt", 0)
+		add("sub.txt", 0)
 		add("sub/.a.txt", 0)
 		add("sub/a.txt", 0)
 		add("sub/z.txt", 0)
+		add("sub/sub.txt", 0)
 		add("sub/sub/.a.txt", 0)
 		add("sub/sub/a.txt", 0)
 		add("sub/sub/z.txt", 0)
@@ -110,15 +112,19 @@ func TestRevisionEntryTemp(t *testing.T) {
 		assert.Equal([]string{
 			".a.txt",
 			"a.txt",
-			"z.txt",
 			"sub",
+			// `.` sorts below `/`, so a sibling file separates a directory from
+			// its contents.
+			"sub.txt",
 			"sub/.a.txt",
 			"sub/a.txt",
-			"sub/z.txt",
 			"sub/sub",
+			"sub/sub.txt",
 			"sub/sub/.a.txt",
 			"sub/sub/a.txt",
 			"sub/sub/z.txt",
+			"sub/z.txt",
+			"z.txt",
 		}, actualPaths)
 	})
 }

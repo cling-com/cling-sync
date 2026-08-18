@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"cmp"
 	"strings"
 	"testing"
 )
@@ -209,69 +210,38 @@ func TestPathCompare(t *testing.T) {
 		isFile = false
 		isDir  = true
 	)
-	cases := []struct {
-		name   string
-		a      string
-		aIsDir bool
-		b      string
-		bIsDir bool
-		want   int
+	// The order itself, spelled out. Every entry is then compared against every
+	// other one, in both directions, so this list is the specification.
+	ordered := []struct {
+		path  string
+		isDir bool
 	}{
-		{"Equal files", "a.txt", isFile, "a.txt", isFile, 0},
-		{"Equal directories", "a", isDir, "a", isDir, 0},
-		{"Equal nested files", "a/b.txt", isFile, "a/b.txt", isFile, 0},
-
-		{"Files by name", "a.txt", isFile, "b.txt", isFile, -1},
-		{"Directories by name", "a", isDir, "b", isDir, -1},
-		{"Nested files by name", "a/b.txt", isFile, "a/c.txt", isFile, -1},
-		{"Nested directories by name", "a/b", isDir, "a/c", isDir, -1},
-		{"Deep files by last segment", "a/b/c.txt", isFile, "a/b/d.txt", isFile, -1},
-
-		{"File before directory of the same name", "a", isFile, "a", isDir, -1},
-		{"Nested file before nested directory of the same path", "a/b", isFile, "a/b", isDir, -1},
-		{"Only the last segment decides file or directory", "a/b/c.txt", isFile, "a/b/c.txt", isDir, -1},
-
-		{"Files before directories in the same parent", "a/c.txt", isFile, "a/b", isDir, -1},
-		{"Files before directories at the root", "c.txt", isFile, "b", isDir, -1},
-		// ...but not before a directory sorting below `0`, which is the bug
-		// `PathCompare` reproduces. A root file is ordered as `0` plus its name,
-		// so it lands among the directories rather than ahead of them.
-		{"Dot-directory before every root file", ".a", isDir, "b.txt", isFile, -1},
-		{"Root file after a directory starting with `0`", "b", isFile, "0a", isDir, 1},
-		{"Root file before a directory starting with `0`", "b", isFile, "0c", isDir, -1},
-		{"File before a sibling directory's contents", "a/c.txt", isFile, "a/b/c.txt", isFile, -1},
-		{"Root file before a directory's contents", "c.txt", isFile, "a/b.txt", isFile, -1},
-		{"File before a directory its name extends", "a/b.txt", isFile, "a/b", isDir, -1},
-		{"Root file before a directory its name extends", "ab", isFile, "a", isDir, -1},
-		{"Root file before a nested path under a shared prefix", "ab.txt", isFile, "a/b.txt", isFile, -1},
-
-		{"Directory before its contents", "a", isDir, "a/b.txt", isFile, -1},
-		{"Nested directory before its contents", "a/b", isDir, "a/b/c.txt", isFile, -1},
-		{"Directory before a later directory's contents", "a", isDir, "b/c", isDir, -1},
-		{"Directory after an earlier directory's contents", "b", isDir, "a/c.txt", isFile, 1},
-		{"Contents of a later directory after an earlier directory", "b/a.txt", isFile, "a", isDir, 1},
-		{"Contents of a directory before a longer sibling name", "a/b/c.txt", isFile, "ab/c.txt", isFile, -1},
-
-		{"Prefix name first", "a", isDir, "ab", isDir, -1},
-		// The root is always a directory, so there is no case for a file at
-		// the empty path.
-		{"Empty path before anything", "", isDir, "a", isDir, -1},
-		{"Empty path before a root file", "", isDir, "a.txt", isFile, -1},
-		//
-		// The stored order cannot tell a root file from a directory spelling
-		// the same name, because the file is ordered as `0` plus its name. The
-		// file sorts first, so the two never tie and a commit can hold both.
-		{"A file and a directory never compare equal in sub-paths", "a/b", isFile, "a/0b", isDir, -1},
-		{"A file and a directory never compare equal at the root", "b", isFile, "0b", isDir, -1},
+		{"", isDir},
+		// Byte order, so upper case leads.
+		{"A.txt", isFile},
+		// The only thing the directory bit decides: a file and a directory of
+		// one path, file first.
+		{"a", isFile},
+		{"a", isDir},
+		// `.` sorts below `/`, so a sibling of `a` comes before what `a` holds.
+		{"a.txt", isFile},
+		{"a/b", isFile},
+		{"a/b", isDir},
+		// A directory leads its contents, its path being a prefix of theirs.
+		{"a/b/c.txt", isFile},
+		{"a/c.txt", isFile},
+		// A longer name follows the prefix and everything below it.
+		{"ab", isDir},
+		{"ab/c.txt", isFile},
+		{"b.txt", isFile},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			assert := NewAssert(t)
-			a, b := Path{c.a}, Path{c.b}
-			assert.Equal(c.want, PathCompare(a, c.aIsDir, b, c.bIsDir))
-			assert.Equal(-c.want, PathCompare(b, c.bIsDir, a, c.aIsDir), "must be antisymmetric")
-		})
+	assert := NewAssert(t)
+	for i, a := range ordered {
+		for j, b := range ordered {
+			assert.Equal(cmp.Compare(i, j),
+				PathCompare(Path{a.path}, a.isDir, Path{b.path}, b.isDir),
+				"%+v vs %+v", a, b)
+		}
 	}
 }
 

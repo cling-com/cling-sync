@@ -70,21 +70,21 @@ func TestStaging(t *testing.T) {
 			{"a.txt", lib.RevisionEntryKindUpdate, 0o600, td.SHA256("a")},
 			// Note that `b/` did not change (and is hence omitted).
 			{"b/c.txt", lib.RevisionEntryKindAdd, 0o400, td.SHA256("cc")},
-			// Metadata of `b/remote.txt` should match the repository version.
-			{"b/remote.txt", lib.RevisionEntryKindDelete, 0o123, td.SHA256("rrr")},
 			{"b/e", lib.RevisionEntryKindAdd, 0o700 | fs.ModeDir, td.SHA256("")},
 			{"b/e/f.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("fff")},
+			// Metadata of `b/remote.txt` should match the repository version.
+			{"b/remote.txt", lib.RevisionEntryKindDelete, 0o123, td.SHA256("rrr")},
 		}, r.RevisionTempInfos(merged))
 	})
 
 	t.Run("Path changes type", func(t *testing.T) {
-		// A file and a directory of one path compare by different keys, so a
-		// type change comes out as a delete of the old entry plus an add of the
-		// new one. The snapshot merge relies on that delete.
+		// A file and a directory of one path differ only in kind, so a type
+		// change comes out as a delete of the old entry plus an add of the new
+		// one. The snapshot merge relies on that delete.
 		t.Parallel()
 		assert := lib.NewAssert(t)
 
-		// A file that became a directory. The delete sorts first, at key `0x`.
+		// A file that became a directory. The file sorts before the directory.
 		r1 := td.NewTestRepository(t, td.NewFS(t))
 		w1 := wstd.NewTestWorkspace(t, r1.Repository)
 		w1.Write("x/inner.txt", "inner")
