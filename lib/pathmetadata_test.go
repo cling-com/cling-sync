@@ -2,7 +2,6 @@ package lib
 
 import (
 	"reflect"
-	"slices"
 	"testing"
 	"time"
 )
@@ -14,25 +13,18 @@ func TestPathMetadata(t *testing.T) {
 		assert := NewAssert(t)
 
 		base := td.PathMetadata(0)
-		typ := reflect.TypeFor[PathMetadata]()
-		actualFields := []string{}
-		for field := range typ.Fields() {
-			actualFields = append(actualFields, field.Name)
-		}
-		slices.Sort(actualFields)
-		assert.Equal(
-			[]string{
-				"Birthtime",
-				"BlockIds",
-				"FileHash",
-				"FileMode",
-				"Gid",
-				"Mtime",
-				"Size",
-				"SymLinkTarget",
-				"Uid",
-			}, actualFields, "PathMetadata field names have changed, make sure to update IsEqualRestorableAttributes",
-		)
+		assert.Fields([]string{
+			"FileMode lib.FileMode",
+			"Mtime lib.Timestamp",
+			"Size int64",
+			"FileHash lib.Sha256",
+			"BlockIds []lib.BlockId",
+			"SymLinkTarget *lib.Path",
+			"Uid *uint32",
+			"Gid *uint32",
+			"Birthtime *lib.Timestamp",
+		}, reflect.TypeFor[PathMetadata](),
+			"PathMetadata has changed, make sure to update IsEqualRestorableAttributes")
 
 		actual := *base
 		assert.Equal(true, base.IsEqualRestorableAttributes(actual, RestorableMetadataAll))

@@ -411,6 +411,58 @@ func (a Assert) NotNil(v any, msg ...any) {
 	a.tb.Fatalf("%sexpected non-nil, got %v (%T)", details(msg), v, v)
 }
 
+// Assert the fields of `typ`, each rendered as `Name Type`. Pin the shape of a
+// struct here when a change to it has to be noticed by this test.
+func (a Assert) Fields(expected []string, typ reflect.Type, msg ...any) {
+	a.tb.Helper()
+	actual := make([]string, typ.NumField())
+	for i := range actual {
+		field := typ.Field(i)
+		actual[i] = field.Name + " " + field.Type.String()
+	}
+	a.Equal(expected, actual, msg...)
+}
+
+// Assert that nothing in `v` is left at its zero value, walking into nested
+// structs and through pointers. A slice, map, or array is checked as a whole.
+//
+// Use it where the test data has to exercise every field, so that a field added
+// later cannot silently go untested.
+func (a Assert) AllFieldsSet(v any, msg ...any) {
+	a.tb.Helper()
+	var walk func(path string, rv reflect.Value)
+	walk = func(path string, rv reflect.Value) {
+		a.tb.Helper()
+		if rv.IsZero() {
+			a.tb.Fatalf("%s%s is not set", details(msg), path)
+			return
+		}
+		switch rv.Kind() { //nolint:exhaustive
+		case reflect.Pointer:
+			walk(path, rv.Elem())
+		case reflect.Struct:
+			for i := range rv.NumField() {
+				walk(path+"."+rv.Type().Field(i).Name, rv.Field(i))
+			}
+		case reflect.Bool,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Uintptr,
+			reflect.Float32, reflect.Float64,
+			reflect.Complex64, reflect.Complex128,
+			reflect.String,
+			reflect.Array, reflect.Slice, reflect.Map:
+			// The `IsZero` above is the whole check for these. Descending into a
+			// slice or array would demand every element be non-zero, which is
+			// wrong for a hash or a byte payload.
+		default:
+			a.tb.Fatalf("%s%s: cannot tell whether a %s is set", details(msg), path, rv.Kind())
+		}
+	}
+	rv := reflect.ValueOf(v)
+	walk(rv.Type().String(), rv)
+}
+
 func (a Assert) NoError(err error, msg ...any) {
 	a.tb.Helper()
 	if err == nil {
