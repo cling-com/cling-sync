@@ -21,6 +21,9 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.26.5'
+        # The self-hosted runner keeps GOCACHE and GOMODCACHE on local disk,
+        # so the round trip through GitHub's cache service is pure overhead.
+        cache: ${{ matrix.os != 'self-hosted' }}
 
     - name: Build tools
       run: ./build.sh tools
