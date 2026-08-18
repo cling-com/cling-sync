@@ -588,6 +588,9 @@ func (tc *TempCache[T, K]) Get(key K) (T, bool, error) {
 		cache = make(map[K]T)
 		tc.cache[chunkIndex] = cache
 		tc.CacheMisses++
+		// Cached entries outlive the reads of later chunks into the same
+		// `tc.buf`, so an entry must copy its fields instead of pointing into
+		// it, pinned by `TestRevisionEntry/Unmarshalling does not alias the buffer`.
 		entries, err := tc.reader.ReadChunk(chunkIndex, tc.buf)
 		if err != nil {
 			return zero, false, WrapErrorf(err, "failed to read chunk %d", chunkIndex)

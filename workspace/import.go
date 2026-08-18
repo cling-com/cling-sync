@@ -77,7 +77,7 @@ func NewImport(
 		return nil, lib.WrapErrorf(err, "failed to merge staging and revision snapshot")
 	}
 	changes := StatusFiles{}
-	reader := entries.Reader(nil)
+	reader := lib.NewDisplayOrderReader(entries.Reader(nil).Read)
 	buf := lib.NewBlockBuf()
 	for {
 		entry, err := reader.Read(buf)

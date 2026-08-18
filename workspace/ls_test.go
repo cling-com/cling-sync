@@ -57,6 +57,26 @@ func TestLs(t *testing.T) {
 		}, lsFiles(ls))
 	})
 
+	t.Run("A directory is listed directly before its contents", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("sub.txt", "s")
+		w.Write("sub/a.txt", "a")
+		rev, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		ls, err := Ls(t.Context(), r.Repository, td.NewFS(t), wstd.LsOptions(rev))
+		assert.NoError(err)
+		assert.Equal([]lsFileInfo{
+			{"sub.txt", 0o600, 1},
+			{"sub", 0o700 | lib.FileModeDir, 0},
+			{"sub/a.txt", 0o600, 1},
+		}, lsFiles(ls))
+	})
+
 	t.Run("Include", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)

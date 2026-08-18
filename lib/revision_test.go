@@ -201,3 +201,135 @@ func TestRevisionReader(t *testing.T) {
 		assert.Error(readErr, "a/z.txt >= a/b/")
 	})
 }
+
+func TestDisplayOrderReader(t *testing.T) {
+	t.Parallel()
+
+	file := func(path string) *RevisionEntry {
+		return td.RevisionEntry(path, RevisionEntryKindAdd)
+	}
+	dir := func(path string) *RevisionEntry {
+		return td.RevisionEntryExt(path, RevisionEntryKindAdd, FileModeDir, "")
+	}
+	source := func(entries []*RevisionEntry) func(BlockBuf) (*RevisionEntry, error) {
+		i := 0
+		return func(BlockBuf) (*RevisionEntry, error) {
+			if i == len(entries) {
+				return nil, io.EOF
+			}
+			i++
+			return entries[i-1], nil
+		}
+	}
+	readAll := func(assert Assert, entries []*RevisionEntry) []string {
+		sut := NewDisplayOrderReader(source(entries))
+		buf := NewBlockBuf()
+		got := []string{}
+		for {
+			entry, err := sut.Read(buf)
+			if errors.Is(err, io.EOF) {
+				return got
+			}
+			assert.NoError(err)
+			path := entry.Path.String()
+			if entry.Metadata.FileMode.IsDir() {
+				path += PathDelim
+			}
+			got = append(got, path)
+		}
+	}
+
+	t.Run("Happy path", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		entries := []*RevisionEntry{
+			dir("sub"),
+			file("sub.txt"),
+			file("sub.txt.bak"),
+			file("sub/a.txt"),
+			file("sub/z.txt"),
+			file("t.txt"),
+		}
+		got := readAll(assert, entries)
+		assert.Equal(
+			[]string{"sub.txt", "sub.txt.bak", "sub/", "sub/a.txt", "sub/z.txt", "t.txt"},
+			got)
+	})
+
+	t.Run("Nested directories", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		entries := []*RevisionEntry{
+			dir("a"),
+			dir("a.d"),
+			file("a.d.txt"),
+			file("a.d/x.txt"),
+			file("a/y.txt"),
+		}
+		got := readAll(assert, entries)
+		assert.Equal([]string{"a.d.txt", "a.d/", "a.d/x.txt", "a/", "a/y.txt"}, got)
+	})
+
+	t.Run("Same path as a file and directory", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		entries := []*RevisionEntry{
+			file("a"),
+			dir("a"),
+			file("a/b.txt"),
+		}
+		got := readAll(assert, entries)
+		assert.Equal([]string{"a", "a/", "a/b.txt"}, got)
+	})
+
+	t.Run("Empty directory", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		assert.Equal([]string{"a/"}, readAll(assert, []*RevisionEntry{dir("a")}))
+		assert.Equal([]string{"a.txt", "a/"}, readAll(assert, []*RevisionEntry{dir("a"), file("a.txt")}))
+		assert.Equal([]string{"a/", "b.txt"}, readAll(assert, []*RevisionEntry{dir("a"), file("b.txt")}))
+	})
+
+	t.Run("Nested empty directories", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		entries := []*RevisionEntry{
+			dir("a"),
+			dir("a.d"),
+		}
+		got := readAll(assert, entries)
+		assert.Equal([]string{"a.d/", "a/"}, got)
+	})
+
+	t.Run("Source error is passed on", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewDisplayOrderReader(func(BlockBuf) (*RevisionEntry, error) {
+			return nil, Errorf("block is gone")
+		})
+		_, err := sut.Read(NewBlockBuf())
+		assert.Error(err, "block is gone")
+	})
+
+	t.Run("Too many nested directories should fail", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		// `a`, `a.`, `a..` and so on, each name containing the one before it.
+		entries := []*RevisionEntry{}
+		size := 0
+		for path := "a"; size <= maxDisplayOrderHoldBack; path += "." {
+			entry := dir(path)
+			size += entry.MarshallSize()
+			entries = append(entries, entry)
+		}
+		atLimit := entries[:len(entries)-1]
+		assert.Equal(len(atLimit), len(readAll(assert, atLimit)), "one entry short of the limit still fits")
+		sut := NewDisplayOrderReader(source(entries))
+		var err error
+		for err == nil {
+			_, err = sut.Read(NewBlockBuf())
+		}
+		assert.Error(err, "too many nested directories to list")
+		assert.Error(err, "starting at "+entries[0].Path.String())
+	})
+}

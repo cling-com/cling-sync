@@ -27,6 +27,9 @@ func TestImport(t *testing.T) {
 		src := td.NewTestFS(t, td.NewFS(t))
 		src.Write("a.txt", "a")
 		src.Write("sub/b.txt", "b")
+		// `sub.txt` is only here to make sure that listings put a directory
+		// directly before its contents.
+		src.Write("sub.txt", "s")
 
 		blocks := blockCount(t, r)
 		head := r.Head()
@@ -34,6 +37,7 @@ func TestImport(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal([]string{
 			"A photos/a.txt",
+			"A photos/sub.txt",
 			"A photos/sub/",
 			"A photos/sub/b.txt",
 		}, statusFilesString(imp.Changes))
@@ -51,6 +55,7 @@ func TestImport(t *testing.T) {
 			{"photos", 0o700 | fs.ModeDir, 0, ""},
 			{"photos/a.txt", 0o600, 1, "a"},
 			{"photos/sub", 0o700 | fs.ModeDir, 0, ""},
+			{"photos/sub.txt", 0o600, 1, "s"},
 			{"photos/sub/b.txt", 0o600, 1, "b"},
 		}, r.RevisionSnapshotFileInfos(rev, nil))
 

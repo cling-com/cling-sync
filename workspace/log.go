@@ -73,7 +73,11 @@ type LogOptions struct {
 	PathPrefix lib.Path
 }
 
-func Log(ctx context.Context, repository *lib.Repository, opts *LogOptions) ([]RevisionLog, error) {
+func Log( //nolint:funlen
+	ctx context.Context,
+	repository *lib.Repository,
+	opts *LogOptions,
+) ([]RevisionLog, error) {
 	var revisionId lib.RevisionId
 	if opts.Range.Until != nil {
 		revisionId = *opts.Range.Until
@@ -103,8 +107,11 @@ func Log(ctx context.Context, repository *lib.Repository, opts *LogOptions) ([]R
 		totalFiles := 0
 		if opts.Status || filtered {
 			revisionReader := lib.NewRevisionReader(repository, &revision)
+			displayReader := lib.NewDisplayOrderReader(func(buf lib.BlockBuf) (*lib.RevisionEntry, error) {
+				return revisionReader.Read(ctx, buf)
+			})
 			for {
-				entry, err := revisionReader.Read(ctx, buf)
+				entry, err := displayReader.Read(buf)
 				if errors.Is(err, io.EOF) {
 					break
 				}

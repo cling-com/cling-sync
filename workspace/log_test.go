@@ -107,6 +107,32 @@ func TestLog(t *testing.T) {
 		}, newTestRevisionLogs(logs, true))
 	})
 
+	t.Run("Status lists a directory directly before its contents", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("sub.txt", "s")
+		w.Write("sub/a.txt", "a")
+		revId, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		logs, err := Log(
+			t.Context(),
+			r.Repository,
+			&LogOptions{nil, nil, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+		)
+		assert.NoError(err)
+		assert.Equal([]TestRevisionLog{
+			revisionLog(t, r, revId, []TestStatusFile{
+				{"sub.txt", lib.RevisionEntryKindAdd, 1},
+				{"sub", lib.RevisionEntryKindAdd, 0},
+				{"sub/a.txt", lib.RevisionEntryKindAdd, 1},
+			}),
+		}, newTestRevisionLogs(logs, true))
+	})
+
 	t.Run("Include and Exclude", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)

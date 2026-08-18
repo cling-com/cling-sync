@@ -125,7 +125,7 @@ func Status( //nolint:funlen
 	if revisionTemp.Chunks() == 0 {
 		return []StatusFile{}, nil
 	}
-	revisionTempReader := revisionTemp.Reader(nil)
+	revisionTempReader := lib.NewDisplayOrderReader(revisionTemp.Reader(nil).Read)
 	result := []StatusFile{}
 	buf := lib.NewBlockBuf()
 	for {

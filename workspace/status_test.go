@@ -61,6 +61,24 @@ func TestStatus(t *testing.T) {
 		}, statusFilesString(status))
 	})
 
+	t.Run("A directory comes directly before its contents", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+		w := wstd.NewTestWorkspace(t, r.Repository)
+
+		w.Write("sub.txt", "s")
+		w.Write("sub/a.txt", "a")
+
+		status, err := Status(t.Context(), w.Workspace, r.Repository, wstd.StatusOptions(), td.NewFS(t))
+		assert.NoError(err)
+		assert.Equal([]string{
+			"A sub.txt",
+			"A sub/",
+			"A sub/a.txt",
+		}, statusFilesString(status))
+	})
+
 	t.Run("Status runs against the workspace head once it has been set by a merge", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)

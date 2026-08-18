@@ -46,6 +46,9 @@ func TestHappyPath(t *testing.T) {
 		sut.Write("b.txt", "b")
 		sut.Mkdir("dir1")
 		sut.Write("dir1/d.txt", "d")
+		// `dir1.txt` is only here to make sure that listings put a directory
+		// directly before its contents.
+		sut.Write("dir1.txt", "D")
 		sut.ClingSync("merge", "--no-progress", "--message", "first commit")
 
 		log := sut.ClingSync("log", "--short")
@@ -125,20 +128,26 @@ func TestHappyPath(t *testing.T) {
 		assert.Equal(td.Dedent(`
 			b.txt
 			c.txt
+			dir1.txt
 			dir1/
 			dir1/d.txt
 		`), ls(), "The head revision should hold these paths")
 		assert.Equal(td.Dedent(`
 			b.txt
 			c.txt
+			dir1.txt
 		`), ls("--exclude", "dir1"), "Excluding a directory should drop its contents too")
 		assert.Equal("dir1/", ls("--exclude", "**/*.txt"))
-		assert.Equal("c.txt", ls("--exclude", "dir1", "--exclude", "b.txt"), "--exclude should be repeatable")
+		assert.Equal(td.Dedent(`
+			c.txt
+			dir1.txt
+		`), ls("--exclude", "dir1", "--exclude", "b.txt"), "--exclude should be repeatable")
 		// The two narrow the result together rather than widening it: the
-		// pattern picks the three text files and --exclude then drops one.
+		// pattern picks the four text files and --exclude then drops one.
 		// The flag has to come first or it is parsed as a second positional.
 		assert.Equal(td.Dedent(`
 			b.txt
+			dir1.txt
 			dir1/d.txt
 		`), ls("--exclude", "c.txt", "**/*.txt"), "--exclude should narrow the pattern argument, not widen it")
 
@@ -149,6 +158,7 @@ func TestHappyPath(t *testing.T) {
 		assert.Equal(td.Dedent(`
 			b.txt
 			c.txt
+			dir1.txt
 		`), td.Column(sut.Ls(), 4), "the restored tree should hold exactly what `ls --exclude dir1` listed")
 		// `b.txt` was modified in the second commit and `c.txt` added there, so
 		// both prove the restore took its content from the head revision.
@@ -166,11 +176,13 @@ func TestHappyPath(t *testing.T) {
 		assert.Equal(td.Dedent(`
 			b.txt
 			c.txt
+			dir1.txt
 			dir1/
 		`), ls("--depth", "1"), "--depth 1 should list only the direct children")
 		assert.Equal(td.Dedent(`
 			b.txt
 			c.txt
+			dir1.txt
 			dir1/
 			dir1/d.txt
 		`), ls("--depth", "2"), "--depth 2 should reach into the directory")
@@ -193,6 +205,7 @@ func TestHappyPath(t *testing.T) {
 
                 A a.txt
                 A b.txt
+                A dir1.txt
                 A dir1/
                 A dir1/d.txt
 			`, rev2Id, rev2Date, rev1Id, rev1Date)),
@@ -1713,7 +1726,8 @@ func (s *Sut) Ls() string {
 		return nil
 	})
 	s.assert.NoError(err, "failed to walk directory")
-	return strings.Join(lines, "\n")
+	// Make sure the order is the same as `cling-sync ls` etc. would give.
+	return td.Sort(strings.Join(lines, "\n"), 4)
 }
 
 func (s *Sut) Write(path string, content string) {

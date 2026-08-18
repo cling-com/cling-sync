@@ -102,7 +102,7 @@ func Ls(ctx context.Context, repository *lib.Repository, tmpFS lib.FS, opts *LsO
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
 	defer snapshot.Remove() //nolint:errcheck
-	reader := snapshot.Reader(nil)
+	reader := lib.NewDisplayOrderReader(snapshot.Reader(nil).Read)
 	files := []LsFile{}
 	buf := lib.NewBlockBuf()
 	for {

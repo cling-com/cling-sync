@@ -3,6 +3,7 @@ package lib
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"io"
 	"slices"
 	"strconv"
@@ -218,4 +219,83 @@ func (rr *RevisionReader) Read(ctx context.Context, buf BlockBuf) (*RevisionEntr
 	}
 	rr.last = entry
 	return entry, nil
+}
+
+// The most a `DisplayOrderReader` holds back before it gives up. Reaching this
+// takes thousands of directories whose names nest inside one another.
+const maxDisplayOrderHoldBack = 8 * 1024 * 1024
+
+// Read entries in the order they should be printed, where a directory comes
+// directly before its contents.
+//
+// Entries are stored ordered by path alone, so a sibling whose name continues
+// below `/` falls between a directory and its contents: `sub`, `sub.txt`,
+// `sub/a.txt`. Holding a directory back until its contents are reached gives
+// `sub.txt`, `sub`, `sub/a.txt`, which is the same order as comparing a
+// directory as its path with a trailing `/`.
+type DisplayOrderReader struct {
+	source func(BlockBuf) (*RevisionEntry, error)
+	// Directories waiting for their contents, outermost first. One holds
+	// another only when its name nests inside the gap of the one before it.
+	//
+	// These outlive later reads into the same `buf`, so an entry must copy its
+	// fields instead of pointing into it, pinned by
+	// `TestRevisionEntry/Unmarshalling does not alias the buffer`.
+	held         []*RevisionEntry
+	heldBytes    int
+	pending      []*RevisionEntry
+	pendingIndex int
+}
+
+func NewDisplayOrderReader(source func(BlockBuf) (*RevisionEntry, error)) *DisplayOrderReader {
+	return &DisplayOrderReader{source, nil, 0, nil, 0}
+}
+
+func (dr *DisplayOrderReader) Read(buf BlockBuf) (*RevisionEntry, error) {
+	for {
+		if dr.pendingIndex < len(dr.pending) {
+			entry := dr.pending[dr.pendingIndex]
+			dr.pendingIndex++
+			return entry, nil
+		}
+		dr.pending = dr.pending[:0]
+		dr.pendingIndex = 0
+		entry, err := dr.source(buf)
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return nil, err
+			}
+			if len(dr.held) == 0 {
+				return nil, io.EOF
+			}
+			for i := len(dr.held) - 1; i >= 0; i-- {
+				dr.pending = append(dr.pending, dr.held[i])
+			}
+			dr.held = dr.held[:0]
+			dr.heldBytes = 0
+			continue
+		}
+		// A directory keeps waiting only while the entries arriving belong to
+		// the gap between it and its own contents, which are the paths that
+		// extend its name with a byte below `/`.
+		for len(dr.held) > 0 {
+			held := dr.held[len(dr.held)-1]
+			p, d := entry.Path.p, held.Path.p
+			if len(p) > len(d) && strings.HasPrefix(p, d) && p[len(d)] < '/' {
+				break
+			}
+			dr.held = dr.held[:len(dr.held)-1]
+			dr.heldBytes -= held.MarshallSize()
+			dr.pending = append(dr.pending, held)
+		}
+		if !entry.Metadata.FileMode.IsDir() {
+			dr.pending = append(dr.pending, entry)
+			continue
+		}
+		dr.held = append(dr.held, entry)
+		dr.heldBytes += entry.MarshallSize()
+		if dr.heldBytes > maxDisplayOrderHoldBack {
+			return nil, Errorf("too many nested directories to list, starting at %s", dr.held[0].Path)
+		}
+	}
 }

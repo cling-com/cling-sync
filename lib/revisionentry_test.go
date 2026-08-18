@@ -2,6 +2,7 @@ package lib
 
 import (
 	"math/rand/v2"
+	"reflect"
 	"slices"
 	"testing"
 )
@@ -66,6 +67,53 @@ func TestRevisionEntry(t *testing.T) {
 
 		// Files are greater than directories.
 		assert.Equal(1, sut.PathCompare(td.RevisionEntryExt("a", RevisionEntryKindUpdate, 0, "")))
+	})
+
+	t.Run("Unmarshalling does not alias the buffer", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		// `ProtobufReader` decodes without copying, so this does not hold for
+		// every message. It has to hold for `RevisionEntry`, because the n-way
+		// merge, `TempCache`, and `DisplayOrderReader` all keep entries while
+		// the block they came from is read over.
+		//
+		// Every field is a chance to alias, so `want` below has to fill all of
+		// them. If the shape changes, the test data must change with it.
+		assert.Fields([]string{
+			"Kind lib.RevisionEntryKind",
+			"Path lib.Path",
+			"Metadata lib.PathMetadata",
+		}, reflect.TypeFor[RevisionEntry]())
+		assert.Fields([]string{
+			"FileMode lib.FileMode",
+			"Mtime lib.Timestamp",
+			"Size int64",
+			"FileHash lib.Sha256",
+			"BlockIds []lib.BlockId",
+			"SymLinkTarget *lib.Path",
+			"Uid *uint32",
+			"Gid *uint32",
+			"Birthtime *lib.Timestamp",
+		}, reflect.TypeFor[PathMetadata]())
+
+		// A symlink is the only kind that fills every field, and `Update`
+		// because `Add` is 0.
+		want := td.RevisionEntryExt("sub/a.txt", RevisionEntryKindUpdate, FileModeSymlink|0o777, "content")
+		assert.AllFieldsSet(want)
+
+		// Marshall and unmarshall.
+		buf := make([]byte, want.MarshallSize())
+		w := NewProtobufWriter(buf)
+		assert.NoError(want.Marshall(w))
+		got, err := UnmarshallRevisionEntry(NewProtobufReader(w.Bytes()))
+		assert.NoError(err)
+
+		// Write garbage to the BlockBuf so if anything would alias it would
+		// change the `want`.
+		for i := range buf {
+			buf[i] = 0xff
+		}
+		assert.Equal(want, got)
 	})
 }
 

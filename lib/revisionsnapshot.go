@@ -86,6 +86,11 @@ func revisionNWayMerge( //nolint:funlen
 	}, len(revisions))
 	// Put the cursor's next entry back into the queue. A revision that has no
 	// entries left drops out of the merge.
+	//
+	// Every cursor reads into the same `buf`, so one revision's queued entry
+	// outlives another's `ReadBlock`. That is safe only because a
+	// `RevisionEntry` copies its fields instead of pointing into the buffer,
+	// pinned by `TestRevisionEntry/Unmarshalling does not alias the buffer`.
 	advance := func(c mergeCursor) error {
 		entry, err := c.reader.Read(ctx, buf)
 		if errors.Is(err, io.EOF) {
