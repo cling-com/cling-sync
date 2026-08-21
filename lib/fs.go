@@ -170,9 +170,10 @@ type memoryFileWriter struct {
 func (w *memoryFileWriter) Write(p []byte) (n int, err error) {
 	w.shared.mu.Lock()
 	defer w.shared.mu.Unlock()
-	if int64(w.Len()+len(p)) > w.shared.maxMemory {
+	if w.shared.usedMemory+int64(len(p)) > w.shared.maxMemory {
 		return 0, WrapErrorf(io.ErrShortWrite, "memory limit of %d bytes exceeded", w.shared.maxMemory)
 	}
+	w.shared.usedMemory += int64(len(p))
 	return w.Buffer.Write(p)
 }
 
@@ -187,7 +188,6 @@ func (w *memoryFileWriter) Close() error {
 		return nil
 	}
 	w.closed = true
-	w.shared.usedMemory += int64(w.Len())
 	return nil
 }
 

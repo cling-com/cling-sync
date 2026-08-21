@@ -98,6 +98,28 @@ func TestMemoryFS(t *testing.T) {
 		assert.Error(err, "memory limit of 15 bytes exceeded")
 	})
 
+	t.Run("Memory limit is enforced across files", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		sut := NewMemoryFS(15)
+
+		writeFile(t, sut, "a.txt", "1234567890")
+		w, err := sut.OpenWrite("b.txt")
+		assert.NoError(err)
+		written, err := w.Write([]byte("12345"))
+		assert.NoError(err)
+		assert.Equal(5, written)
+		_, err = w.Write([]byte("6"))
+		assert.ErrorIs(err, io.ErrShortWrite)
+		assert.Error(err, "memory limit of 15 bytes exceeded")
+		assert.NoError(w.Close())
+		assert.Equal(int64(15), sut.shared.usedMemory)
+
+		assert.NoError(sut.Remove("a.txt"))
+		writeFile(t, sut, "c.txt", "1234567890")
+		assert.Equal(int64(15), sut.shared.usedMemory)
+	})
+
 	t.Run("Remove frees memory", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
