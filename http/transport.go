@@ -10,7 +10,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"time"
 
 	"github.com/cling-com/cling-sync/lib"
 )
@@ -19,11 +21,29 @@ type DefaultHTTPClient struct {
 	Client *http.Client
 }
 
+// NewDefaultHTTPClient wraps `client`. A nil `client` gets a transport with
+// per-phase timeouts (dial 30s, TLS handshake 10s, response headers 60s) so
+// a dead connection cannot hang a request forever. `http.Client.Timeout` is
+// deliberately left at zero: it would also cap the body transfer and cut off
+// slow but flowing block reads. A transfer that stalls mid-body is only
+// caught by cancelling the request context.
 func NewDefaultHTTPClient(client *http.Client) *DefaultHTTPClient {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{ //nolint:exhaustruct
+			Transport: newDefaultTransport(30*time.Second, 10*time.Second, 60*time.Second),
+		}
 	}
 	return &DefaultHTTPClient{Client: client}
+}
+
+func newDefaultTransport(dial, tlsHandshake, responseHeader time.Duration) *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()              //nolint:forcetypeassert
+	dialer := &net.Dialer{Timeout: dial, KeepAlive: 30 * time.Second} //nolint:exhaustruct
+	t.DialContext = dialer.DialContext
+	t.TLSHandshakeTimeout = tlsHandshake
+	t.ResponseHeaderTimeout = responseHeader
+	t.ExpectContinueTimeout = time.Second
+	return t
 }
 
 func (c *DefaultHTTPClient) Request(
