@@ -367,6 +367,7 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 	if err != nil {
 		return err
 	}
+	view := lib.NewRepositoryView(repository, pathPrefix)
 	revisionId, err := revisionId(ctx, repository, args.Revision)
 	if err != nil {
 		return err
@@ -381,16 +382,15 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		RevisionId:      revisionId,
 		SnapshotMonitor: snapshotMon,
 		Path:            path,
-		PathPrefix:      pathPrefix,
 	}
 	snapshotMon.Preparing()
 	if args.Stdout || !IsTerm(os.Stdout) {
-		err := ws.Cat(ctx, repository, os.Stdout, opts, tmpFS)
+		err := ws.Cat(ctx, view, os.Stdout, opts, tmpFS)
 		snapshotMon.close()
 		return err //nolint:wrapcheck
 	}
 	var buf bytes.Buffer
-	err = ws.Cat(ctx, repository, &buf, opts, tmpFS)
+	err = ws.Cat(ctx, view, &buf, opts, tmpFS)
 	snapshotMon.close()
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -478,6 +478,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if err != nil {
 		return err
 	}
+	view := lib.NewRepositoryView(repository, pathPrefix)
 	// The pattern is required, so Include is always set. Exclude stays nil
 	// when unused, like everywhere else: a nil filter means "no filter", and
 	// an empty one that always matches would hide that distinction.
@@ -500,7 +501,6 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	opts := &ws.CpOptions{
 		Include:                include,
 		Exclude:                exclude,
-		PathPrefix:             pathPrefix,
 		Monitor:                mon,
 		SnapshotMonitor:        snapshotMon,
 		RevisionId:             revisionId,
@@ -515,7 +515,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	}
 	defer cleanup()
 	snapshotMon.Preparing()
-	err = ws.Cp(ctx, repository, lib.NewRealFS(flags.Arg(1)), opts, tmpFS)
+	err = ws.Cp(ctx, view, lib.NewRealFS(flags.Arg(1)), opts, tmpFS)
 	snapshotMon.close()
 	mon.close()
 	if args.IgnoreErrors && mon.Errors > 0 {
@@ -881,6 +881,7 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	if err != nil {
 		return err
 	}
+	view := lib.NewRepositoryView(repository, pathPrefix)
 	var dest lib.Path
 	if destination != "/" {
 		dest, err = ws.ValidatePathPrefix(destination)
@@ -908,7 +909,6 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	}
 	snapshotMonitor, stagingMonitor, commitMonitor := NewImportMonitors(CLIMonitorMode(args.Verbose, args.NoProgress))
 	opts := &ws.ImportOptions{
-		PathPrefix:             pathPrefix,
 		Dest:                   dest,
 		Include:                include,
 		Exclude:                exclude,
@@ -923,7 +923,7 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	}
 	defer cleanup()
 	snapshotMonitor.Preparing()
-	imp, err := ws.NewImport(ctx, repository, lib.NewRealFS(sourcePath), opts, tmpFS)
+	imp, err := ws.NewImport(ctx, view, lib.NewRealFS(sourcePath), opts, tmpFS)
 	snapshotMonitor.close()
 	stagingMonitor.close()
 	if err != nil {
@@ -1233,6 +1233,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	if err != nil {
 		return err
 	}
+	view := lib.NewRepositoryView(repository, pathPrefix)
 	revisionId, err := revisionId(ctx, repository, args.Revision)
 	if err != nil {
 		return err
@@ -1243,7 +1244,6 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		SnapshotMonitor: snapshotMon,
 		Include:         include,
 		Exclude:         exclude,
-		PathPrefix:      pathPrefix,
 		Depth:           args.Depth,
 	}
 	tmpFS, cleanup, err := newTempFS("ls")
@@ -1252,7 +1252,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 	}
 	defer cleanup()
 	snapshotMon.Preparing()
-	files, err := ws.Ls(ctx, repository, tmpFS, opts)
+	files, err := ws.Ls(ctx, view, tmpFS, opts)
 	snapshotMon.close()
 	if err != nil {
 		return err //nolint:wrapcheck
@@ -1359,6 +1359,7 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 	if err != nil {
 		return err
 	}
+	view := lib.NewRepositoryView(repository, pathPrefix)
 	var revisionRange lib.RevisionRange
 	if args.Revision != "" {
 		var chain lib.RevisionChain
@@ -1370,13 +1371,12 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		}
 	}
 	opts := &ws.LogOptions{
-		Include:    include,
-		Exclude:    exclude,
-		Status:     args.Status,
-		Range:      revisionRange,
-		PathPrefix: pathPrefix,
+		Include: include,
+		Exclude: exclude,
+		Status:  args.Status,
+		Range:   revisionRange,
 	}
-	logs, err := ws.Log(ctx, repository, opts)
+	logs, err := ws.Log(ctx, view, opts)
 	if err != nil {
 		return err //nolint:wrapcheck
 	}

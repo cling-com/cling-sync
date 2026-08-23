@@ -137,10 +137,9 @@ func (r RepositoryAPI) Ls(this js.Value, args []js.Value) any { //nolint:funlen
 			SnapshotMonitor: silentSnapshotMonitor(),
 			Include:         nil,
 			Exclude:         exclude,
-			PathPrefix:      lib.Path{},
 			Depth:           0,
 		}
-		files, err := workspace.Ls(wasmContext(), repository, tmpFS, opts)
+		files, err := workspace.Ls(wasmContext(), lib.NewRepositoryView(repository, lib.Path{}), tmpFS, opts)
 		if err != nil {
 			reject(js.ValueOf(err.Error()))
 			return

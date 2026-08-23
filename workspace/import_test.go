@@ -19,7 +19,7 @@ func TestImport(t *testing.T) {
 		// `docs/` comes from an unrelated import and must survive untouched.
 		docs := td.NewTestFS(t, td.NewFS(t))
 		docs.Write("readme.md", "readme")
-		imp, err := NewImport(t.Context(), r.Repository, docs.FS, wstd.ImportOptions(td.Path("docs")), td.NewFS(t))
+		imp, err := NewImport(t.Context(), r.View(""), docs.FS, wstd.ImportOptions(td.Path("docs")), td.NewFS(t))
 		assert.NoError(err)
 		_, err = imp.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
@@ -33,7 +33,7 @@ func TestImport(t *testing.T) {
 
 		blocks := blockCount(t, r)
 		head := r.Head()
-		imp, err = NewImport(t.Context(), r.Repository, src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
+		imp, err = NewImport(t.Context(), r.View(""), src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{
 			"A photos/a.txt",
@@ -60,7 +60,7 @@ func TestImport(t *testing.T) {
 		}, r.RevisionSnapshotFileInfos(rev, nil))
 
 		// The same source again is not a new revision.
-		imp, err = NewImport(t.Context(), r.Repository, src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
+		imp, err = NewImport(t.Context(), r.View(""), src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{}, statusFilesString(imp.Changes))
 		_, err = imp.Commit(t.Context(), td.CommitInfo())
@@ -75,13 +75,13 @@ func TestImport(t *testing.T) {
 		src := td.NewTestFS(t, td.NewFS(t))
 		src.Write("a.jpg", "a")
 
-		imp, err := NewImport(t.Context(), r.Repository, src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
+		imp, err := NewImport(t.Context(), r.View(""), src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
 		assert.NoError(err)
 		_, err = imp.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
 		src.Write("a.jpg", "changed")
-		imp, err = NewImport(t.Context(), r.Repository, src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
+		imp, err = NewImport(t.Context(), r.View(""), src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{"M photos/a.jpg"}, statusFilesString(imp.Changes))
 
@@ -101,14 +101,14 @@ func TestImport(t *testing.T) {
 		src.Write("keep.jpg", "keep")
 		src.Write("gone.jpg", "gone")
 
-		imp, err := NewImport(t.Context(), r.Repository, src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
+		imp, err := NewImport(t.Context(), r.View(""), src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
 		assert.NoError(err)
 		_, err = imp.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
 
 		src.Rm("gone.jpg")
 		src.Write("new.jpg", "new")
-		imp, err = NewImport(t.Context(), r.Repository, src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
+		imp, err = NewImport(t.Context(), r.View(""), src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{"A photos/new.jpg"}, statusFilesString(imp.Changes))
 
@@ -129,7 +129,7 @@ func TestImport(t *testing.T) {
 		src := td.NewTestFS(t, td.NewFS(t))
 		src.Write("a.txt", "a")
 
-		imp, err := NewImport(t.Context(), r.Repository, src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
+		imp, err := NewImport(t.Context(), r.View(""), src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
 		assert.NoError(err)
 		_, err = imp.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)
@@ -138,7 +138,7 @@ func TestImport(t *testing.T) {
 		opts := wstd.ImportOptions(td.Path("photos"))
 		mon := wstd.CommitMonitor()
 		opts.CommitMonitor = mon
-		imp, err = NewImport(t.Context(), r.Repository, src.FS, opts, td.NewFS(t))
+		imp, err = NewImport(t.Context(), r.View(""), src.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{"M photos/a.txt"}, statusFilesString(imp.Changes))
 
@@ -165,7 +165,7 @@ func TestImport(t *testing.T) {
 		opts := wstd.ImportOptions(td.Path("photos"))
 		opts.Include = lib.NewPathInclusionFilter([]string{"**/*.jpg"})
 		opts.Exclude = lib.NewPathExclusionFilter([]string{"raw"})
-		imp, err := NewImport(t.Context(), r.Repository, src.FS, opts, td.NewFS(t))
+		imp, err := NewImport(t.Context(), r.View(""), src.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{"A photos/a.jpg"}, statusFilesString(imp.Changes))
 
@@ -177,7 +177,7 @@ func TestImport(t *testing.T) {
 		}, r.RevisionSnapshotFileInfos(rev, nil))
 	})
 
-	t.Run("PathPrefix scopes the destination and the reported paths", func(t *testing.T) {
+	t.Run("A view scopes the destination and the reported paths", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
@@ -185,8 +185,7 @@ func TestImport(t *testing.T) {
 		src.Write("a.txt", "a")
 
 		opts := wstd.ImportOptions(td.Path("backup"))
-		opts.PathPrefix = td.Path("look/here")
-		imp, err := NewImport(t.Context(), r.Repository, src.FS, opts, td.NewFS(t))
+		imp, err := NewImport(t.Context(), r.View("look/here"), src.FS, opts, td.NewFS(t))
 		assert.NoError(err)
 		// The prefix is not repeated in the reported paths, the same as `ls`.
 		assert.Equal([]string{"A backup/a.txt"}, statusFilesString(imp.Changes))
@@ -208,7 +207,7 @@ func TestImport(t *testing.T) {
 		src := td.NewTestFS(t, td.NewFS(t))
 		src.Write("a.txt", "a")
 
-		imp, err := NewImport(t.Context(), r.Repository, src.FS, wstd.ImportOptions(lib.Path{}), td.NewFS(t))
+		imp, err := NewImport(t.Context(), r.View(""), src.FS, wstd.ImportOptions(lib.Path{}), td.NewFS(t))
 		assert.NoError(err)
 		assert.Equal([]string{"A a.txt"}, statusFilesString(imp.Changes))
 
@@ -226,13 +225,13 @@ func TestImport(t *testing.T) {
 		src := td.NewTestFS(t, td.NewFS(t))
 		src.Write("a.txt", "a")
 
-		imp, err := NewImport(t.Context(), r.Repository, src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
+		imp, err := NewImport(t.Context(), r.View(""), src.FS, wstd.ImportOptions(td.Path("photos")), td.NewFS(t))
 		assert.NoError(err)
 
 		// Someone else commits between the scan and the commit.
 		other := td.NewTestFS(t, td.NewFS(t))
 		other.Write("b.txt", "b")
-		imp2, err := NewImport(t.Context(), r.Repository, other.FS, wstd.ImportOptions(td.Path("docs")), td.NewFS(t))
+		imp2, err := NewImport(t.Context(), r.View(""), other.FS, wstd.ImportOptions(td.Path("docs")), td.NewFS(t))
 		assert.NoError(err)
 		_, err = imp2.Commit(t.Context(), td.CommitInfo())
 		assert.NoError(err)

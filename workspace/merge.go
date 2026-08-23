@@ -55,7 +55,7 @@ type Merger struct {
 	wsHead           lib.RevisionId
 	remoteRevisionId lib.RevisionId
 	tempFS           lib.FS
-	repository       *lib.Repository
+	view             *lib.RepositoryView
 	directories      map[string]fs.FileInfo
 	opts             *MergeOptions
 	blockBuf         lib.BlockBuf
@@ -70,11 +70,12 @@ func Merge(ctx context.Context, ws *Workspace, repository *lib.Repository, opts 
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create merge tmp dir")
 	}
 	defer tempFS.RemoveAll(".") //nolint:errcheck
+	view := ws.View(repository)
 	head, err := repository.Head(ctx)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get repository head")
 	}
-	wsHead, staging, localChanges, wsRevision, err := buildLocalChanges(ctx, ws, tempFS, repository, opts)
+	wsHead, staging, localChanges, wsRevision, err := buildLocalChanges(ctx, ws, tempFS, view, opts)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build local changes")
 	}
@@ -90,11 +91,15 @@ func Merge(ctx context.Context, ws *Workspace, repository *lib.Repository, opts 
 			return lib.RevisionId{}, lib.Errorf("workspace head %s is not in the repository's revision chain", wsHead)
 		}
 	}
-	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, head, opts.SnapshotMonitor)
+	remoteSnapshot, err := buildRemoteChanges(ctx, tempFS, view, head, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
-	merger := Merger{ws, wsHead, head, tempFS, repository, make(map[string]fs.FileInfo), opts, lib.NewBlockBuf()}
+	remoteRevision, err := remoteSnapshot.Cache()
+	if err != nil {
+		return lib.RevisionId{}, err //nolint:wrapcheck
+	}
+	merger := Merger{ws, wsHead, head, tempFS, view, make(map[string]fs.FileInfo), opts, lib.NewBlockBuf()}
 	conflicts, err := merger.findConflicts(localChanges.Source, remoteRevision, wsRevision)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to find conflicts")
@@ -106,7 +111,7 @@ func Merge(ctx context.Context, ws *Workspace, repository *lib.Repository, opts 
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to apply remote changes")
 	}
 	if localChanges.Source.Chunks() > 0 {
-		newHead, err := merger.commitLocalChanges(ctx, localChanges.Source, remoteRevision)
+		newHead, err := merger.commitLocalChanges(ctx, localChanges.Source, remoteSnapshot)
 		if err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "failed to commit local changes")
 		}
@@ -125,7 +130,7 @@ type ForceCommitOptions struct {
 // Commit all local changes ignoring possible conflicts.
 // Afterwards, merge the repository into the workspace.
 // Return a `lib.EmptyCommit` error if there are no local changes.
-func ForceCommit(
+func ForceCommit( //nolint:funlen
 	ctx context.Context,
 	ws *Workspace,
 	repository *lib.Repository,
@@ -136,7 +141,8 @@ func ForceCommit(
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create merge tmp dir")
 	}
 	defer tempFS.RemoveAll(".") //nolint:errcheck
-	wsHead, staging, localChanges, _, err := buildLocalChanges(ctx, ws, tempFS, repository, &opts.MergeOptions)
+	view := ws.View(repository)
+	wsHead, staging, localChanges, _, err := buildLocalChanges(ctx, ws, tempFS, view, &opts.MergeOptions)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build local changes")
 	}
@@ -156,7 +162,7 @@ func ForceCommit(
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get repository head")
 	}
-	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, head, opts.SnapshotMonitor)
+	remoteSnapshot, err := buildRemoteChanges(ctx, tempFS, view, head, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
 	}
@@ -165,18 +171,22 @@ func ForceCommit(
 		wsHead,
 		head,
 		tempFS,
-		repository,
+		view,
 		make(map[string]fs.FileInfo),
 		&opts.MergeOptions,
 		lib.NewBlockBuf(),
 	}
-	newHead, err := merger.commitLocalChanges(ctx, localChanges.Source, remoteRevision)
+	newHead, err := merger.commitLocalChanges(ctx, localChanges.Source, remoteSnapshot)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to commit local changes")
 	}
-	remoteRevision, err = buildRemoteChanges(ctx, tempFS, repository, newHead, opts.SnapshotMonitor)
+	remoteSnapshot, err = buildRemoteChanges(ctx, tempFS, view, newHead, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to build remote changes")
+	}
+	remoteRevision, err := remoteSnapshot.Cache()
+	if err != nil {
+		return lib.RevisionId{}, err //nolint:wrapcheck
 	}
 	if err := merger.applyRemoteChanges(ctx, newHead, remoteRevision, staging, localChanges); err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to apply remote changes")
@@ -201,18 +211,14 @@ func hasRemoteChanged(ctx context.Context, repository *lib.Repository, revisionI
 func (m *Merger) commitLocalChanges(
 	ctx context.Context,
 	localChanges *lib.Temp[*lib.RevisionEntry],
-	remoteRevision *lib.RevisionEntryCache,
+	remoteSnapshot *lib.ViewSnapshot,
 ) (lib.RevisionId, error) {
 	tmpFS, err := m.tempFS.MkSub("commit")
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create commit tmp dir")
 	}
-	src := &CommitFilesSrc{Src: m.ws.FS, SrcPrefix: m.ws.PathPrefix, Files: localChanges}
-	dest := &CommitFilesDest{
-		Repository: m.repository,
-		RevisionId: m.remoteRevisionId,
-		Snapshot:   remoteRevision,
-	}
+	src := &CommitFilesSrc{Src: m.ws.FS, Files: localChanges}
+	dest := &CommitFilesDest{View: m.view, Snapshot: remoteSnapshot}
 	opts := &CommitFilesOptions{
 		Author:                 m.opts.Author,
 		Message:                m.opts.Message,
@@ -269,7 +275,6 @@ func (m *Merger) findConflicts(
 			if localChange.Metadata.IsEqualRestorableAttributes(remoteChange.Metadata, m.opts.RestorableMetadataFlag) {
 				continue
 			}
-			localChange.Path, _ = localChange.Path.TrimBase(m.ws.PathPrefix)
 			conflicts = append(conflicts, MergeConflict{localChange, remoteChange})
 		}
 	}
@@ -331,7 +336,7 @@ func (m *Merger) applyRemoteChanges(
 	localChanges *lib.RevisionEntryCache,
 ) error {
 	defer m.restoreDirFileModes() //nolint:errcheck
-	if err := hasRemoteChanged(ctx, m.repository, head); err != nil {
+	if err := hasRemoteChanged(ctx, m.view.Repository, head); err != nil {
 		return err
 	}
 	if err := m.copyRepositoryFiles(ctx, remoteRevision.Source, staging, localChanges); err != nil {
@@ -355,12 +360,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 	staging *StagingEntryCache,
 	localChanges *lib.RevisionEntryCache,
 ) error {
-	r := remoteRevision.Reader(func(e *lib.RevisionEntry) bool {
-		// The path prefix is a literal path, not a glob pattern so we should not
-		// try to make this work magically with a filter implementation.
-		_, ok := e.Path.TrimBase(m.ws.PathPrefix)
-		return ok
-	})
+	r := remoteRevision.Reader(nil)
 	ignorePatterns, err := lib.CollectIgnorePatterns(m.ws.FS, ".")
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to collect ignore patterns")
@@ -373,13 +373,10 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		if remoteEntry.Path == m.ws.PathPrefix {
-			continue
-		}
 		if remoteEntry.Kind != lib.RevisionEntryKindAdd && remoteEntry.Kind != lib.RevisionEntryKindUpdate {
 			return lib.Errorf("unexpected revision entry type %s for %s", remoteEntry.Kind, remoteEntry.Path)
 		}
-		localPath, _ := remoteEntry.Path.TrimBase(m.ws.PathPrefix)
+		localPath := remoteEntry.Path
 		targetPath := localPath.String()
 		// A repository entry the workspace ignores must never be materialized.
 		if ignorePatterns.Match(targetPath, remoteEntry.Metadata.FileMode.IsDir()) {
@@ -408,20 +405,14 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 			existsInStaging = false
 			stagingEntry = nil
 		}
+		target, isSymlink := md.SymLink()
 		switch {
-		case md.FileMode.IsSymlink():
-			if md.SymLinkTarget == nil {
-				return lib.Errorf("symlink %s has no target", remoteEntry.Path)
+		case isSymlink:
+			sameAsStaging := false
+			if existsInStaging {
+				stagingTarget, stagingIsSymlink := stagingEntry.Metadata.SymLink()
+				sameAsStaging = stagingIsSymlink && stagingTarget == target
 			}
-			localTargetPath, inside := md.SymLinkTarget.TrimBase(m.ws.PathPrefix)
-			if !inside {
-				// Target falls outside `PathPrefix` - silently skip (see README).
-				continue
-			}
-			sameAsStaging := existsInStaging &&
-				stagingEntry.Metadata.FileMode.IsSymlink() &&
-				stagingEntry.Metadata.SymLinkTarget != nil &&
-				*stagingEntry.Metadata.SymLinkTarget == *md.SymLinkTarget
 			if !sameAsStaging {
 				if err := m.ws.FS.MkdirAll(filepath.Dir(targetPath)); err != nil {
 					return lib.WrapErrorf(err, "failed to create parent directory for %s", targetPath)
@@ -431,7 +422,7 @@ func (m *Merger) copyRepositoryFiles( //nolint:funlen
 						return lib.WrapErrorf(err, "failed to remove existing %s", targetPath)
 					}
 				}
-				linkStr, err := filepath.Rel(filepath.Dir(localPath.String()), localTargetPath.String())
+				linkStr, err := filepath.Rel(filepath.Dir(localPath.String()), target.String())
 				if err != nil {
 					return lib.WrapErrorf(err, "failed to compute symlink string for %s", targetPath)
 				}
@@ -518,16 +509,15 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 		if !d.Type().IsRegular() && !d.Type().IsDir() && d.Type()&fs.ModeSymlink == 0 {
 			return nil
 		}
-		repositoryPath_, err := lib.NewPath(path)
+		localPath, err := lib.NewPath(path)
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to create path from %s", path)
 		}
-		repositoryPath := m.ws.PathPrefix.Join(repositoryPath_)
-		stagingEntry, existsInStaging, err := staging.Get(lib.PathKey{Path: repositoryPath, IsDir: d.IsDir()})
+		stagingEntry, existsInStaging, err := staging.Get(lib.PathKey{Path: localPath, IsDir: d.IsDir()})
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from staging cache for %s", path)
 		}
-		_, existsInLocalChanges, err := localChanges.Get(lib.PathKey{Path: repositoryPath, IsDir: d.IsDir()})
+		_, existsInLocalChanges, err := localChanges.Get(lib.PathKey{Path: localPath, IsDir: d.IsDir()})
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from local changes cache for %s", path)
 		}
@@ -546,7 +536,7 @@ func (m *Merger) deleteObsoleteWorkspaceFiles( //nolint:funlen
 			}
 			return nil
 		}
-		remoteEntry, existsInRemote, err := remoteRevision.Get(lib.PathKey{Path: repositoryPath, IsDir: d.IsDir()})
+		remoteEntry, existsInRemote, err := remoteRevision.Get(lib.PathKey{Path: localPath, IsDir: d.IsDir()})
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to get entry from repository snapshot cache for %s", path)
 		}
@@ -648,7 +638,7 @@ func (m *Merger) restoreFromRepository( //nolint:funlen
 	}
 	defer f.Close() //nolint:errcheck
 	for _, blockId := range entry.Metadata.BlockIds {
-		data, err := m.repository.ReadBlock(ctx, blockId, m.blockBuf)
+		data, err := m.view.Repository.ReadBlock(ctx, blockId, m.blockBuf)
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {
@@ -712,11 +702,11 @@ func (m *Merger) restoreFromRepository( //nolint:funlen
 // When the workspace head is the root revision (the workspace was attached
 // but never merged), the repository head is used as the diff baseline and
 // `Delete` entries are filtered out of `localChanges`.
-func buildLocalChanges( //nolint:funlen
+func buildLocalChanges(
 	ctx context.Context,
 	ws *Workspace,
 	tempFS lib.FS,
-	repository *lib.Repository,
+	view *lib.RepositoryView,
 	opts *MergeOptions,
 ) (wsHead lib.RevisionId, stagingCache *StagingEntryCache, localChangesCache *lib.RevisionEntryCache, wsRevisionCache *lib.RevisionEntryCache, err error) {
 	wsHead, err = ws.Head(ctx)
@@ -726,7 +716,7 @@ func buildLocalChanges( //nolint:funlen
 	baselineHead := wsHead
 	suppressDeletes := false
 	if wsHead.IsRoot() {
-		baselineHead, err = repository.Head(ctx)
+		baselineHead, err = view.Repository.Head(ctx)
 		if err != nil {
 			return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to get repository head")
 		}
@@ -740,17 +730,11 @@ func buildLocalChanges( //nolint:funlen
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create snapshot tmp dir")
 	}
-	wsRevisionSnapshot, err := lib.NewRevisionSnapshot(
-		ctx,
-		repository,
-		baselineHead,
-		wsSnapshotTmpDir,
-		opts.SnapshotMonitor,
-	)
+	wsRevisionSnapshot, err := view.NewSnapshot(ctx, baselineHead, wsSnapshotTmpDir, opts.SnapshotMonitor)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	wsRevisionCache, err = lib.NewRevisionEntryTempCache(wsRevisionSnapshot, 10)
+	wsRevisionCache, err = lib.NewRevisionEntryTempCache(wsRevisionSnapshot.Temp, 10)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create revision temp cache")
 	}
@@ -758,7 +742,7 @@ func buildLocalChanges( //nolint:funlen
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to create staging cache")
 	}
-	staging, err := NewStaging(ws.FS, ws.PathPrefix, nil, nil, cache, stagingTmpDir, opts.StagingMonitor)
+	staging, err := NewStaging(ws.FS, nil, nil, cache, stagingTmpDir, opts.StagingMonitor)
 	if err != nil {
 		return wsHead, nil, nil, nil, lib.WrapErrorf(err, "failed to detect local changes")
 	}
@@ -781,25 +765,21 @@ func buildLocalChanges( //nolint:funlen
 	return wsHead, stagingCache, localChangesCache, wsRevisionCache, nil
 }
 
-// Build a `lib.RevisionTempCache` based on the `lib.RevisionSnapshot` of the remote `head` revision.
+// Build the snapshot of the remote `head` revision.
 func buildRemoteChanges(
 	ctx context.Context,
 	tempFS lib.FS,
-	repository *lib.Repository,
+	view *lib.RepositoryView,
 	head lib.RevisionId,
 	mon lib.RevisionSnapshotMonitor,
-) (remoteRevisionCache *lib.RevisionEntryCache, err error) {
+) (*lib.ViewSnapshot, error) {
 	tmp, err := tempFS.MkSub("repository-snapshot")
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create repository snapshot tmp dir")
 	}
-	remoteRevisionSnapshot, err := lib.NewRevisionSnapshot(ctx, repository, head, tmp, mon)
+	remoteRevisionSnapshot, err := view.NewSnapshot(ctx, head, tmp, mon)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create remote revision snapshot")
 	}
-	remoteRevisionCache, err = lib.NewRevisionEntryTempCache(remoteRevisionSnapshot, 10)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to create remote revision cache")
-	}
-	return remoteRevisionCache, nil
+	return remoteRevisionSnapshot, nil
 }

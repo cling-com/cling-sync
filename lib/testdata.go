@@ -476,6 +476,10 @@ type TestRepository struct {
 	assert     Assert
 }
 
+func (r *TestRepository) View(prefix string) *RepositoryView {
+	return NewRepositoryView(r.Repository, td.Path(prefix))
+}
+
 func (r *TestRepository) Head() RevisionId {
 	r.t.Helper()
 	head, err := r.Repository.Head(r.t.Context())

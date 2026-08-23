@@ -16,8 +16,8 @@ type RevisionLog struct {
 	RevisionId lib.RevisionId
 	Revision   lib.Revision
 	Files      []StatusFile
-	// TotalFiles is how many paths the revision holds, including the ones
-	// skipped by PathPrefix, Include, and Exclude.
+	// How many paths the revision holds, including the ones the view hides
+	// and the ones Include and Exclude drop.
 	TotalFiles int
 }
 
@@ -57,8 +57,7 @@ func derefString(s *string) string {
 }
 
 type LogOptions struct {
-	// Include and Exclude match paths relative to PathPrefix. Either one drops
-	// a revision that has no path left after filtering.
+	// Either filter drops a revision that has no path left after filtering.
 	Include *lib.PathInclusionFilter
 	Exclude *lib.PathExclusionFilter
 	Status  bool
@@ -67,22 +66,21 @@ type LogOptions struct {
 	// and a Range.Since not in the repository is never reached, so the log
 	// runs to the root.
 	Range lib.RevisionRange
-	// PathPrefix scopes the reported paths to a subtree. It deliberately does
-	// not hide revisions that touched nothing inside it, because history is
-	// global: revision ids, `~<n>`, and ranges all address the whole chain.
-	PathPrefix lib.Path
 }
 
+// A view deliberately does not hide revisions that touched nothing inside it,
+// because history is global: revision ids, `~<n>`, and ranges all address the
+// whole chain.
 func Log( //nolint:funlen
 	ctx context.Context,
-	repository *lib.Repository,
+	view *lib.RepositoryView,
 	opts *LogOptions,
 ) ([]RevisionLog, error) {
 	var revisionId lib.RevisionId
 	if opts.Range.Until != nil {
 		revisionId = *opts.Range.Until
 	} else {
-		head, err := repository.Head(ctx)
+		head, err := view.Repository.Head(ctx)
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to get head revision")
 		}
@@ -98,15 +96,16 @@ func Log( //nolint:funlen
 		if opts.Range.Since != nil && revisionId == *opts.Range.Since {
 			break
 		}
-		revision, err := repository.ReadRevision(ctx, revisionId, buf)
+		revision, err := view.Repository.ReadRevision(ctx, revisionId, buf)
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read revision %s", revisionId)
 		}
 		files := []StatusFile{}
 		matchedAtLeastOnePath := false
+		hidden := 0
 		totalFiles := 0
 		if opts.Status || filtered {
-			revisionReader := lib.NewRevisionReader(repository, &revision)
+			revisionReader := view.NewRevisionReader(&revision)
 			displayReader := lib.NewDisplayOrderReader(func(buf lib.BlockBuf) (*lib.RevisionEntry, error) {
 				return revisionReader.Read(ctx, buf)
 			})
@@ -119,27 +118,22 @@ func Log( //nolint:funlen
 					return nil, lib.WrapErrorf(err, "failed to read revision %s", revisionId)
 				}
 				totalFiles += 1
-				// Trim the prefix first so the filter matches against the
-				// prefix-relative path the user sees, not the full repository path.
-				path, ok := entry.Path.TrimBase(opts.PathPrefix)
-				if !ok {
-					continue
-				}
 				isDir := entry.Metadata.FileMode.IsDir()
-				if !opts.Include.Include(path, isDir) || !opts.Exclude.Include(path, isDir) {
+				if !opts.Include.Include(entry.Path, isDir) || !opts.Exclude.Include(entry.Path, isDir) {
 					continue
 				}
 				matchedAtLeastOnePath = true
 				if opts.Status {
-					files = append(files, StatusFile{path, entry.Kind, entry.Metadata})
+					files = append(files, StatusFile{entry.Path, entry.Kind, entry.Metadata})
 				}
 			}
+			hidden = revisionReader.Hidden()
 		}
 		if !opts.Status {
 			files = nil
 		}
 		if !filtered || matchedAtLeastOnePath {
-			logs = append(logs, RevisionLog{revisionId, revision, files, totalFiles})
+			logs = append(logs, RevisionLog{revisionId, revision, files, totalFiles + hidden})
 		}
 		revisionId = revision.ParentRevisionId
 	}

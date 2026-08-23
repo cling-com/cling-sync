@@ -90,14 +90,12 @@ type LsOptions struct {
 	SnapshotMonitor lib.RevisionSnapshotMonitor
 	Include         *lib.PathInclusionFilter
 	Exclude         *lib.PathExclusionFilter
-	PathPrefix      lib.Path
-	// Maximum number of path segments to list, counted from `PathPrefix`.
-	// 0 means unlimited.
+	// Maximum number of path segments to list, 0 means unlimited.
 	Depth int
 }
 
-func Ls(ctx context.Context, repository *lib.Repository, tmpFS lib.FS, opts *LsOptions) ([]LsFile, error) {
-	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS, opts.SnapshotMonitor)
+func Ls(ctx context.Context, view *lib.RepositoryView, tmpFS lib.FS, opts *LsOptions) ([]LsFile, error) {
+	snapshot, err := view.NewSnapshot(ctx, opts.RevisionId, tmpFS, opts.SnapshotMonitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
@@ -113,20 +111,14 @@ func Ls(ctx context.Context, repository *lib.Repository, tmpFS lib.FS, opts *LsO
 			}
 			return nil, lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		// Trim the prefix first so the filter matches against the
-		// prefix-relative path the user sees, not the full repository path.
-		path, ok := re.Path.TrimBase(opts.PathPrefix)
-		if !ok {
-			continue
-		}
-		if opts.Depth > 0 && path.Depth() > opts.Depth {
+		if opts.Depth > 0 && re.Path.Depth() > opts.Depth {
 			continue
 		}
 		isDir := re.Metadata.FileMode.IsDir()
-		if !opts.Include.Include(path, isDir) || !opts.Exclude.Include(path, isDir) {
+		if !opts.Include.Include(re.Path, isDir) || !opts.Exclude.Include(re.Path, isDir) {
 			continue
 		}
-		files = append(files, LsFile{path, re.Metadata})
+		files = append(files, LsFile{re.Path, re.Metadata})
 	}
 	return files, nil
 }

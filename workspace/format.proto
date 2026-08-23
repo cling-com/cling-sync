@@ -9,7 +9,7 @@ import "lib/format.proto";
 message StagingEntry {
     // Length is capped by `lib.NewPath` (`lib.MaxPathLen`), which the
     // Unmarshall path also runs.
-    string repo_path = 1 [(lib.cling) = {type: "lib.Path"}];
+    string path = 1 [(lib.cling) = {type: "lib.Path"}];
     lib.PathMetadata metadata = 2;
     lib.Timestamp ctime = 3;
     int64 size = 4;

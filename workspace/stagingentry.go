@@ -28,7 +28,7 @@ func NewStagingEntry(
 	}
 	md := lib.NewPathMetadataFromFileInfo(fileInfo, fileHash, blockIds)
 	return &StagingEntry{
-		RepoPath: path,
+		Path:     path,
 		Metadata: md,
 		Ctime:    lib.Timestamp{Sec: stat.CTimeSec, Nsec: uint32(stat.CTimeNSec)}, //nolint:gosec
 		Size:     fileSize,
@@ -42,13 +42,13 @@ func (e *StagingEntry) HasChanged(other *StagingEntry) bool {
 
 func StagingEntryPathCompare(a, b *StagingEntry) int {
 	return lib.PathCompare(
-		a.RepoPath, a.Metadata.FileMode.IsDir(),
-		b.RepoPath, b.Metadata.FileMode.IsDir(),
+		a.Path, a.Metadata.FileMode.IsDir(),
+		b.Path, b.Metadata.FileMode.IsDir(),
 	)
 }
 
 func StagingCacheKey(stagingEntry *StagingEntry) lib.PathKey {
-	return lib.PathKey{Path: stagingEntry.RepoPath, IsDir: stagingEntry.Metadata.FileMode.IsDir()}
+	return lib.PathKey{Path: stagingEntry.Path, IsDir: stagingEntry.Metadata.FileMode.IsDir()}
 }
 
 type StagingEntryCache = lib.TempCache[*StagingEntry, lib.PathKey]

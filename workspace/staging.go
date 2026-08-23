@@ -28,7 +28,6 @@ type StagingEntryMonitor interface {
 type Staging struct {
 	Include    *lib.PathInclusionFilter
 	Exclude    *lib.PathExclusionFilter
-	pathPrefix lib.Path
 	tempWriter *lib.TempWriter[*StagingEntry]
 	temp       *lib.Temp[*StagingEntry]
 	tmpFS      lib.FS
@@ -39,11 +38,8 @@ type Staging struct {
 // interrupted restore are deleted.
 // A nil `cache` scans without reading or writing a staging cache, so nothing
 // else in `src` is written.
-// If `pathPrefix` is not empty, it will be prepended to all paths *after* the
-// filters are applied.
 func NewStaging( //nolint:funlen
 	src lib.FS,
-	pathPrefix lib.Path,
 	include *lib.PathInclusionFilter,
 	exclude *lib.PathExclusionFilter,
 	cache *StagingCache,
@@ -54,7 +50,7 @@ func NewStaging( //nolint:funlen
 	if cache != nil {
 		defer cache.Cleanup() //nolint:errcheck
 	}
-	staging := &Staging{include, exclude, pathPrefix, revisionEntryWriter, nil, tmp}
+	staging := &Staging{include, exclude, revisionEntryWriter, nil, tmp}
 	err := lib.WalkDirIgnore(src, ".", func(path_ string, d fs.DirEntry, err error) (retErr error) {
 		if err != nil {
 			return err
@@ -109,7 +105,6 @@ func NewStaging( //nolint:funlen
 			excluded = true
 			return nil
 		}
-		repoPath := pathPrefix.Join(localPath)
 		var entry *StagingEntry
 		switch {
 		case isSymlink:
@@ -130,14 +125,13 @@ func NewStaging( //nolint:funlen
 					localPath,
 				)
 			}
-			repoTarget := pathPrefix.Join(resolved)
-			entry, err = NewStagingEntry(repoPath, fileInfo, fileInfo.Size(), lib.Sha256{}, nil)
+			entry, err = NewStagingEntry(localPath, fileInfo, fileInfo.Size(), lib.Sha256{}, nil)
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to build staging entry for %s", localPath)
 			}
-			entry.Metadata.SymLinkTarget = &repoTarget
+			entry.Metadata.SymLinkTarget = &resolved
 		case cache != nil:
-			entry, err = cache.Handle(localPath, repoPath, fileInfo)
+			entry, err = cache.Handle(localPath, fileInfo)
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to stage %s", localPath)
 			}
@@ -146,14 +140,14 @@ func NewStaging( //nolint:funlen
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to get metadata for %s", localPath)
 			}
-			entry, err = NewStagingEntry(repoPath, fileInfo, md.Size, md.FileHash, md.BlockIds)
+			entry, err = NewStagingEntry(localPath, fileInfo, md.Size, md.FileHash, md.BlockIds)
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to stage %s", localPath)
 			}
 		}
 		entryMD = &entry.Metadata
 		if err := staging.add(entry); err != nil {
-			return lib.WrapErrorf(err, "failed to add %s to staging (as %s)", localPath, repoPath)
+			return lib.WrapErrorf(err, "failed to add %s to staging", localPath)
 		}
 		return nil
 	})
@@ -186,7 +180,7 @@ func (s *Staging) Finalize() (*lib.Temp[*StagingEntry], error) {
 // not in staging do not produce `Delete` entries. Used when the diff baseline
 // is the repository head rather than the workspace head (attach-non-empty).
 func (s *Staging) MergeWithSnapshot( //nolint:funlen
-	snapshot *lib.Temp[*lib.RevisionEntry],
+	snapshot *lib.ViewSnapshot,
 	restorableMetadataFlag lib.RestorableMetadataFlag,
 	suppressDeletes bool,
 ) (*lib.Temp[*lib.RevisionEntry], error) {
@@ -195,17 +189,12 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 		return nil, lib.WrapErrorf(err, "failed to finalize staging temp writer")
 	}
 	// Testing for nil asks whether any filtering is needed at all, so that a
-	// prefix-less, filter-less snapshot is read without a per-entry callback.
+	// filter-less snapshot is read without a per-entry callback.
 	var revFilter func(e *lib.RevisionEntry) bool
-	if !s.pathPrefix.IsEmpty() || s.Include != nil || s.Exclude != nil {
+	if s.Include != nil || s.Exclude != nil {
 		revFilter = func(e *lib.RevisionEntry) bool {
-			// Revision entries carry repository paths, the filters match local ones.
-			local, ok := e.Path.TrimBase(s.pathPrefix)
-			if !ok {
-				return false
-			}
 			isDir := e.Metadata.FileMode.IsDir()
-			return s.Include.Include(local, isDir) && s.Exclude.Include(local, isDir)
+			return s.Include.Include(e.Path, isDir) && s.Exclude.Include(e.Path, isDir)
 		}
 	}
 	revReader := snapshot.Reader(revFilter)
@@ -229,13 +218,6 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 	var stg *StagingEntry
 	var rev *lib.RevisionEntry
 	buf := lib.NewBlockBuf()
-	symlinkPointsOutsideWorkspacePrefix := func(e *lib.RevisionEntry) bool {
-		if e == nil || !e.Metadata.FileMode.IsSymlink() || e.Metadata.SymLinkTarget == nil {
-			return false
-		}
-		_, inside := e.Metadata.SymLinkTarget.TrimBase(s.pathPrefix)
-		return !inside
-	}
 	for {
 		if stg == nil {
 			// Read the next staging entry.
@@ -243,7 +225,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			if errors.Is(err, io.EOF) {
 				// Write a delete for all remaining revision snapshot entries.
 				for {
-					if rev != nil && !symlinkPointsOutsideWorkspacePrefix(rev) {
+					if rev != nil {
 						if err := add(rev.Path, lib.RevisionEntryKindDelete, rev.Metadata); err != nil {
 							return nil, err
 						}
@@ -269,7 +251,7 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 				// Write an add for all remaining staging entries.
 				for {
 					if stg != nil { // The current one might be nil.
-						if err := add(stg.RepoPath, lib.RevisionEntryKindAdd, stg.Metadata); err != nil {
+						if err := add(stg.Path, lib.RevisionEntryKindAdd, stg.Metadata); err != nil {
 							return nil, err
 						}
 					}
@@ -288,13 +270,13 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			}
 		}
 		c := lib.PathCompare(
-			stg.RepoPath, stg.Metadata.FileMode.IsDir(),
+			stg.Path, stg.Metadata.FileMode.IsDir(),
 			rev.Path, rev.Metadata.FileMode.IsDir(),
 		)
 		if c == 0 { //nolint:gocritic
 			if !stg.Metadata.IsEqualRestorableAttributes(rev.Metadata, restorableMetadataFlag) {
 				// Write an update.
-				if err := add(stg.RepoPath, lib.RevisionEntryKindUpdate, stg.Metadata); err != nil {
+				if err := add(stg.Path, lib.RevisionEntryKindUpdate, stg.Metadata); err != nil {
 					return nil, err
 				}
 			}
@@ -302,16 +284,14 @@ func (s *Staging) MergeWithSnapshot( //nolint:funlen
 			rev = nil
 		} else if c < 0 {
 			// Write an add.
-			if err := add(stg.RepoPath, lib.RevisionEntryKindAdd, stg.Metadata); err != nil {
+			if err := add(stg.Path, lib.RevisionEntryKindAdd, stg.Metadata); err != nil {
 				return nil, err
 			}
 			stg = nil
 			continue
 		} else {
-			if !symlinkPointsOutsideWorkspacePrefix(rev) {
-				if err := add(rev.Path, lib.RevisionEntryKindDelete, rev.Metadata); err != nil {
-					return nil, err
-				}
+			if err := add(rev.Path, lib.RevisionEntryKindDelete, rev.Metadata); err != nil {
+				return nil, err
 			}
 			rev = nil
 			continue
@@ -376,18 +356,18 @@ func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
 
 // Return the metadata either from the cache or compute it.
 // Update the cache.
-func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs.FileInfo) (*StagingEntry, error) {
+func (c *StagingCache) Handle(localPath lib.Path, fileInfo fs.FileInfo) (*StagingEntry, error) {
 	var fileMetadata *lib.PathMetadata
 	var stagingEntry *StagingEntry
 	var err error
 	if c.cache != nil {
-		existingEntry, ok, err := c.cache.Get(lib.PathKey{Path: repoPath, IsDir: fileInfo.IsDir()})
+		existingEntry, ok, err := c.cache.Get(lib.PathKey{Path: localPath, IsDir: fileInfo.IsDir()})
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to get entry from cache for %s", localPath)
 		}
 		if ok && existingEntry.Metadata.Size == fileInfo.Size() {
 			newEntry, err := NewStagingEntry(
-				repoPath,
+				localPath,
 				fileInfo,
 				existingEntry.Metadata.Size,
 				existingEntry.Metadata.FileHash,
@@ -416,7 +396,7 @@ func (c *StagingCache) Handle(localPath lib.Path, repoPath lib.Path, fileInfo fs
 	}
 	if stagingEntry == nil {
 		stagingEntry, err = NewStagingEntry(
-			repoPath,
+			localPath,
 			fileInfo,
 			fileMetadata.Size,
 			fileMetadata.FileHash,

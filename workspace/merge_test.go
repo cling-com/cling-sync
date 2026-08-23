@@ -942,7 +942,7 @@ func TestMergeWithPathPrefix(t *testing.T) {
 		assert.Equal(true, ok)
 		assert.Equal(1, len(conflicts))
 		assert.Equal("a.txt", conflicts[0].WorkspaceEntry.Path.String())
-		assert.Equal("look/here/a.txt", conflicts[0].RepositoryEntry.Path.String())
+		assert.Equal("a.txt", conflicts[0].RepositoryEntry.Path.String())
 		assert.Equal(lib.RevisionEntryKindUpdate, conflicts[0].WorkspaceEntry.Kind)
 		assert.Equal(lib.RevisionEntryKindUpdate, conflicts[0].RepositoryEntry.Kind)
 		assert.Equal(int64(3), conflicts[0].WorkspaceEntry.Metadata.Size)
@@ -1203,7 +1203,7 @@ func TestMergeSymlinks(t *testing.T) {
 		assert.ErrorIs(err, ErrUpToDate)
 	})
 
-	t.Run("path prefix workspace replacing an outside-prefix symlink commits an update", func(t *testing.T) {
+	t.Run("Path prefix workspace replacing an outside-prefix symlink with a file", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
@@ -1219,20 +1219,53 @@ func TestMergeSymlinks(t *testing.T) {
 		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
-		// The link was silently skipped on restore. Now create a regular
-		// file at the same path. The commit must record this as UPDATE,
-		// not ADD, because the path already exists in the previous
-		// revision (even though w2 couldn't see the original target).
+		// The link was silently skipped on restore, so from the workspace's
+		// point of view the path is free and the file is an ADD. The
+		// repository's newer entry supersedes the link all the same.
 		w2.Write("link", "newfile")
 		rev, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
 
 		assert.Equal([]lib.TestRevisionEntryInfo{
-			{"look/here/link", lib.RevisionEntryKindUpdate, 0o600, td.SHA256("newfile")},
+			{"look/here/link", lib.RevisionEntryKindAdd, 0o600, td.SHA256("newfile")},
 		}, r.RevisionInfos(rev))
 	})
 
-	t.Run("local symlink overwritten by file and directory", func(t *testing.T) {
+	t.Run("Path prefix workspace replacing an outside-prefix symlink with a directory", func(t *testing.T) {
+		t.Parallel()
+		assert := lib.NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		w := wstd.NewTestWorkspace(t, r.Repository)
+		w.Write("outside.txt", "x")
+		w.Write("look/here/a.txt", "a")
+		w.Symlink("../../outside.txt", "look/here/link")
+		_, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		w2 := wstd.NewTestWorkspaceWithPathPrefix(t, r.Repository, "look/here/")
+		_, err = Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+
+		// The link was skipped on restore, so the path is free for a directory.
+		w2.Write("link/inner.txt", "inner")
+		rev, err := Merge(t.Context(), w2.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal("inner", w2.Cat("link/inner.txt"))
+
+		// The link must be deleted, otherwise the repository would hold a
+		// file and a directory at the same path.
+		assert.Equal([]lib.TestRevisionEntryInfo{
+			{"look/here/link", lib.RevisionEntryKindDelete, fs.ModeSymlink, lib.Sha256{}},
+			{"look/here/link", lib.RevisionEntryKindAdd, fs.ModeDir | 0o700, lib.Sha256{}},
+			{"look/here/link/inner.txt", lib.RevisionEntryKindAdd, 0o600, td.SHA256("inner")},
+		}, r.RevisionInfos(rev))
+		_, err = Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
+		assert.NoError(err)
+		assert.Equal("inner", w.Cat("look/here/link/inner.txt"))
+	})
+
+	t.Run("Local symlink overwritten by file and directory", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))

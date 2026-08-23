@@ -74,10 +74,6 @@ func TestPathMetadata(t *testing.T) {
 		actual.SymLinkTarget = &modifiedLink
 		assert.Equal(false, symBase.IsEqualRestorableAttributes(actual, RestorableMetadataAll))
 
-		actual = *symBase
-		actual.SymLinkTarget = nil
-		assert.Equal(false, symBase.IsEqualRestorableAttributes(actual, RestorableMetadataAll))
-
 		actual = *base
 		uid := *base.Uid + 1
 		actual.Uid = &uid

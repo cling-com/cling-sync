@@ -76,8 +76,17 @@ func (p *PathMetadata) HasBirthtime() bool {
 	return p.Birthtime != nil
 }
 
-func (p *PathMetadata) HasSymLinkTarget() bool {
-	return p.SymLinkTarget != nil
+// The target of a symlink, and whether this is one.
+//
+// Panic if the mode says this is a symlink but `SymLinkTarget` is empty.
+func (p *PathMetadata) SymLink() (Path, bool) {
+	if !p.FileMode.IsSymlink() {
+		return Path{}, false //nolint:exhaustruct
+	}
+	if p.SymLinkTarget == nil || p.SymLinkTarget.IsEmpty() {
+		panic("symlink has no target")
+	}
+	return *p.SymLinkTarget, true
 }
 
 type RestorableMetadataFlag uint8
@@ -105,10 +114,9 @@ func (p *PathMetadata) IsEqualRestorableAttributes(other PathMetadata, flags Res
 	if p.FileHash != other.FileHash {
 		return false
 	}
-	if p.HasSymLinkTarget() != other.HasSymLinkTarget() {
-		return false
-	}
-	if p.HasSymLinkTarget() && *p.SymLinkTarget != *other.SymLinkTarget {
+	target, isSymlink := p.SymLink()
+	otherTarget, otherIsSymlink := other.SymLink()
+	if isSymlink != otherIsSymlink || target != otherTarget {
 		return false
 	}
 	if flags&RestorableMetadataOwnership != 0 {

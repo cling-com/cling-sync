@@ -6,7 +6,7 @@ package workspace
 import "github.com/cling-com/cling-sync/lib"
 
 type StagingEntry struct {
-	RepoPath lib.Path
+	Path     lib.Path
 	Metadata lib.PathMetadata
 	Ctime    lib.Timestamp
 	Size     int64
@@ -21,7 +21,7 @@ func (o *StagingEntry) Marshall(w lib.ProtobufWriter) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
-	if err := w.WriteBytes(1, []byte(o.RepoPath.String())); err != nil {
+	if err := w.WriteBytes(1, []byte(o.Path.String())); err != nil {
 		return err
 	}
 	if err := w.WriteMessage(2, o.Metadata.Marshall); err != nil {
@@ -58,7 +58,7 @@ func UnmarshallStagingEntry(r *lib.ProtobufReader) (*StagingEntry, error) {
 		switch tag {
 		case 1:
 			if wireType != 2 {
-				return nil, lib.Errorf("StagingEntry.RepoPath: unexpected wire type %d, want 2", wireType)
+				return nil, lib.Errorf("StagingEntry.Path: unexpected wire type %d, want 2", wireType)
 			}
 			b, err := r.ReadBytes()
 			if err != nil {
@@ -68,7 +68,7 @@ func UnmarshallStagingEntry(r *lib.ProtobufReader) (*StagingEntry, error) {
 			if err != nil {
 				return nil, err
 			}
-			o.RepoPath = pv
+			o.Path = pv
 		case 2:
 			if wireType != 2 {
 				return nil, lib.Errorf("StagingEntry.Metadata: unexpected wire type %d, want 2", wireType)

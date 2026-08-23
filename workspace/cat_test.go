@@ -36,9 +36,8 @@ func TestCat(t *testing.T) {
 				RevisionId:      rev,
 				SnapshotMonitor: wstd.SnapshotMonitor(),
 				Path:            p,
-				PathPrefix:      lib.Path{},
 			}
-			err = Cat(t.Context(), r.Repository, &buf, opts, td.NewFS(t))
+			err = Cat(t.Context(), r.View(""), &buf, opts, td.NewFS(t))
 			return buf.String(), err
 		}
 		return cat, rev1, rev2
@@ -113,23 +112,21 @@ func TestCat(t *testing.T) {
 		w.Write("sub/a.txt", "nested")
 		rev, err := Merge(t.Context(), w.Workspace, r.Repository, wstd.MergeOptions())
 		assert.NoError(err)
-		cat := func(prefix lib.Path, path string) (string, error) {
+		cat := func(prefix string, path string) (string, error) {
 			p, err := lib.NewPath(path)
 			assert.NoError(err)
 			var buf bytes.Buffer
-			err = Cat(t.Context(), r.Repository, &buf, &CatOptions{rev, wstd.SnapshotMonitor(), p, prefix}, td.NewFS(t))
+			err = Cat(t.Context(), r.View(prefix), &buf, &CatOptions{rev, wstd.SnapshotMonitor(), p}, td.NewFS(t))
 			return buf.String(), err
 		}
-		prefix, err := lib.NewPath("sub")
-		assert.NoError(err)
 
-		got, err := cat(prefix, "a.txt")
+		got, err := cat("sub", "a.txt")
 		assert.NoError(err)
 		assert.Equal("nested", got, "the path should resolve under the prefix, not at the repository root")
-		got, err = cat(lib.Path{}, "a.txt")
+		got, err = cat("", "a.txt")
 		assert.NoError(err)
 		assert.Equal("root", got)
-		_, err = cat(prefix, "sub/a.txt")
+		_, err = cat("sub", "sub/a.txt")
 		assert.Error(err, "file not found", "a full repository path should not resolve under a prefix")
 	})
 }

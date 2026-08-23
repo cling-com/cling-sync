@@ -33,23 +33,13 @@ func (c *Commit) Add(entry *RevisionEntry) error {
 	return c.tempWriter.Add(entry)
 }
 
-// Make sure that the directory `path` exists in the current head of the repository.
-// If some parent directory does not exist, it will be created with the given
-// `NewEmptyDirPathMetadata` metadata.
-func (c *Commit) EnsureDirExists(
-	path Path,
-	snapshotCache *RevisionEntryCache,
-	snapshotRevisionId RevisionId,
-) error {
+// Make sure that the directory `path` exists once the commit is written.
+//
+// `exists` answers whether the base revision holds an entry. Missing parent
+// directories are created with `NewEmptyDirPathMetadata` metadata.
+func (c *Commit) EnsureDirExists(path Path, exists func(PathKey) (bool, error)) error {
 	if path.IsEmpty() {
 		return nil
-	}
-	if c.BaseRevision != snapshotRevisionId {
-		return Errorf(
-			"the commit's base revision %s does not match the snapshot revision %s",
-			c.BaseRevision,
-			snapshotRevisionId,
-		)
 	}
 	md := NewEmptyDirPathMetadata(time.Now())
 	p := path
@@ -61,7 +51,7 @@ func (c *Commit) EnsureDirExists(
 			}
 		}
 		// Check whether it is a file.
-		_, found, err := snapshotCache.Get(PathKey{p, false})
+		found, err := exists(PathKey{p, false})
 		if err != nil {
 			return WrapErrorf(err, "failed to get path %s from remote revision", p)
 		}
@@ -73,7 +63,7 @@ func (c *Commit) EnsureDirExists(
 			)
 		}
 		// Check whether the directory already exists.
-		_, found, err = snapshotCache.Get(PathKey{p, true})
+		found, err = exists(PathKey{p, true})
 		if err != nil {
 			return WrapErrorf(err, "failed to get path %s from remote revision", p)
 		}

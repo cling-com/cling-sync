@@ -85,6 +85,11 @@ This file contains the configuration of your cling workspace.
 	return &Workspace{remoteRepository, pathPrefix, storage, fs, tempFS}, nil
 }
 
+// The repository as this workspace sees it.
+func (w *Workspace) View(repository *lib.Repository) *lib.RepositoryView {
+	return lib.NewRepositoryView(repository, w.PathPrefix)
+}
+
 // Remove `w.TempFS`.
 func (w *Workspace) Close() error {
 	if err := w.TempFS.RemoveAll("."); err != nil {

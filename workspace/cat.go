@@ -11,20 +11,17 @@ import (
 type CatOptions struct {
 	RevisionId      lib.RevisionId
 	SnapshotMonitor lib.RevisionSnapshotMonitor
-	// Path is relative to PathPrefix.
-	Path       lib.Path
-	PathPrefix lib.Path
+	Path            lib.Path
 }
 
 // Cat writes the contents of a single regular file from the repository to w.
-func Cat(ctx context.Context, repository *lib.Repository, w io.Writer, opts *CatOptions, tmpFS lib.FS) error {
-	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS, opts.SnapshotMonitor)
+func Cat(ctx context.Context, view *lib.RepositoryView, w io.Writer, opts *CatOptions, tmpFS lib.FS) error {
+	snapshot, err := view.NewSnapshot(ctx, opts.RevisionId, tmpFS, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
 	defer snapshot.Remove() //nolint:errcheck
 	reader := snapshot.Reader(nil)
-	repoPath := opts.PathPrefix.Join(opts.Path)
 	buf := lib.NewBlockBuf()
 	for {
 		entry, err := reader.Read(buf)
@@ -34,17 +31,17 @@ func Cat(ctx context.Context, repository *lib.Repository, w io.Writer, opts *Cat
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		if entry.Path != repoPath {
+		if entry.Path != opts.Path {
 			continue
 		}
 		if entry.Metadata.FileMode.IsDir() {
 			return lib.Errorf("%s is a directory", opts.Path)
 		}
-		if entry.Metadata.FileMode.IsSymlink() {
-			return lib.Errorf("%s is a symlink to %s", opts.Path, *entry.Metadata.SymLinkTarget)
+		if target, isSymlink := entry.Metadata.SymLink(); isSymlink {
+			return lib.Errorf("%s is a symlink to %s", opts.Path, target)
 		}
 		for _, blockId := range entry.Metadata.BlockIds {
-			data, err := repository.ReadBlock(ctx, blockId, buf)
+			data, err := view.Repository.ReadBlock(ctx, blockId, buf)
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to read block %s", blockId)
 			}

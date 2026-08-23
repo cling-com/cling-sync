@@ -612,22 +612,22 @@ does.
 
 ## Symlinks
 
-Symbolic links are tracked, but only when their target resolves to a
-path inside the workspace. The stored target is the workspace-relative
-path, prefixed by the workspace's `--path-prefix` (so the repository
-sees the same repo-relative path it sees for regular files).
+Symlinks are tracked if their target is inside the workspace. The
+target is stored as a path relative to the workspace root.
 
 Constraints:
 
-- A symlink whose target is absolute or escapes the workspace root is
-  rejected at commit time (`symlink target escapes path root`).
-- The link target is restored, and the link's own `mtime` is restored
-  via `utimensat(AT_SYMLINK_NOFOLLOW)` so the target isn't touched.
-  Mode and ownership of the link are not restored.
-- In a `--path-prefix` workspace, a symlink whose stored target falls
-  outside the prefix is silently skipped on restore. The repository
-  still holds the link. Another workspace that covers both ends will
-  see and materialise it.
+- A symlink with an absolute target, or a target outside the
+  workspace, is rejected at commit time
+  (`symlink target escapes path root`).
+- The link and its `mtime` are restored. Mode and ownership of the
+  link are not.
+- With `--path-prefix`, a symlink whose target is outside the prefix
+  is invisible: `merge` does not create it, `ls`, `status`, and `log`
+  do not show it. If you create a file or directory at that path, it
+  replaces the link in the repository. Until then the link stays, and
+  a workspace without the prefix still sees it. `import` treats such a
+  path as new, so it replaces the link without `--overwrite`.
 - `import` refuses symlinks outright. A stored target is only meaningful
   relative to a workspace, and an imported directory is not one.
 

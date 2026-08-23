@@ -28,21 +28,17 @@ type CommitMonitor interface {
 
 // The files to commit and where their data is read from.
 type CommitFilesSrc struct {
-	// `Files` are read from `Src`. `SrcPrefix` is the repository path the root of
-	// `Src` maps to, so `<SrcPrefix>/a/b.txt` is read from `a/b.txt`.
-	Src       lib.FS
-	SrcPrefix lib.Path
-	Files     *lib.Temp[*lib.RevisionEntry]
+	Src   lib.FS
+	Files *lib.Temp[*lib.RevisionEntry]
 }
 
 // The repository the files are committed to, and the revision they are
 // committed onto.
 type CommitFilesDest struct {
-	Repository *lib.Repository
+	View *lib.RepositoryView
 	// The revision `Files` were computed against, and the parent of the new one.
-	// Blocks `Snapshot` already holds are reused instead of read and uploaded again.
-	RevisionId lib.RevisionId
-	Snapshot   *lib.RevisionEntryCache
+	// Blocks it already holds are reused instead of read and uploaded again.
+	Snapshot *lib.ViewSnapshot
 }
 
 type CommitFilesOptions struct {
@@ -65,15 +61,13 @@ func CommitFiles( //nolint:funlen
 	opts *CommitFilesOptions,
 	tmpFS lib.FS,
 ) (lib.RevisionId, error) {
-	commit, err := lib.NewCommit(ctx, dest.Repository, tmpFS)
+	commit, err := dest.View.NewCommit(ctx, tmpFS, dest.Snapshot)
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create commit")
 	}
-	if commit.BaseRevision != dest.RevisionId {
-		return lib.RevisionId{}, lib.WrapErrorf(
-			lib.ErrHeadChanged,
-			"the repository changed since the changes were computed",
-		)
+	baseline, err := dest.Snapshot.Cache()
+	if err != nil {
+		return lib.RevisionId{}, err //nolint:wrapcheck
 	}
 	mon := opts.Monitor
 	if err := mon.OnBeforeCommit(); err != nil {
@@ -93,7 +87,7 @@ func CommitFiles( //nolint:funlen
 			return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor start failed for %s", entry.Path)
 		}
 		if entry.Kind != lib.RevisionEntryKindDelete {
-			srcPath, _ := entry.Path.TrimBase(src.SrcPrefix)
+			srcPath := entry.Path
 			stat, err := src.Src.Stat(srcPath.String())
 			if errors.Is(err, fs.ErrNotExist) {
 				return lib.RevisionId{}, lib.WrapErrorf(ErrSourceVanished, "%s", srcPath)
@@ -101,7 +95,7 @@ func CommitFiles( //nolint:funlen
 			if err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to stat %s", srcPath)
 			}
-			baselineEntry, inBaseline, err := dest.Snapshot.Get(entry.PathKey())
+			baselineEntry, inBaseline, err := baseline.Get(entry.PathKey())
 			if err != nil {
 				return lib.RevisionId{}, lib.WrapErrorf(err, "failed to get %s from the baseline", entry.Path)
 			}
@@ -121,7 +115,7 @@ func CommitFiles( //nolint:funlen
 				// Only the metadata changed, the blocks in the repository still hold the content.
 				md.BlockIds = baselineEntry.Metadata.BlockIds
 			default:
-				md, err = AddFileToRepository(ctx, src.Src, srcPath, stat, dest.Repository, entry, mon)
+				md, err = AddFileToRepository(ctx, src.Src, srcPath, stat, dest.View.Repository, entry, mon)
 				if err != nil {
 					return lib.RevisionId{}, lib.WrapErrorf(err, "failed to add %s to the repository", srcPath)
 				}
@@ -143,10 +137,6 @@ func CommitFiles( //nolint:funlen
 		if err := mon.OnEnd(entry); err != nil {
 			return lib.RevisionId{}, lib.WrapErrorf(err, "commit monitor end failed for %s", entry.Path)
 		}
-	}
-	// Make sure the prefix the source maps to exists after the commit.
-	if err := commit.EnsureDirExists(src.SrcPrefix, dest.Snapshot, dest.RevisionId); err != nil {
-		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to ensure %s exists in the repository", src.SrcPrefix)
 	}
 	info := &lib.CommitInfo{Author: opts.Author, Message: opts.Message}
 	revisionId, err := commit.Commit(ctx, info)

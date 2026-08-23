@@ -56,7 +56,7 @@ func TestFormatMarshall(t *testing.T) {
 
 	uid, gid := uint32(1000), uint32(100)
 	check("StagingEntry", &StagingEntry{
-		RepoPath: td.Path("foo/bar.txt"),
+		Path: td.Path("foo/bar.txt"),
 		Metadata: lib.PathMetadata{
 			FileMode: 0o644,
 			Mtime:    lib.Timestamp{Sec: 1234567890, Nsec: 500000000},
@@ -69,7 +69,7 @@ func TestFormatMarshall(t *testing.T) {
 		Size:  42,
 		Inode: 123456,
 	}, UnmarshallStagingEntry, `
-		repo_path: "foo/bar.txt"
+		path: "foo/bar.txt"
 		metadata {
 		  file_mode: 420
 		  mtime {
@@ -103,7 +103,7 @@ func TestFormatValidate(t *testing.T) {
 		})
 	}
 
-	// StagingEntry.RepoPath length is capped by `lib.NewPath` (`lib.MaxPathLen`),
+	// StagingEntry.Path length is capped by `lib.NewPath` (`lib.MaxPathLen`),
 	// not by a Validate rule.
 	check("StagingEntry zero value", &StagingEntry{}, "")
 }

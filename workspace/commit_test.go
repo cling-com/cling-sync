@@ -20,8 +20,8 @@ func TestCommitFiles(t *testing.T) {
 
 		rev, err := CommitFiles(
 			t.Context(),
-			commitFilesSrc(t, r, src, lib.Path{}),
-			commitFilesDest(t, r),
+			commitFilesSrc(t, r.View(""), src),
+			commitFilesDest(t, r.View("")),
 			wstd.CommitFilesOptions(),
 			td.NewFS(t),
 		)
@@ -41,8 +41,8 @@ func TestCommitFiles(t *testing.T) {
 
 		_, err := CommitFiles(
 			t.Context(),
-			commitFilesSrc(t, r, src, lib.Path{}),
-			commitFilesDest(t, r),
+			commitFilesSrc(t, r.View(""), src),
+			commitFilesDest(t, r.View("")),
 			wstd.CommitFilesOptions(),
 			td.NewFS(t),
 		)
@@ -57,8 +57,8 @@ func TestCommitFiles(t *testing.T) {
 		src.Write("a.txt", "a")
 		_, err := CommitFiles(
 			t.Context(),
-			commitFilesSrc(t, r, src, lib.Path{}),
-			commitFilesDest(t, r),
+			commitFilesSrc(t, r.View(""), src),
+			commitFilesDest(t, r.View("")),
 			wstd.CommitFilesOptions(),
 			td.NewFS(t),
 		)
@@ -71,8 +71,8 @@ func TestCommitFiles(t *testing.T) {
 		opts.RestorableMetadataFlag = lib.RestorableMetadataMode
 		rev, err := CommitFiles(
 			t.Context(),
-			commitFilesSrc(t, r, src, lib.Path{}),
-			commitFilesDest(t, r),
+			commitFilesSrc(t, r.View(""), src),
+			commitFilesDest(t, r.View("")),
 			opts,
 			td.NewFS(t),
 		)
@@ -90,14 +90,20 @@ func TestCommitFiles(t *testing.T) {
 		r := td.NewTestRepository(t, td.NewFS(t))
 		src := td.NewTestFS(t, td.NewFS(t))
 		src.Write("a.txt", "a")
-		files := commitFilesSrc(t, r, src, lib.Path{})
-		_, err := CommitFiles(t.Context(), files, commitFilesDest(t, r), wstd.CommitFilesOptions(), td.NewFS(t))
+		files := commitFilesSrc(t, r.View(""), src)
+		_, err := CommitFiles(
+			t.Context(),
+			files,
+			commitFilesDest(t, r.View("")),
+			wstd.CommitFilesOptions(),
+			td.NewFS(t),
+		)
 		assert.NoError(err)
 
 		// The same files again, committed onto the revision that now holds them.
 		// Nothing is left, which is what `merge` runs into when its changes were
 		// computed against the workspace head rather than the repository head.
-		_, err = CommitFiles(t.Context(), files, commitFilesDest(t, r), wstd.CommitFilesOptions(), td.NewFS(t))
+		_, err = CommitFiles(t.Context(), files, commitFilesDest(t, r.View("")), wstd.CommitFilesOptions(), td.NewFS(t))
 		assert.ErrorIs(err, lib.ErrEmptyCommit)
 	})
 
@@ -110,8 +116,8 @@ func TestCommitFiles(t *testing.T) {
 		src.Write("gone.txt", "gone")
 		_, err := CommitFiles(
 			t.Context(),
-			commitFilesSrc(t, r, src, lib.Path{}),
-			commitFilesDest(t, r),
+			commitFilesSrc(t, r.View(""), src),
+			commitFilesDest(t, r.View("")),
 			wstd.CommitFilesOptions(),
 			td.NewFS(t),
 		)
@@ -120,8 +126,8 @@ func TestCommitFiles(t *testing.T) {
 		src.Rm("gone.txt")
 		rev, err := CommitFiles(
 			t.Context(),
-			commitFilesSrc(t, r, src, lib.Path{}),
-			commitFilesDest(t, r),
+			commitFilesSrc(t, r.View(""), src),
+			commitFilesDest(t, r.View("")),
 			wstd.CommitFilesOptions(),
 			td.NewFS(t),
 		)
@@ -137,10 +143,16 @@ func TestCommitFiles(t *testing.T) {
 		r := td.NewTestRepository(t, td.NewFS(t))
 		src := td.NewTestFS(t, td.NewFS(t))
 		src.Write("a.txt", "a")
-		files := commitFilesSrc(t, r, src, lib.Path{})
+		files := commitFilesSrc(t, r.View(""), src)
 
 		src.Rm("a.txt")
-		_, err := CommitFiles(t.Context(), files, commitFilesDest(t, r), wstd.CommitFilesOptions(), td.NewFS(t))
+		_, err := CommitFiles(
+			t.Context(),
+			files,
+			commitFilesDest(t, r.View("")),
+			wstd.CommitFilesOptions(),
+			td.NewFS(t),
+		)
 		assert.ErrorIs(err, ErrSourceVanished)
 	})
 
@@ -150,11 +162,17 @@ func TestCommitFiles(t *testing.T) {
 		r := td.NewTestRepository(t, td.NewFS(t))
 		src := td.NewTestFS(t, td.NewFS(t))
 		src.Write("a.txt", "a")
-		files := commitFilesSrc(t, r, src, lib.Path{})
+		files := commitFilesSrc(t, r.View(""), src)
 
 		// Same size, so the change is only caught by the hash.
 		src.Write("a.txt", "b")
-		_, err := CommitFiles(t.Context(), files, commitFilesDest(t, r), wstd.CommitFilesOptions(), td.NewFS(t))
+		_, err := CommitFiles(
+			t.Context(),
+			files,
+			commitFilesDest(t, r.View("")),
+			wstd.CommitFilesOptions(),
+			td.NewFS(t),
+		)
 		assert.ErrorIs(err, ErrSourceModified)
 	})
 
@@ -164,16 +182,16 @@ func TestCommitFiles(t *testing.T) {
 		r := td.NewTestRepository(t, td.NewFS(t))
 		src := td.NewTestFS(t, td.NewFS(t))
 		src.Write("a.txt", "a")
-		files := commitFilesSrc(t, r, src, lib.Path{})
-		dest := commitFilesDest(t, r)
+		files := commitFilesSrc(t, r.View(""), src)
+		dest := commitFilesDest(t, r.View(""))
 
 		// Someone else commits in between.
 		other := td.NewTestFS(t, td.NewFS(t))
 		other.Write("b.txt", "b")
 		_, err := CommitFiles(
 			t.Context(),
-			commitFilesSrc(t, r, other, lib.Path{}),
-			commitFilesDest(t, r),
+			commitFilesSrc(t, r.View(""), other),
+			commitFilesDest(t, r.View("")),
 			wstd.CommitFilesOptions(),
 			td.NewFS(t),
 		)
@@ -197,8 +215,8 @@ func TestCommitFiles(t *testing.T) {
 
 			_, err := CommitFiles(
 				t.Context(),
-				commitFilesSrc(t, r, src, lib.Path{}),
-				commitFilesDest(t, r),
+				commitFilesSrc(t, r.View(""), src),
+				commitFilesDest(t, r.View("")),
 				opts,
 				td.NewFS(t),
 			)
@@ -220,15 +238,15 @@ func TestCommitFiles(t *testing.T) {
 
 		_, err := CommitFiles(
 			t.Context(),
-			commitFilesSrc(t, r, src, lib.Path{}),
-			commitFilesDest(t, r),
+			commitFilesSrc(t, r.View(""), src),
+			commitFilesDest(t, r.View("")),
 			opts,
 			td.NewFS(t),
 		)
 		assert.ErrorIs(err, lib.ErrHeadChanged)
 	})
 
-	t.Run("SrcPrefix places the source below it", func(t *testing.T) {
+	t.Run("A view places the source below its prefix", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
 		r := td.NewTestRepository(t, td.NewFS(t))
@@ -237,8 +255,8 @@ func TestCommitFiles(t *testing.T) {
 
 		rev, err := CommitFiles(
 			t.Context(),
-			commitFilesSrc(t, r, src, td.Path("look/here")),
-			commitFilesDest(t, r),
+			commitFilesSrc(t, r.View("look/here"), src),
+			commitFilesDest(t, r.View("look/here")),
 			wstd.CommitFilesOptions(),
 			td.NewFS(t),
 		)
@@ -314,27 +332,28 @@ func (m *changeRemoteCommitMonitor) OnStart(entry *lib.RevisionEntry) error {
 	return nil
 }
 
-// The head revision of `r`, to commit onto.
-func commitFilesDest(t *testing.T, r *lib.TestRepository) *CommitFilesDest {
+// The head revision of the view's repository, to commit onto.
+func commitFilesDest(t *testing.T, view *lib.RepositoryView) *CommitFilesDest {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	head := r.Head()
-	snapshot, err := lib.NewRevisionSnapshot(t.Context(), r.Repository, head, td.NewFS(t), wstd.SnapshotMonitor())
+	head, err := view.Repository.Head(t.Context())
 	assert.NoError(err)
-	cache, err := lib.NewRevisionEntryTempCache(snapshot, 10)
+	snapshot, err := view.NewSnapshot(t.Context(), head, td.NewFS(t), wstd.SnapshotMonitor())
 	assert.NoError(err)
-	return &CommitFilesDest{Repository: r.Repository, RevisionId: head, Snapshot: cache}
+	return &CommitFilesDest{View: view, Snapshot: snapshot}
 }
 
-// Scan `src` and diff it against the head revision of `r`.
-func commitFilesSrc(t *testing.T, r *lib.TestRepository, src *lib.TestFS, prefix lib.Path) *CommitFilesSrc {
+// Scan `src` and diff it against the head revision seen through `view`.
+func commitFilesSrc(t *testing.T, view *lib.RepositoryView, src *lib.TestFS) *CommitFilesSrc {
 	t.Helper()
 	assert := lib.NewAssert(t)
-	staging, err := NewStaging(src.FS, prefix, nil, nil, nil, td.NewFS(t), wstd.StagingMonitor())
+	staging, err := NewStaging(src.FS, nil, nil, nil, td.NewFS(t), wstd.StagingMonitor())
 	assert.NoError(err)
-	snapshot, err := lib.NewRevisionSnapshot(t.Context(), r.Repository, r.Head(), td.NewFS(t), wstd.SnapshotMonitor())
+	head, err := view.Repository.Head(t.Context())
+	assert.NoError(err)
+	snapshot, err := view.NewSnapshot(t.Context(), head, td.NewFS(t), wstd.SnapshotMonitor())
 	assert.NoError(err)
 	files, err := staging.MergeWithSnapshot(snapshot, lib.RestorableMetadataAll, false)
 	assert.NoError(err)
-	return &CommitFilesSrc{Src: src.FS, SrcPrefix: prefix, Files: files}
+	return &CommitFilesSrc{Src: src.FS, Files: files}
 }

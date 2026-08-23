@@ -39,18 +39,17 @@ type CpOptions struct {
 	SnapshotMonitor        lib.RevisionSnapshotMonitor
 	Include                *lib.PathInclusionFilter
 	Exclude                *lib.PathExclusionFilter
-	PathPrefix             lib.Path
 	RestorableMetadataFlag lib.RestorableMetadataFlag
 }
 
 func Cp( //nolint:funlen
 	ctx context.Context,
-	repository *lib.Repository,
+	view *lib.RepositoryView,
 	targetFS lib.FS,
 	opts *CpOptions,
 	tmpFS lib.FS,
 ) error {
-	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, opts.RevisionId, tmpFS, opts.SnapshotMonitor)
+	snapshot, err := view.NewSnapshot(ctx, opts.RevisionId, tmpFS, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
@@ -82,21 +81,15 @@ func Cp( //nolint:funlen
 		if err != nil {
 			return lib.WrapErrorf(err, "failed to read revision snapshot")
 		}
-		// Match the filter and restore under the prefix-relative path the user
-		// sees.
-		path, ok := entry.Path.TrimBase(opts.PathPrefix)
-		if !ok {
-			continue
-		}
 		isDir := entry.Metadata.FileMode.IsDir()
-		if !opts.Include.Include(path, isDir) || !opts.Exclude.Include(path, isDir) {
+		if !opts.Include.Include(entry.Path, isDir) || !opts.Exclude.Include(entry.Path, isDir) {
 			continue
 		}
-		target := path.String()
+		target := entry.Path.String()
 		if err := mon.OnStart(entry, target); err != nil {
 			return lib.WrapErrorf(err, "cp monitor start failed for %s", target)
 		}
-		if err := restore(ctx, entry, repository, targetFS, target, buf, mon); err != nil {
+		if err := restore(ctx, entry, view.Repository, targetFS, target, buf, mon); err != nil {
 			return lib.WrapErrorf(err, "failed to copy %s", target)
 		}
 		if err := restoreFileMode(targetFS, target, &entry.Metadata, opts.RestorableMetadataFlag); err != nil {
@@ -269,9 +262,7 @@ func restore( //nolint:funlen
 
 func restoreSymlink(entry *lib.RevisionEntry, targetFS lib.FS, target string, mon CpMonitor) error {
 	md := entry.Metadata
-	if md.SymLinkTarget == nil {
-		return lib.Errorf("symlink %s has no target", entry.Path)
-	}
+	symlinkTarget, _ := md.SymLink()
 	if err := targetFS.MkdirAll(filepath.Dir(target)); err != nil {
 		if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 			if endErr := mon.OnEnd(entry, target); endErr != nil {
@@ -281,7 +272,7 @@ func restoreSymlink(entry *lib.RevisionEntry, targetFS lib.FS, target string, mo
 		}
 		return lib.WrapErrorf(err, "failed to create parent directory %s", target)
 	}
-	linkStr, err := filepath.Rel(filepath.Dir(entry.Path.String()), md.SymLinkTarget.String())
+	linkStr, err := filepath.Rel(filepath.Dir(entry.Path.String()), symlinkTarget.String())
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to compute symlink string for %s", target)
 	}

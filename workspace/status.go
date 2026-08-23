@@ -98,7 +98,7 @@ func Status( //nolint:funlen
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create temporary staging directory")
 	}
-	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, head, snapshotFS, opts.SnapshotMonitor)
+	snapshot, err := ws.View(repository).NewSnapshot(ctx, head, snapshotFS, opts.SnapshotMonitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
@@ -108,7 +108,6 @@ func Status( //nolint:funlen
 	}
 	staging, err := NewStaging(
 		ws.FS,
-		ws.PathPrefix,
 		opts.Include,
 		opts.Exclude,
 		cache,
@@ -136,11 +135,7 @@ func Status( //nolint:funlen
 		if err != nil {
 			return nil, lib.WrapErrorf(err, "failed to read revision chunk file")
 		}
-		path, ok := entry.Path.TrimBase(ws.PathPrefix)
-		if !ok {
-			continue
-		}
-		result = append(result, StatusFile{path, entry.Kind, entry.Metadata})
+		result = append(result, StatusFile{entry.Path, entry.Kind, entry.Metadata})
 	}
 	return result, nil
 }

@@ -29,8 +29,8 @@ func TestLog(t *testing.T) {
 		// List all revisions.
 		logs, err := Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{nil, nil, false, lib.RevisionRange{nil, nil}, lib.Path{}},
+			r.View(""),
+			&LogOptions{nil, nil, false, lib.RevisionRange{nil, nil}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -42,8 +42,8 @@ func TestLog(t *testing.T) {
 		// A range walks from Until back to (but excluding) Since.
 		logs, err = Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{nil, nil, false, lib.RevisionRange{Since: &revId1, Until: &revId3}, lib.Path{}},
+			r.View(""),
+			&LogOptions{nil, nil, false, lib.RevisionRange{Since: &revId1, Until: &revId3}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -54,8 +54,8 @@ func TestLog(t *testing.T) {
 		// A nil Since walks from Until back to the root.
 		logs, err = Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{nil, nil, false, lib.RevisionRange{Since: nil, Until: &revId2}, lib.Path{}},
+			r.View(""),
+			&LogOptions{nil, nil, false, lib.RevisionRange{Since: nil, Until: &revId2}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -87,8 +87,8 @@ func TestLog(t *testing.T) {
 		// List all revisions.
 		logs, err := Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{nil, nil, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+			r.View(""),
+			&LogOptions{nil, nil, true, lib.RevisionRange{nil, nil}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -120,8 +120,8 @@ func TestLog(t *testing.T) {
 
 		logs, err := Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{nil, nil, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+			r.View(""),
+			&LogOptions{nil, nil, true, lib.RevisionRange{nil, nil}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -156,8 +156,8 @@ func TestLog(t *testing.T) {
 		filter := lib.NewPathInclusionFilter([]string{"a.txt"})
 		logs, err := Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{filter, nil, false, lib.RevisionRange{nil, nil}, lib.Path{}},
+			r.View(""),
+			&LogOptions{filter, nil, false, lib.RevisionRange{nil, nil}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -168,8 +168,8 @@ func TestLog(t *testing.T) {
 		// Include `a.txt` with status.
 		logs, err = Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{filter, nil, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+			r.View(""),
+			&LogOptions{filter, nil, true, lib.RevisionRange{nil, nil}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -181,8 +181,8 @@ func TestLog(t *testing.T) {
 		filter = lib.NewPathInclusionFilter([]string{"c/*"})
 		logs, err = Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{filter, nil, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+			r.View(""),
+			&LogOptions{filter, nil, true, lib.RevisionRange{nil, nil}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -195,8 +195,8 @@ func TestLog(t *testing.T) {
 		exclude := lib.NewPathExclusionFilter([]string{"c"})
 		logs, err = Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{nil, exclude, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+			r.View(""),
+			&LogOptions{nil, exclude, true, lib.RevisionRange{nil, nil}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -212,8 +212,8 @@ func TestLog(t *testing.T) {
 		exclude = lib.NewPathExclusionFilter([]string{"a.txt"})
 		logs, err = Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{filter, exclude, true, lib.RevisionRange{nil, nil}, lib.Path{}},
+			r.View(""),
+			&LogOptions{filter, exclude, true, lib.RevisionRange{nil, nil}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
@@ -242,9 +242,7 @@ func TestLog(t *testing.T) {
 		// A prefix reports paths relative to itself and drops the ones outside,
 		// but it never hides a revision: `revId2` is still listed, with no
 		// paths under it.
-		prefix, err := lib.NewPath("sub")
-		assert.NoError(err)
-		logs, err := Log(t.Context(), r.Repository, &LogOptions{nil, nil, true, lib.RevisionRange{nil, nil}, prefix})
+		logs, err := Log(t.Context(), r.View("sub"), &LogOptions{nil, nil, true, lib.RevisionRange{nil, nil}})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{
 			revisionLog(t, r, revId2, []TestStatusFile{}),
@@ -259,15 +257,15 @@ func TestLog(t *testing.T) {
 		// matches the prefix-relative path, so a leading `/` anchors at the
 		// prefix and not at the repository root.
 		filter := lib.NewPathInclusionFilter([]string{"/a.txt"})
-		logs, err = Log(t.Context(), r.Repository, &LogOptions{filter, nil, false, lib.RevisionRange{nil, nil}, prefix})
+		logs, err = Log(t.Context(), r.View("sub"), &LogOptions{filter, nil, false, lib.RevisionRange{nil, nil}})
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{revisionLog(t, r, revId1, nil)}, newTestRevisionLogs(logs, false))
 
 		// Without a prefix both revisions are listed.
 		logs, err = Log(
 			t.Context(),
-			r.Repository,
-			&LogOptions{nil, nil, false, lib.RevisionRange{nil, nil}, lib.Path{}},
+			r.View(""),
+			&LogOptions{nil, nil, false, lib.RevisionRange{nil, nil}},
 		)
 		assert.NoError(err)
 		assert.Equal([]TestRevisionLog{

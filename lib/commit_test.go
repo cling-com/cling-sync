@@ -142,7 +142,10 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		snapshotCache, err := NewRevisionEntryTempCache(snapshot, 10)
 		assert.NoError(err)
 
-		err = commit.EnsureDirExists(dir, snapshotCache, r.Head())
+		err = commit.EnsureDirExists(dir, func(key PathKey) (bool, error) {
+			_, found, err := snapshotCache.Get(key)
+			return found, err
+		})
 		if err != nil {
 			return err
 		}
@@ -210,7 +213,10 @@ func TestCommitEnsureDirExists(t *testing.T) {
 		snapshotCache, err := NewRevisionEntryTempCache(snapshot, 10)
 		assert.NoError(err)
 
-		err = commit.EnsureDirExists(Path{"a"}, snapshotCache, r.Head())
+		err = commit.EnsureDirExists(Path{"a"}, func(key PathKey) (bool, error) {
+			_, found, err := snapshotCache.Get(key)
+			return found, err
+		})
 		assert.NoError(err)
 
 		_, err = commit.Commit(t.Context(), &CommitInfo{Author: "test author", Message: "test message"})

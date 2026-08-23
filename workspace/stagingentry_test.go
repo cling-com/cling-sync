@@ -14,14 +14,14 @@ func TestStagingEntry(t *testing.T) {
 		fs := td.NewFS(t)
 		tempWriter := NewStagingCacheWriter(fs, lib.MaxBlockDataSize)
 		a := StagingEntry{
-			RepoPath: td.Path("a.txt"),
+			Path:     td.Path("a.txt"),
 			Metadata: *td.PathMetadata(0o600),
 			Ctime:    lib.Timestamp{Sec: 123, Nsec: 456},
 			Size:     789,
 			Inode:    987654,
 		}
 		b := StagingEntry{
-			RepoPath: td.Path("b.txt"),
+			Path:     td.Path("b.txt"),
 			Metadata: *td.PathMetadata(0o700),
 			Ctime:    lib.Timestamp{Sec: 234, Nsec: 567},
 			Size:     890,
@@ -34,12 +34,12 @@ func TestStagingEntry(t *testing.T) {
 		cache, err := OpenStagingCache(fs, 2)
 		assert.NoError(err)
 
-		entry, ok, err := cache.Get(lib.PathKey{a.RepoPath, a.Metadata.FileMode.IsDir()})
+		entry, ok, err := cache.Get(lib.PathKey{a.Path, a.Metadata.FileMode.IsDir()})
 		assert.NoError(err)
 		assert.Equal(true, ok)
 		assert.Equal(a, *entry)
 
-		entry, ok, err = cache.Get(lib.PathKey{b.RepoPath, b.Metadata.FileMode.IsDir()})
+		entry, ok, err = cache.Get(lib.PathKey{b.Path, b.Metadata.FileMode.IsDir()})
 		assert.NoError(err)
 		assert.Equal(true, ok)
 		assert.Equal(b, *entry)

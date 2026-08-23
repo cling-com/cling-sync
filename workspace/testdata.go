@@ -108,7 +108,6 @@ func (wstd WorkspaceTestData) CommitFilesOptions() *CommitFilesOptions {
 
 func (wstd WorkspaceTestData) ImportOptions(dest lib.Path) *ImportOptions {
 	return &ImportOptions{
-		lib.Path{},
 		dest,
 		nil,
 		nil,
@@ -131,7 +130,6 @@ func (wstd WorkspaceTestData) CpOptions(revisionId lib.RevisionId) *CpOptions {
 		wstd.SnapshotMonitor(),
 		nil,
 		nil,
-		lib.Path{},
 		lib.RestorableMetadataAll,
 	}
 }
@@ -158,7 +156,7 @@ func (wstd WorkspaceTestData) StagingEntryInfos(temp *lib.Temp[*StagingEntry]) [
 			break
 		}
 		infos = append(infos, TestStagingEntryInfo{
-			Path: entry.RepoPath.String(),
+			Path: entry.Path.String(),
 			Mode: entry.Metadata.FileMode.AsFsFileMode(),
 			Hash: entry.Metadata.FileHash,
 		})

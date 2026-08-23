@@ -11,9 +11,7 @@ import (
 )
 
 type ImportOptions struct {
-	// The subtree `Dest` is relative to, and the space `Changes` is reported in.
-	PathPrefix lib.Path
-	// The directory below `PathPrefix` that receives the contents of the source.
+	// The directory in the view that receives the contents of the source.
 	Dest                   lib.Path
 	Include                *lib.PathInclusionFilter
 	Exclude                *lib.PathExclusionFilter
@@ -24,27 +22,27 @@ type ImportOptions struct {
 }
 
 type Import struct {
-	Changes    StatusFiles
-	repository *lib.Repository
-	src        lib.FS
-	dest       lib.Path
-	head       lib.RevisionId
-	baseline   *lib.RevisionEntryCache
-	entries    *lib.Temp[*lib.RevisionEntry]
-	opts       *ImportOptions
-	tmpFS      lib.FS
+	Changes StatusFiles
+	// The view of `Dest`, which the source maps onto.
+	view     *lib.RepositoryView
+	src      lib.FS
+	baseline *lib.ViewSnapshot
+	entries  *lib.Temp[*lib.RevisionEntry]
+	opts     *ImportOptions
+	tmpFS    lib.FS
 }
 
 // Scan `src` and compute the changes `Commit` would write to the repository.
 // Nothing is written until `Commit` is called.
 func NewImport(
 	ctx context.Context,
-	repository *lib.Repository,
+	view *lib.RepositoryView,
 	src lib.FS,
 	opts *ImportOptions,
 	tmpFS lib.FS,
 ) (*Import, error) {
-	head, err := repository.Head(ctx)
+	view = view.Sub(opts.Dest)
+	head, err := view.Repository.Head(ctx)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to get repository head")
 	}
@@ -56,23 +54,18 @@ func NewImport(
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create temporary staging directory")
 	}
-	snapshot, err := lib.NewRevisionSnapshot(ctx, repository, head, snapshotTmpFS, opts.SnapshotMonitor)
+	baseline, err := view.NewSnapshot(ctx, head, snapshotTmpFS, opts.SnapshotMonitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to create revision snapshot")
 	}
-	baseline, err := lib.NewRevisionEntryTempCache(snapshot, 10)
-	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to create revision temp cache")
-	}
-	dest := opts.PathPrefix.Join(opts.Dest)
 	// A staging cache would have to live inside `src`, which is not ours to write to.
-	staging, err := NewStaging(src, dest, opts.Include, opts.Exclude, nil, stagingTmpFS, opts.StagingMonitor)
+	staging, err := NewStaging(src, opts.Include, opts.Exclude, nil, stagingTmpFS, opts.StagingMonitor)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to scan %s", src)
 	}
-	// An import never removes anything: paths below `PathPrefix` that the source
+	// An import never removes anything: paths below `Dest` that the source
 	// does not have are left as they are.
-	entries, err := staging.MergeWithSnapshot(snapshot, opts.RestorableMetadataFlag, true)
+	entries, err := staging.MergeWithSnapshot(baseline, opts.RestorableMetadataFlag, true)
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to merge staging and revision snapshot")
 	}
@@ -91,14 +84,10 @@ func NewImport(
 			// Deletes are suppressed just above, an import never removes anything.
 			panic(fmt.Sprintf("import must not delete %s", entry.Path))
 		}
-		// Paths are reported relative to the prefix, like every other command.
-		path, ok := entry.Path.TrimBase(opts.PathPrefix)
-		if !ok {
-			continue
-		}
-		changes = append(changes, StatusFile{path, entry.Kind, entry.Metadata})
+		// Paths are reported in the space of the caller's view, like every other command.
+		changes = append(changes, StatusFile{opts.Dest.Join(entry.Path), entry.Kind, entry.Metadata})
 	}
-	return &Import{changes, repository, src, dest, head, baseline, entries, opts, tmpFS}, nil
+	return &Import{changes, view, src, baseline, entries, opts, tmpFS}, nil
 }
 
 // Commit the changes as a new revision.
@@ -109,8 +98,8 @@ func (i *Import) Commit(ctx context.Context, info *lib.CommitInfo) (lib.Revision
 	if err != nil {
 		return lib.RevisionId{}, lib.WrapErrorf(err, "failed to create commit tmp dir")
 	}
-	src := &CommitFilesSrc{Src: i.src, SrcPrefix: i.dest, Files: i.entries}
-	dest := &CommitFilesDest{Repository: i.repository, RevisionId: i.head, Snapshot: i.baseline}
+	src := &CommitFilesSrc{Src: i.src, Files: i.entries}
+	dest := &CommitFilesDest{View: i.view, Snapshot: i.baseline}
 	opts := &CommitFilesOptions{
 		Author:                 info.Author,
 		Message:                info.Message,

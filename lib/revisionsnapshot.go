@@ -24,22 +24,9 @@ func NewRevisionSnapshot(
 	tmpFS FS,
 	mon RevisionSnapshotMonitor,
 ) (*Temp[*RevisionEntry], error) {
-	// Build a list of all revisions.
-	revisions := make([]*Revision, 0)
-	r := revisionId
-	buf := NewBlockBuf()
-	for !r.IsRoot() {
-		mon.OnRevisionStart(r)
-		revision, err := repository.ReadRevision(ctx, r, buf)
-		if err != nil {
-			return nil, WrapErrorf(err, "failed to read revision: %s", r)
-		}
-		revisions = append(revisions, &revision)
-		r = revision.ParentRevisionId
-	}
 	tempWriter := NewRevisionEntryTempWriter(tmpFS, DefaultTempChunkSize)
-	if err := revisionNWayMerge(ctx, repository, revisions, tempWriter, buf, mon); err != nil {
-		return nil, WrapErrorf(err, "failed to revision n-way merge revisions")
+	if err := mergeRevisions(ctx, repository, revisionId, tempWriter.Add, mon); err != nil {
+		return nil, err
 	}
 	// The merge emits every path once and in order, so we don't need to sort it again.
 	temp, err := tempWriter.CloseWithoutSort()
@@ -49,7 +36,34 @@ func NewRevisionSnapshot(
 	return temp, nil
 }
 
-// Merge the entries of `revisions`, newest first, into `tempWriter`.
+// Emit the effective entries of `revisionId`, in path order, through `add`.
+func mergeRevisions(
+	ctx context.Context,
+	repository *Repository,
+	revisionId RevisionId,
+	add func(*RevisionEntry) error,
+	mon RevisionSnapshotMonitor,
+) error {
+	// Build a list of all revisions.
+	revisions := make([]*Revision, 0)
+	r := revisionId
+	buf := NewBlockBuf()
+	for !r.IsRoot() {
+		mon.OnRevisionStart(r)
+		revision, err := repository.ReadRevision(ctx, r, buf)
+		if err != nil {
+			return WrapErrorf(err, "failed to read revision: %s", r)
+		}
+		revisions = append(revisions, &revision)
+		r = revision.ParentRevisionId
+	}
+	if err := revisionNWayMerge(ctx, repository, revisions, add, buf, mon); err != nil {
+		return WrapErrorf(err, "failed to revision n-way merge revisions")
+	}
+	return nil
+}
+
+// Merge the entries of `revisions`, newest first, into `add`.
 //
 // `RevisionReader` guarantees each revision comes out strictly increasing by
 // `RevisionEntry.PathCompare`, so one k-way merge visits every path once. Where
@@ -64,7 +78,7 @@ func revisionNWayMerge( //nolint:funlen
 	ctx context.Context,
 	repository *Repository,
 	revisions []*Revision,
-	tempWriter *TempWriter[*RevisionEntry],
+	add func(*RevisionEntry) error,
 	buf BlockBuf,
 	mon RevisionSnapshotMonitor,
 ) error {
@@ -128,7 +142,7 @@ func revisionNWayMerge( //nolint:funlen
 			if lastWritten != nil && lastWritten.Path == winner.entry.Path {
 				return Errorf("%s is both a file and a directory", winner.entry.Path)
 			}
-			if err := tempWriter.Add(winner.entry); err != nil {
+			if err := add(winner.entry); err != nil {
 				return WrapErrorf(err, "failed to write entry %s", winner.entry.Path)
 			}
 			lastWritten = winner.entry

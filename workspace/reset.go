@@ -45,7 +45,8 @@ func Reset(ctx context.Context, ws *Workspace, repository *lib.Repository, opts 
 		RestorableMetadataFlag: opts.RestorableMetadataFlag,
 		UseStagingCache:        opts.UseStagingCache,
 	}
-	wsHead, staging, localChanges, _, err := buildLocalChanges(ctx, ws, tempFS, repository, &mergeOptions)
+	view := ws.View(repository)
+	wsHead, staging, localChanges, _, err := buildLocalChanges(ctx, ws, tempFS, view, &mergeOptions)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to build local changes")
 	}
@@ -56,16 +57,20 @@ func Reset(ctx context.Context, ws *Workspace, repository *lib.Repository, opts 
 	}
 	// We ignore local changes.
 	localChanges = nil
-	remoteRevision, err := buildRemoteChanges(ctx, tempFS, repository, opts.RevisionId, opts.SnapshotMonitor)
+	remoteSnapshot, err := buildRemoteChanges(ctx, tempFS, view, opts.RevisionId, opts.SnapshotMonitor)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to build remote changes")
+	}
+	remoteRevision, err := remoteSnapshot.Cache()
+	if err != nil {
+		return err //nolint:wrapcheck
 	}
 	merger := &Merger{
 		ws,
 		wsHead,
 		opts.RevisionId,
 		tempFS,
-		repository,
+		view,
 		make(map[string]fs.FileInfo),
 		&mergeOptions,
 		lib.NewBlockBuf(),
