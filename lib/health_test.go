@@ -177,6 +177,35 @@ func TestCheckHealth(t *testing.T) {
 		assert.Error(err, blockId.String())
 	})
 
+	t.Run("Verify blocks detects a block whose id does not match its content", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		// Write the block with a tampered HMAC key: the block's crypto is fully
+		// consistent, but its id is not the HMAC of its content.
+		origKey := r.blockIdHmacKey
+		r.blockIdHmacKey[0] ^= 1
+		blockId, _, err := r.WriteBlock(t.Context(), []byte("abc"), NewBlockBuf(), WriteBlockOpts{})
+		assert.NoError(err)
+		r.blockIdHmacKey = origKey
+		e := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
+		e.Metadata.BlockIds = []BlockId{blockId}
+		e.Metadata.Size = 3
+		e.Metadata.FileHash = td.SHA256("abc")
+		assert.NoError(commit.Add(e))
+		_, err = commit.Commit(t.Context(), td.CommitInfo())
+		assert.NoError(err)
+
+		err = CheckHealth(t.Context(), r.Repository, td.NewFS(t), HealthCheckOptions{
+			Monitor: td.NewHealthCheckMonitor(), CheckBlocks: true, CheckOrphanedBlocks: false,
+		})
+		assert.Error(err, "does not match the HMAC of its content")
+		assert.Error(err, blockId.String())
+	})
+
 	t.Run("Missing block", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)

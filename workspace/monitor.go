@@ -567,6 +567,7 @@ func (m *DefaultHealthCheckMonitor) Report(
 	fmt.Fprintf(&b, "  [ok] metadata blocks are readable\n")
 	fmt.Fprintf(&b, "  [ok] paths in each revision are sorted\n")
 	fmt.Fprintf(&b, "  [%s] data blocks are valid\n", check(checkedBlocks))
+	fmt.Fprintf(&b, "  [%s] block ids match their content\n", check(checkedBlocks))
 	fmt.Fprintf(&b, "  [%s] no block header nonce is reused\n", check(checkedBlocks))
 	orphanLine := "--"
 	if checkedOrphanedBlocks {

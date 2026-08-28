@@ -16,8 +16,9 @@ type HealthCheckMonitor interface {
 
 type HealthCheckOptions struct {
 	Monitor HealthCheckMonitor
-	// Read and decrypt every block referenced by any revision and check that no
-	// two block headers were encrypted with the same nonce.
+	// Read and decrypt every block referenced by any revision, check that each
+	// block's id is the HMAC of its content, and check that no two block
+	// headers were encrypted with the same nonce.
 	CheckBlocks bool
 	// Report every block in storage that is not referenced by any revision.
 	CheckOrphanedBlocks bool
@@ -193,9 +194,10 @@ func checkOrphanedBlocks(
 	return nil
 }
 
-// Decrypt every block in `seen` and make sure that no two block headers were
-// encrypted with the same nonce. Every header is encrypted with the repository
-// KEK, so a reused nonce would break the confidentiality of both blocks.
+// Decrypt every block in `seen`, verify that its id is the HMAC of its
+// content, and make sure that no two block headers were encrypted with the
+// same nonce. Every header is encrypted with the repository KEK, so a reused
+// nonce would break the confidentiality of both blocks.
 func checkBlocks(
 	ctx context.Context,
 	repository *Repository,
@@ -231,6 +233,9 @@ func checkBlocks(
 		data, err := repository.decryptBlock(block, id)
 		if err != nil {
 			return WrapErrorf(err, "failed to verify block %s", id)
+		}
+		if actualId := BlockId(CalculateHmac(data, repository.blockIdHmacKey)); actualId != id {
+			return Errorf("id of block %s does not match the HMAC of its content (%s)", id, actualId)
 		}
 		// Nonces are not secret, but hashing them keeps raw crypto material out
 		// of the temporary files this check spills to disk.
