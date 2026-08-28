@@ -173,7 +173,7 @@ func TestRevisionReader(t *testing.T) {
 		buf := make([]byte, chunk.MarshallSize())
 		w := NewProtobufWriter(buf)
 		assert.NoError(chunk.Marshall(w))
-		blockId, _, err := r.WriteBlock(t.Context(), w.Bytes(), NewBlockBuf())
+		blockId, _, err := r.WriteBlock(t.Context(), w.Bytes(), NewBlockBuf(), WriteBlockOpts{})
 		assert.NoError(err)
 		revisionId, err := r.WriteRevision(t.Context(), &Revision{ //nolint:exhaustruct
 			Timestamp:        NewTimestampNow(),
@@ -199,6 +199,21 @@ func TestRevisionReader(t *testing.T) {
 		}
 		assert.Error(readErr, "not strictly sorted")
 		assert.Error(readErr, "a/z.txt >= a/b/")
+	})
+
+	t.Run("Entry blocks should be read with the revision hint", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		revisionId := r.AddRevision(RevisionId{}, []*RevisionEntry{td.RevisionEntry("a.txt", RevisionEntryKindAdd)})
+		revision, err := r.ReadRevision(t.Context(), revisionId, NewBlockBuf())
+		assert.NoError(err)
+		reader := NewRevisionReader(r.Repository, &revision)
+		r.StorageMonitor.Reset()
+		_, err = reader.Read(t.Context(), NewBlockBuf())
+		assert.NoError(err)
+		assert.Equal([]string{"ReadBlock(revision)"}, r.StorageMonitor.DistinctBlockOps())
 	})
 }
 

@@ -134,7 +134,7 @@ func TestRunSync(t *testing.T) {
 		assert.NoError(AddSyncTarget(t.Context(), w, "one", dstPath, nil))
 
 		entry := td.RevisionEntry("a.txt", lib.RevisionEntryKindAdd)
-		blockId, _, err := src.WriteBlock(t.Context(), []byte("hello"), lib.NewBlockBuf())
+		blockId, _, err := src.WriteBlock(t.Context(), []byte("hello"), lib.NewBlockBuf(), lib.WriteBlockOpts{})
 		assert.NoError(err)
 		entry.Metadata.BlockIds = []lib.BlockId{blockId}
 		entry.Metadata.Size = 5
@@ -253,7 +253,7 @@ func commitFile(t *testing.T, repo *lib.TestRepository, content string) lib.Revi
 	t.Helper()
 	assert := lib.NewAssert(t)
 	entry := td.RevisionEntry("a.txt", lib.RevisionEntryKindAdd)
-	blockId, _, err := repo.WriteBlock(t.Context(), []byte(content), lib.NewBlockBuf())
+	blockId, _, err := repo.WriteBlock(t.Context(), []byte(content), lib.NewBlockBuf(), lib.WriteBlockOpts{})
 	assert.NoError(err)
 	entry.Metadata.BlockIds = []lib.BlockId{blockId}
 	entry.Metadata.Size = int64(len(content))

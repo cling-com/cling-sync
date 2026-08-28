@@ -216,7 +216,7 @@ func restore( //nolint:funlen
 	}
 	defer f.Close() //nolint:errcheck
 	for _, blockId := range entry.Metadata.BlockIds {
-		data, err := repository.ReadBlock(ctx, blockId, buf)
+		data, err := repository.ReadBlock(ctx, blockId, buf, lib.ReadBlockOpts{})
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {

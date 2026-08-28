@@ -28,6 +28,10 @@ type HealthCheckOptions struct {
 // It always traverses the entire revision chain (head to root), checking that
 // every revision can be read and that every revision's path entries are
 // strictly sorted. Additional checks can be enabled via `opts`.
+//
+// The repository must be backed by a direct storage (e.g. a `FileStorage`),
+// never by a caching one: the check would verify the cache instead of the
+// repository.
 func CheckHealth(ctx context.Context, repository *Repository, tempFS FS, opts HealthCheckOptions) error {
 	return checkHealth(ctx, repository, tempFS, opts, DefaultTempChunkSize)
 }
@@ -218,7 +222,9 @@ func checkBlocks(
 		if err != nil {
 			return WrapErrorf(err, "failed to read seen block id")
 		}
-		block, err := repository.readBlockEnvelope(ctx, id, buf)
+		// An integrity check must verify what the repository actually holds,
+		// never a cached copy.
+		block, err := repository.readBlockEnvelope(ctx, id, buf, ReadBlockOpts{AuthoritativeHint: true})
 		if err != nil {
 			return WrapErrorf(err, "failed to verify block %s", id)
 		}

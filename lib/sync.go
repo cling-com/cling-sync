@@ -139,11 +139,11 @@ func SyncRepository( //nolint:funlen
 			// Each worker owns its BlockBuf because ReadBlock returns a slice that aliases it.
 			blockBuf := NewBlockBuf()
 			for id := range ids {
-				data, err := src.ReadBlock(gctx, id, blockBuf)
+				data, err := src.ReadBlock(gctx, id, blockBuf, ReadBlockOpts{})
 				if err != nil {
 					return WrapErrorf(err, "failed to read block %s from src", id)
 				}
-				existed, err := dst.WriteBlock(gctx, id, data)
+				existed, err := dst.WriteBlock(gctx, id, data, WriteBlockOpts{})
 				if err != nil {
 					return WrapErrorf(err, "failed to write block %s to dst", id)
 				}

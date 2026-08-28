@@ -20,7 +20,7 @@ func TestFixRewriteRevisions(t *testing.T) {
 		buf := make([]byte, chunk.MarshallSize())
 		w := NewProtobufWriter(buf)
 		assert.NoError(chunk.Marshall(w))
-		blockId, _, err := r.WriteBlock(t.Context(), w.Bytes(), NewBlockBuf())
+		blockId, _, err := r.WriteBlock(t.Context(), w.Bytes(), NewBlockBuf(), WriteBlockOpts{})
 		assert.NoError(err)
 		id, err := r.WriteRevision(t.Context(), &Revision{ //nolint:exhaustruct
 			Timestamp:        NewTimestampNow(),
@@ -106,7 +106,7 @@ func rawRevisionEntries(t *testing.T, r *TestRepository, id RevisionId) []TestRe
 	assert.NoError(err)
 	out := []TestRevisionEntryInfo{}
 	for _, blockId := range revision.BlockIds {
-		data, err := r.ReadBlock(t.Context(), blockId, buf)
+		data, err := r.ReadBlock(t.Context(), blockId, buf, ReadBlockOpts{})
 		assert.NoError(err)
 		chunk, err := UnmarshallRevisionEntryChunk(NewProtobufReader(data))
 		assert.NoError(err)
@@ -165,7 +165,7 @@ func TestFixRewriteRevisionsPreservesEverything(t *testing.T) {
 					chunkBuf := make([]byte, chunk.MarshallSize())
 					w := NewProtobufWriter(chunkBuf)
 					assert.NoError(chunk.Marshall(w))
-					blockId, _, err := r.WriteBlock(t.Context(), w.Bytes(), NewBlockBuf())
+					blockId, _, err := r.WriteBlock(t.Context(), w.Bytes(), NewBlockBuf(), WriteBlockOpts{})
 					assert.NoError(err)
 					blockIds = append(blockIds, blockId)
 				}
@@ -252,7 +252,7 @@ func TestFixRewriteRevisionsRefusesAConcurrentCommit(t *testing.T) {
 	buf := make([]byte, chunk.MarshallSize())
 	w := NewProtobufWriter(buf)
 	assert.NoError(chunk.Marshall(w))
-	blockId, _, err := r.WriteBlock(t.Context(), w.Bytes(), NewBlockBuf())
+	blockId, _, err := r.WriteBlock(t.Context(), w.Bytes(), NewBlockBuf(), WriteBlockOpts{})
 	assert.NoError(err)
 	stale, err := r.WriteRevision(t.Context(), &Revision{ //nolint:exhaustruct
 		Timestamp:        NewTimestampNow(),

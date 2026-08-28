@@ -346,7 +346,7 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		pathPrefix lib.Path
 	)
 	if args.Repository != "" {
-		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		repository, _, err = openRepository(ctx, nil, args.Repository, passphraseFlag(passphraseFromStdin))
 		if err != nil {
 			return err
 		}
@@ -357,7 +357,7 @@ func CatCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 			return lib.WrapErrorf(err, "failed to open workspace")
 		}
 		defer workspace.Close() //nolint:errcheck
-		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		repository, _, err = openRepository(ctx, workspace, "", passphraseFlag(passphraseFromStdin)|openWithCache)
 		if err != nil {
 			return err
 		}
@@ -456,7 +456,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		err        error
 	)
 	if args.Repository != "" {
-		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		repository, _, err = openRepository(ctx, nil, args.Repository, passphraseFlag(passphraseFromStdin))
 		if err != nil {
 			return err
 		}
@@ -467,7 +467,7 @@ func CpCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 			return lib.WrapErrorf(err, "failed to open workspace")
 		}
 		defer workspace.Close() //nolint:errcheck
-		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		repository, _, err = openRepository(ctx, workspace, "", passphraseFlag(passphraseFromStdin)|openWithCache)
 		if err != nil {
 			return err
 		}
@@ -575,7 +575,7 @@ func ResetCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	if len(flags.Args()) != 1 {
 		return lib.Errorf("one positional argument is required: <revision-id>")
 	}
-	repository, err := openRepository(ctx, workspace, "", passphraseFromStdin)
+	repository, _, err := openRepository(ctx, workspace, "", passphraseFlag(passphraseFromStdin)|openWithCache)
 	if err != nil {
 		return err
 	}
@@ -675,7 +675,7 @@ func MergeCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 	if len(flags.Args()) != 0 {
 		return lib.Errorf("no positional arguments allowed")
 	}
-	repository, err := openRepository(ctx, workspace, "", passphraseFromStdin)
+	repository, _, err := openRepository(ctx, workspace, "", passphraseFlag(passphraseFromStdin)|openWithCache)
 	if err != nil {
 		return err
 	}
@@ -854,7 +854,7 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 		pathPrefix lib.Path
 	)
 	if args.Repository != "" {
-		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		repository, _, err = openRepository(ctx, nil, args.Repository, passphraseFlag(passphraseFromStdin))
 		if err != nil {
 			return err
 		}
@@ -870,7 +870,7 @@ func ImportCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 			return lib.WrapErrorf(err, "failed to open workspace")
 		}
 		defer workspace.Close() //nolint:errcheck
-		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		repository, _, err = openRepository(ctx, workspace, "", passphraseFlag(passphraseFromStdin)|openWithCache)
 		if err != nil {
 			return err
 		}
@@ -1054,7 +1054,7 @@ func StatusCmd(ctx context.Context, argv []string, passphraseFromStdin bool) err
 	if len(args.Exclude) > 0 {
 		exclude = &lib.PathExclusionFilter{args.Exclude}
 	}
-	repository, err := openRepository(ctx, workspace, "", passphraseFromStdin)
+	repository, _, err := openRepository(ctx, workspace, "", passphraseFlag(passphraseFromStdin)|openWithCache)
 	if err != nil {
 		return err
 	}
@@ -1211,7 +1211,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 		err        error
 	)
 	if args.Repository != "" {
-		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		repository, _, err = openRepository(ctx, nil, args.Repository, passphraseFlag(passphraseFromStdin))
 		if err != nil {
 			return err
 		}
@@ -1222,7 +1222,7 @@ func LsCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error {
 			return lib.WrapErrorf(err, "failed to open workspace")
 		}
 		defer workspace.Close() //nolint:errcheck
-		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		repository, _, err = openRepository(ctx, workspace, "", passphraseFlag(passphraseFromStdin)|openWithCache)
 		if err != nil {
 			return err
 		}
@@ -1337,7 +1337,7 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 		err        error
 	)
 	if args.Repository != "" {
-		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		repository, _, err = openRepository(ctx, nil, args.Repository, passphraseFlag(passphraseFromStdin))
 		if err != nil {
 			return err
 		}
@@ -1348,7 +1348,7 @@ func LogCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error 
 			return lib.WrapErrorf(err, "failed to open workspace")
 		}
 		defer workspace.Close() //nolint:errcheck
-		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		repository, _, err = openRepository(ctx, workspace, "", passphraseFlag(passphraseFromStdin)|openWithCache)
 		if err != nil {
 			return err
 		}
@@ -1422,16 +1422,17 @@ const (
 
 func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) error { //nolint:funlen
 	args := struct { //nolint:exhaustruct
-		Help           bool
-		Verbose        bool
-		NoProgress     bool
-		Data           bool
-		OrphanedBlocks bool
-		FixRepo        bool
-		FixWorkspace   bool
-		Full           bool
-		Repository     string
-		ReportDir      string
+		Help                bool
+		Verbose             bool
+		NoProgress          bool
+		Data                bool
+		OrphanedBlocks      bool
+		FixRepo             bool
+		FixWorkspace        bool
+		ClearWorkspaceCache bool
+		Full                bool
+		Repository          string
+		ReportDir           string
 	}{}
 	flags := flag.NewFlagSet("check", flag.ExitOnError)
 	flags.BoolVar(&args.Help, "help", false, "Show help message")
@@ -1448,6 +1449,9 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 			"after the repository was migrated with --fix-repo. No other check runs.")
 	flags.BoolVar(&args.OrphanedBlocks, "orphaned-blocks", false,
 		"Detect blocks in storage that are not referenced by any revision")
+	flags.BoolVar(&args.ClearWorkspaceCache, "clear-workspace-cache", false,
+		"Remove all blocks from the workspace block cache. No other check runs.\n"+
+			"The cache is transient, so this is always safe.")
 	flags.BoolVar(&args.Full, "full", false, "Run all checks (implies --data and --orphaned-blocks)")
 	flags.StringVar(&args.Repository, "repository", "", repositoryFlagDescription)
 	flags.StringVar(&args.ReportDir, "report-dir", "", "Directory to write the report to (default: current directory)")
@@ -1471,13 +1475,32 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		args.Data = true
 		args.OrphanedBlocks = true
 	}
+	if args.ClearWorkspaceCache {
+		if args.Repository != "" {
+			return lib.Errorf("--clear-workspace-cache needs a workspace, not --repository")
+		}
+		workspace, err := openWorkspace(ctx)
+		if err != nil {
+			return lib.WrapErrorf(err, "failed to open workspace")
+		}
+		defer workspace.Close() //nolint:errcheck
+		if err := ws.ClearCache(workspace.Storage); err != nil {
+			return err //nolint:wrapcheck
+		}
+		fmt.Println("Workspace block cache cleared.")
+		return nil
+	}
 	var (
-		repository *lib.Repository
-		workspace  *ws.Workspace
-		err        error
+		repository    *lib.Repository
+		workspace     *ws.Workspace
+		directStorage lib.Storage
+		err           error
 	)
+	// `check` verifies the repository, so it must never read through the
+	// workspace block cache (see `lib.CheckHealth`). The cache itself is
+	// checked against the direct storage below.
 	if args.Repository != "" {
-		repository, err = openRepository(ctx, nil, args.Repository, passphraseFromStdin)
+		repository, directStorage, err = openRepository(ctx, nil, args.Repository, passphraseFlag(passphraseFromStdin))
 		if err != nil {
 			return err
 		}
@@ -1487,7 +1510,7 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 			return lib.WrapErrorf(err, "failed to open workspace")
 		}
 		defer workspace.Close() //nolint:errcheck
-		repository, err = openRepository(ctx, workspace, "", passphraseFromStdin)
+		repository, directStorage, err = openRepository(ctx, workspace, "", passphraseFlag(passphraseFromStdin))
 		if err != nil {
 			return err
 		}
@@ -1524,10 +1547,21 @@ func CheckCmd(ctx context.Context, argv []string, passphraseFromStdin bool) erro
 		CheckOrphanedBlocks: args.OrphanedBlocks,
 	})
 	monitor.Finish()
-	monitor.close()
 	if err != nil {
+		monitor.close()
 		return err //nolint:wrapcheck
 	}
+	if workspace != nil {
+		monitor.StartingWorkspaceCheck()
+		if err := ws.CheckHealth(ctx, workspace.Storage, directStorage, args.Data, monitor); err != nil {
+			monitor.close()
+			if errors.Is(err, ws.ErrCacheUnhealthy) {
+				return lib.WrapErrorf(err, "run `%s check --clear-workspace-cache`", appName)
+			}
+			return lib.WrapErrorf(err, "failed to check the workspace")
+		}
+	}
+	monitor.close()
 	reportDir := args.ReportDir
 	if reportDir == "" {
 		reportDir = "."
@@ -2333,48 +2367,82 @@ func openStorage(
 	return storage, abs, nil
 }
 
-// openRepository opens a repository. With a workspace it uses the workspace's
-// URI and saved passphrase; with a nil workspace it opens `uri` and reads the
-// passphrase from the terminal or stdin.
+type openRepositoryFlag uint8
+
+const (
+	openWithPassphraseFromStdin openRepositoryFlag = 1
+	openWithCache               openRepositoryFlag = 2
+)
+
+// Translate the `--passphrase-from-stdin` bool every command carries into
+// its `openRepository` flag.
+func passphraseFlag(passphraseFromStdin bool) openRepositoryFlag {
+	if passphraseFromStdin {
+		return openWithPassphraseFromStdin
+	}
+	return 0
+}
+
+// Open a repository and return it together with its direct storage.
+//
+// With a workspace, the workspace's URI and saved passphrase are used and
+// `openWithCache` wraps the repository in the workspace block cache.
+// With a nil workspace, `uri` is opened and the passphrase is read from the
+// terminal, or from stdin with `openWithPassphraseFromStdin`.
 func openRepository(
 	ctx context.Context,
 	workspace *ws.Workspace,
 	uri string,
-	passphraseFromStdin bool,
-) (*lib.Repository, error) {
+	flags openRepositoryFlag,
+) (*lib.Repository, lib.Storage, error) {
 	if workspace != nil && uri != "" {
 		panic("openRepository: workspace and uri are mutually exclusive")
 	}
 	if workspace == nil && uri == "" {
 		panic("openRepository: either workspace or uri must be set")
 	}
+	if workspace == nil && flags&openWithCache != 0 {
+		panic("openRepository: openWithCache needs a workspace")
+	}
+	fromStdin := flags&openWithPassphraseFromStdin != 0
 	var passphrase []byte
 	var err error
 	if workspace != nil {
 		uri = string(workspace.RemoteRepository)
-		passphrase, err = readWorkspaceRepositoryPassphrase(ctx, workspace, passphraseFromStdin)
+		passphrase, err = readWorkspaceRepositoryPassphrase(ctx, workspace, fromStdin)
 	} else {
-		passphrase, err = readPassphrase(passphraseFromStdin)
+		passphrase, err = readPassphrase(fromStdin)
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	storage, _, err := openStorage(uri, passphrase, passphraseFromStdin)
+	directStorage, _, err := openStorage(uri, passphrase, fromStdin)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	storage := directStorage
+	if flags&openWithCache != 0 {
+		// The workspace's own block namespace (`.cling/workspace/objects`) is
+		// unused otherwise, so it serves as the transient revision block cache.
+		cacheStorage, err := ws.NewCacheStorage(ctx, workspace.Storage, storage)
+		if err != nil {
+			return nil, nil, lib.WrapErrorf(err, "failed to open the workspace block cache")
+		}
+		storage = cacheStorage
 	}
 	repository, err := lib.OpenRepository(ctx, storage, passphrase)
 	if err != nil {
-		return nil, lib.WrapErrorf(err, "failed to open repository")
+		return nil, nil, lib.WrapErrorf(err, "failed to open repository")
 	}
-	return repository, nil
+	return repository, directStorage, nil
 }
 
 const s3KeyMinLen = 16
 
-// readEnvS3Credentials returns the env-resolved S3 credentials. `ok` is true
-// iff one of the two env pairs is fully set. Mixing across pairs or setting
-// only one var of a pair is rejected.
+// Return the env-resolved S3 credentials.
+//
+// `ok` is true iff one of the two env pairs is fully set. Mixing across
+// pairs or setting only one var of a pair is rejected.
 func readEnvS3Credentials() (clingHTTP.S3Credentials, bool, error) {
 	clingID, clingSecret := os.Getenv("CLING_S3_KEY_ID"), os.Getenv("CLING_S3_ACCESS_KEY")
 	awsID, awsSecret := os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")
@@ -2402,7 +2470,8 @@ func readEnvS3Credentials() (clingHTTP.S3Credentials, bool, error) {
 	return clingHTTP.S3Credentials{AccessKeyID: "", SecretAccessKey: nil}, false, nil
 }
 
-// readS3Credentials returns the access-key + secret-key for an S3 endpoint.
+// Returnsthe access-key + secret-key for an S3 endpoint.
+//
 // Resolution order:
 //
 //  1. `CLING_S3_KEY_ID` + `CLING_S3_ACCESS_KEY` (cling-sync `serve` peer).
@@ -2478,7 +2547,6 @@ func readPassphrase(passphraseFromStdin bool) ([]byte, error) {
 
 // Printed last by every command that takes a pattern, so that its pattern
 // argument and its `--exclude` flag can both point at one explanation.
-// todo: Explain more and add examples
 const patternSection = `
 Patterns:
   Patterns match paths relative to the path prefix, never to the

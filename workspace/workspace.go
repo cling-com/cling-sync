@@ -9,14 +9,17 @@ import (
 	"github.com/cling-com/cling-sync/lib"
 )
 
-const workspaceDir = ".cling/workspace"
+const (
+	workspaceDir      = ".cling/workspace"
+	workspaceCacheDir = workspaceDir + "/cache"
+)
 
 type RemoteRepository string
 
 type Workspace struct {
 	RemoteRepository RemoteRepository
 	PathPrefix       lib.Path
-	Storage          lib.Storage
+	Storage          *lib.FileStorage
 	FS               lib.FS
 	TempFS           lib.FS
 }

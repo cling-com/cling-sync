@@ -4,6 +4,7 @@ package lib
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"io"
@@ -180,16 +181,27 @@ func (td TestData) Argon2idParams() Argon2idParams {
 	return Argon2idParams{Time: 3, Memory: 12 * 1024, Parallelism: 1}
 }
 
+// Return an initialized `FileStorage` for `purpose`, backed by a fresh FS.
+func (td TestData) NewFileStorage(tb testing.TB, purpose StoragePurpose) *FileStorage {
+	tb.Helper()
+	assert := NewAssert(tb)
+	storage, err := NewFileStorage(td.NewFS(tb), purpose)
+	assert.NoError(err)
+	assert.NoError(storage.Init(tb.Context(), nil, ""))
+	return storage
+}
+
 func (td TestData) NewTestRepository(tb testing.TB, fs FS) *TestRepository {
 	tb.Helper()
 	assert := NewAssert(tb)
 	passphrase := "testpassphrase"
 	storage, err := NewFileStorage(fs, StoragePurposeRepository)
 	assert.NoError(err)
-	repository, err := InitNewRepository(tb.Context(), storage, []byte(passphrase), td.Argon2idParams())
+	monitor := td.MonitorStorage(storage)
+	repository, err := InitNewRepository(tb.Context(), monitor, []byte(passphrase), td.Argon2idParams())
 	assert.NoError(err)
 	tb.Cleanup(func() { _ = repository.Close() })
-	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, tb, assert}
+	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, monitor, tb, assert}
 }
 
 func (td TestData) OpenRepository(tb testing.TB, fs FS) *TestRepository {
@@ -198,10 +210,79 @@ func (td TestData) OpenRepository(tb testing.TB, fs FS) *TestRepository {
 	passphrase := "testpassphrase"
 	storage, err := NewFileStorage(fs, StoragePurposeRepository)
 	assert.NoError(err)
-	repository, err := OpenRepository(tb.Context(), storage, []byte(passphrase))
+	monitor := td.MonitorStorage(storage)
+	repository, err := OpenRepository(tb.Context(), monitor, []byte(passphrase))
 	assert.NoError(err)
 	tb.Cleanup(func() { _ = repository.Close() })
-	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, tb, assert}
+	return &TestRepository{repository, td.NewTestFS(tb, fs), passphrase, storage, monitor, tb, assert}
+}
+
+// Wrap `storage` so that tests can assert which block operations were
+// performed and which storage hints they carried.
+func (td TestData) MonitorStorage(storage Storage) *TestStorageMonitor {
+	return &TestStorageMonitor{storage, []string{}}
+}
+
+type TestStorageMonitor struct {
+	Storage
+	// One entry per block operation, e.g. "ReadBlock", "WriteBlock(revision)",
+	// or "ReadBlock(revision,authoritative)".
+	BlockOps []string
+}
+
+func (m *TestStorageMonitor) HasBlock(ctx context.Context, blockId BlockId) (bool, error) {
+	m.BlockOps = append(m.BlockOps, "HasBlock")
+	return m.Storage.HasBlock(ctx, blockId) //nolint:wrapcheck
+}
+
+func (m *TestStorageMonitor) ReadBlock(
+	ctx context.Context,
+	blockId BlockId,
+	buf BlockBuf,
+	opts ReadBlockOpts,
+) ([]byte, error) {
+	m.BlockOps = append(m.BlockOps, describeBlockOp("ReadBlock", opts.RevisionBlockHint, opts.AuthoritativeHint))
+	return m.Storage.ReadBlock(ctx, blockId, buf, opts) //nolint:wrapcheck
+}
+
+func (m *TestStorageMonitor) WriteBlock(
+	ctx context.Context,
+	blockId BlockId,
+	data []byte,
+	opts WriteBlockOpts,
+) (bool, error) {
+	m.BlockOps = append(m.BlockOps, describeBlockOp("WriteBlock", opts.RevisionBlockHint, false))
+	return m.Storage.WriteBlock(ctx, blockId, data, opts) //nolint:wrapcheck
+}
+
+// Return the recorded block operations deduplicated and sorted.
+func (m *TestStorageMonitor) DistinctBlockOps() []string {
+	distinct := []string{}
+	for _, op := range m.BlockOps {
+		if !slices.Contains(distinct, op) {
+			distinct = append(distinct, op)
+		}
+	}
+	slices.Sort(distinct)
+	return distinct
+}
+
+func (m *TestStorageMonitor) Reset() {
+	m.BlockOps = []string{}
+}
+
+func describeBlockOp(op string, revisionHint bool, authoritativeHint bool) string {
+	names := []string{}
+	if revisionHint {
+		names = append(names, "revision")
+	}
+	if authoritativeHint {
+		names = append(names, "authoritative")
+	}
+	if len(names) == 0 {
+		return op
+	}
+	return op + "(" + strings.Join(names, ",") + ")"
 }
 
 func (td TestData) RevisionChain(tb testing.TB, r *TestRepository) RevisionChain {
@@ -470,10 +551,11 @@ func (f *TestFS) Ls(path string) []TestFileInfo {
 type TestRepository struct {
 	*Repository
 	*TestFS
-	Passphrase string
-	Storage    *FileStorage
-	t          testing.TB
-	assert     Assert
+	Passphrase     string
+	Storage        *FileStorage
+	StorageMonitor *TestStorageMonitor
+	t              testing.TB
+	assert         Assert
 }
 
 func (r *TestRepository) View(prefix string) *RepositoryView {
@@ -500,7 +582,7 @@ func (r *TestRepository) AddRevision(parent RevisionId, blocks ...[]*RevisionEnt
 		data := make([]byte, chunk.MarshallSize())
 		pw := NewProtobufWriter(data)
 		r.assert.NoError(chunk.Marshall(pw))
-		blockId, _, err := r.WriteBlock(r.t.Context(), pw.Bytes(), buf)
+		blockId, _, err := r.WriteBlock(r.t.Context(), pw.Bytes(), buf, WriteBlockOpts{RevisionBlockHint: true})
 		r.assert.NoError(err)
 		blockIds = append(blockIds, blockId)
 	}
@@ -555,7 +637,7 @@ func (r *TestRepository) RevisionSnapshotFileInfos(revisionId RevisionId, pathFi
 			// Rebuild the content from the repository.
 			buf := bytes.NewBuffer([]byte{})
 			for _, blockId := range entry.Metadata.BlockIds {
-				data, err := r.ReadBlock(r.t.Context(), blockId, blockBuf)
+				data, err := r.ReadBlock(r.t.Context(), blockId, blockBuf, ReadBlockOpts{})
 				r.assert.NoError(err)
 				buf.Write(data)
 			}

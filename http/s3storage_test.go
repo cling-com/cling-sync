@@ -130,13 +130,13 @@ func TestS3StorageConcurrency(t *testing.T) {
 		name := "cf" + strconv.Itoa(i)
 		want := []byte("block " + strconv.Itoa(i))
 		buf := lib.NewBlockBuf()
-		if _, err := c.WriteBlock(ctx, id, want); err != nil {
+		if _, err := c.WriteBlock(ctx, id, want, lib.WriteBlockOpts{}); err != nil {
 			return err
 		}
 		if _, err := c.HasBlock(ctx, id); err != nil {
 			return err
 		}
-		got, err := c.ReadBlock(ctx, id, buf)
+		got, err := c.ReadBlock(ctx, id, buf, lib.ReadBlockOpts{})
 		if err != nil {
 			return err
 		}
@@ -166,10 +166,10 @@ func TestS3StorageConcurrency(t *testing.T) {
 		// Stress the write path. Many goroutines write the same fresh block.
 		for round := range rounds {
 			j := mrand.IntN(poolSize)
-			if _, err := c.WriteBlock(ctx, poolIDs[round][j], poolData[round][j]); err != nil {
+			if _, err := c.WriteBlock(ctx, poolIDs[round][j], poolData[round][j], lib.WriteBlockOpts{}); err != nil {
 				return err
 			}
-			got, err := c.ReadBlock(ctx, poolIDs[round][j], buf)
+			got, err := c.ReadBlock(ctx, poolIDs[round][j], buf, lib.ReadBlockOpts{})
 			if err != nil {
 				return err
 			}
@@ -273,7 +273,7 @@ func checkS3Storage(t *testing.T, newSut func(*testing.T) (S3StorageConfig, HTTP
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
-		existed, err := c.WriteBlock(t.Context(), blockId, data)
+		existed, err := c.WriteBlock(t.Context(), blockId, data, lib.WriteBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(false, existed)
 
@@ -282,11 +282,11 @@ func checkS3Storage(t *testing.T, newSut func(*testing.T) (S3StorageConfig, HTTP
 		assert.Equal(true, ok)
 
 		// Re-write reports existed=true (idempotent on content-addressed blocks).
-		existed, err = c.WriteBlock(t.Context(), blockId, data)
+		existed, err = c.WriteBlock(t.Context(), blockId, data, lib.WriteBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(true, existed)
 
-		got, err := c.ReadBlock(t.Context(), blockId, lib.NewBlockBuf())
+		got, err := c.ReadBlock(t.Context(), blockId, lib.NewBlockBuf(), lib.ReadBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(data, got)
 	})
@@ -294,14 +294,15 @@ func checkS3Storage(t *testing.T, newSut func(*testing.T) (S3StorageConfig, HTTP
 	t.Run("ReadBlock on missing block should return ErrBlockNotFound", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		_, err := initClient(t).ReadBlock(t.Context(), td.BlockId("missing"), lib.NewBlockBuf())
+		_, err := initClient(t).ReadBlock(t.Context(), td.BlockId("missing"), lib.NewBlockBuf(), lib.ReadBlockOpts{})
 		assert.ErrorIs(err, lib.ErrBlockNotFound)
 	})
 
 	t.Run("WriteBlock should reject bodies larger than MaxBlockSize", func(t *testing.T) {
 		t.Parallel()
 		assert := lib.NewAssert(t)
-		_, err := initClient(t).WriteBlock(t.Context(), td.BlockId("1"), make([]byte, lib.MaxBlockSize+1))
+		data := make([]byte, lib.MaxBlockSize+1)
+		_, err := initClient(t).WriteBlock(t.Context(), td.BlockId("1"), data, lib.WriteBlockOpts{})
 		assert.Error(err, "is too large")
 	})
 
@@ -311,9 +312,9 @@ func checkS3Storage(t *testing.T, newSut func(*testing.T) (S3StorageConfig, HTTP
 		c := initClient(t)
 		data := make([]byte, lib.MaxBlockSize)
 		_, _ = rand.Read(data)
-		_, err := c.WriteBlock(t.Context(), td.BlockId("max"), data)
+		_, err := c.WriteBlock(t.Context(), td.BlockId("max"), data, lib.WriteBlockOpts{})
 		assert.NoError(err)
-		got, err := c.ReadBlock(t.Context(), td.BlockId("max"), lib.NewBlockBuf())
+		got, err := c.ReadBlock(t.Context(), td.BlockId("max"), lib.NewBlockBuf(), lib.ReadBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(data, got)
 	})
@@ -324,7 +325,7 @@ func checkS3Storage(t *testing.T, newSut func(*testing.T) (S3StorageConfig, HTTP
 		c := initClient(t)
 		ids := []lib.BlockId{td.BlockId("1"), td.BlockId("2"), td.BlockId("3")}
 		for _, id := range ids {
-			_, err := c.WriteBlock(t.Context(), id, []byte("data"))
+			_, err := c.WriteBlock(t.Context(), id, []byte("data"), lib.WriteBlockOpts{})
 			assert.NoError(err)
 		}
 		var got []lib.BlockId
@@ -647,7 +648,7 @@ func TestS3StorageServer(t *testing.T) {
 			AccessKeyID:     testAccessKey,
 			SecretAccessKey: []byte(testSecret),
 		}, NewDefaultHTTPClient(srv.Client()))
-		_, err := client.ReadBlock(t.Context(), td.BlockId("1"), lib.NewBlockBuf())
+		_, err := client.ReadBlock(t.Context(), td.BlockId("1"), lib.NewBlockBuf(), lib.ReadBlockOpts{})
 		assert.Error(err, "response body exceeds buffer")
 	})
 
@@ -669,7 +670,7 @@ func TestS3StorageServer(t *testing.T) {
 			AccessKeyID:     testAccessKey,
 			SecretAccessKey: []byte(testSecret),
 		}, NewDefaultHTTPClient(srv.Client()))
-		_, err := client.ReadBlock(t.Context(), td.BlockId("1"), lib.NewBlockBuf())
+		_, err := client.ReadBlock(t.Context(), td.BlockId("1"), lib.NewBlockBuf(), lib.ReadBlockOpts{})
 		assert.Error(err, "unexpected EOF")
 	})
 
@@ -691,7 +692,7 @@ func TestS3StorageServer(t *testing.T) {
 			AccessKeyID:     testAccessKey,
 			SecretAccessKey: []byte(testSecret),
 		}, NewDefaultHTTPClient(srv.Client()))
-		_, err := client.ReadBlock(t.Context(), td.BlockId("1"), lib.NewBlockBuf())
+		_, err := client.ReadBlock(t.Context(), td.BlockId("1"), lib.NewBlockBuf(), lib.ReadBlockOpts{})
 		assert.Error(err, "unexpected EOF")
 	})
 
@@ -741,7 +742,7 @@ func TestS3StorageServerListPagination(t *testing.T) {
 		}, NewDefaultHTTPClient(srv.Client()))
 		assert.NoError(client.Init(t.Context(), lib.Toml{}, ""))
 		for i := range blockCount {
-			_, err := client.WriteBlock(t.Context(), td.BlockId(strconv.Itoa(i)), []byte("data"))
+			_, err := client.WriteBlock(t.Context(), td.BlockId(strconv.Itoa(i)), []byte("data"), lib.WriteBlockOpts{})
 			assert.NoError(err)
 		}
 		return client
@@ -820,7 +821,7 @@ func TestS3StorageServerListPagination(t *testing.T) {
 		}, NewDefaultHTTPClient(srv.Client()))
 		assert.NoError(client.Init(t.Context(), lib.Toml{}, ""))
 		for i := range pageSize * 3 {
-			_, err := client.WriteBlock(t.Context(), td.BlockId(strconv.Itoa(i)), []byte("data"))
+			_, err := client.WriteBlock(t.Context(), td.BlockId(strconv.Itoa(i)), []byte("data"), lib.WriteBlockOpts{})
 			assert.NoError(err)
 		}
 		listURL := client.cfg.BucketURL + "/?list-type=2&prefix=blocks%2F"

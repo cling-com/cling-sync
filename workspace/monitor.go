@@ -457,6 +457,13 @@ type DefaultHealthCheckMonitor struct {
 	Blocks         int
 	BlockBytes     int64
 	OrphanedBlocks []lib.BlockId
+	CacheChecked   bool
+	CacheBlocks    int
+	CacheBytes     int64
+	// The check command runs `lib.CheckHealth` and then `CheckHealth` of this
+	// package, and both report through `OnBlockVerified`, so the monitor has
+	// to know which one is running.
+	workspacePhase bool
 }
 
 func NewDefaultHealthCheckMonitor(mode DefaultMonitorMode, emit MonitorEmit) *DefaultHealthCheckMonitor {
@@ -469,6 +476,10 @@ func NewDefaultHealthCheckMonitor(mode DefaultMonitorMode, emit MonitorEmit) *De
 		Blocks:             0,
 		BlockBytes:         0,
 		OrphanedBlocks:     nil,
+		CacheChecked:       false,
+		CacheBlocks:        0,
+		CacheBytes:         0,
+		workspacePhase:     false,
 	}
 }
 
@@ -492,8 +503,13 @@ func (m *DefaultHealthCheckMonitor) OnRevisionEntry(entry *lib.RevisionEntry) {
 }
 
 func (m *DefaultHealthCheckMonitor) OnBlockVerified(blockID lib.BlockId, length int) {
-	m.Blocks++
-	m.BlockBytes += int64(length)
+	if m.workspacePhase {
+		m.CacheBlocks++
+		m.CacheBytes += int64(length)
+	} else {
+		m.Blocks++
+		m.BlockBytes += int64(length)
+	}
 	m.emitProgress()
 	if m.Mode == DefaultMonitorModeVerbose {
 		m.emit("  block    " + blockID.String())
@@ -510,6 +526,17 @@ func (m *DefaultHealthCheckMonitor) OnOrphanedBlock(blockID lib.BlockId) {
 
 func (m *DefaultHealthCheckMonitor) Finish() {
 	m.EndTime = time.Now()
+}
+
+// Switch the monitor to the workspace health check that follows the
+// repository check.
+func (m *DefaultHealthCheckMonitor) StartingWorkspaceCheck() {
+	m.workspacePhase = true
+	m.CacheChecked = true
+	if m.Mode == DefaultMonitorModeSilent {
+		return
+	}
+	m.emit("checking workspace cache...")
 }
 
 func (m *DefaultHealthCheckMonitor) Duration() time.Duration {
@@ -568,6 +595,10 @@ func (m *DefaultHealthCheckMonitor) Report(
 			fmt.Fprint(&b, "        yet referenced by a revision. Re-run after it completes.\n")
 		}
 	}
+	if m.CacheChecked {
+		fmt.Fprintf(&b, "\nWorkspace is healthy\n")
+		fmt.Fprintf(&b, "  %d blocks, %s (%dB)\n", m.CacheBlocks, FormatBytes(m.CacheBytes), m.CacheBytes)
+	}
 	fmt.Fprintf(&b, "\nTiming:\n")
 	fmt.Fprintf(&b, "  start    %s\n", m.StartTime.Format(time.RFC3339))
 	fmt.Fprintf(&b, "  end      %s\n", m.EndTime.Format(time.RFC3339))
@@ -613,6 +644,10 @@ func (m *DefaultHealthCheckMonitor) emitProgress() {
 	elapsed := time.Since(m.StartTime).Seconds()
 	if elapsed <= 0 {
 		elapsed = 1
+	}
+	if m.workspacePhase {
+		m.emit(fmt.Sprintf("workspace cache: %d blocks, %s", m.CacheBlocks, FormatBytes(m.CacheBytes)))
+		return
 	}
 	m.emit(
 		fmt.Sprintf(

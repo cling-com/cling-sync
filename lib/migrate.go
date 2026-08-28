@@ -51,7 +51,7 @@ func RewriteRevisions( //nolint:funlen
 		}
 		sorter := NewRevisionEntryTempWriter(sortFS, tempChunkSize)
 		for _, blockId := range stale.revision.BlockIds {
-			data, err := repository.ReadBlock(ctx, blockId, buf)
+			data, err := repository.ReadBlock(ctx, blockId, buf, ReadBlockOpts{RevisionBlockHint: true})
 			if err != nil {
 				return WrapErrorf(err, "failed to read block %s of revision %s", blockId, stale.id)
 			}
@@ -83,7 +83,7 @@ func RewriteRevisions( //nolint:funlen
 			if err := chunk.Marshall(pw); err != nil {
 				return WrapErrorf(err, "failed to marshall chunk %d of revision %s", c, stale.id)
 			}
-			blockId, _, err := repository.WriteBlock(ctx, pw.Bytes(), writeBuf)
+			blockId, _, err := repository.WriteBlock(ctx, pw.Bytes(), writeBuf, WriteBlockOpts{RevisionBlockHint: true})
 			if err != nil {
 				return WrapErrorf(err, "failed to write chunk %d of revision %s", c, stale.id)
 			}
@@ -99,7 +99,7 @@ func RewriteRevisions( //nolint:funlen
 		if err := revision.Marshall(pw); err != nil {
 			return WrapErrorf(err, "failed to marshall revision %s", stale.id)
 		}
-		blockId, _, err := repository.WriteBlock(ctx, pw.Bytes(), writeBuf)
+		blockId, _, err := repository.WriteBlock(ctx, pw.Bytes(), writeBuf, WriteBlockOpts{RevisionBlockHint: true})
 		if err != nil {
 			return WrapErrorf(err, "failed to write revision %s", stale.id)
 		}

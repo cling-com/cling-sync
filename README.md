@@ -367,10 +367,19 @@ bounds of a `log` range.
 
 ### `check [--data]`
 
-Verify repository integrity. Walks the revision chain and confirms every
-referenced block decrypts. With `--data`, additionally reads and
-decrypts the file data inside each revision. The report is written to the
+Verify repository and workspace integrity. The report is written to the
 current directory or `--report-dir <dir>` redirects it.
+
+**Repository.** Walks the revision chain and confirms every referenced
+block decrypts. With `--data`, additionally reads and decrypts the file
+data inside each revision.
+
+**Workspace.** Verifies the [block cache](#workspace-block-cache): every
+cached block must exist in the repository (`--data` compares the bytes),
+the cache must respect its size limit, and its accounting must be
+roughly right. Any issue is resolved by `check --clear-workspace-cache`,
+which empties the cache and is always safe. With `--repository` the
+workspace check is skipped, the command bypasses the workspace entirely.
 
 ### `security save-passphrase`
 
@@ -700,6 +709,7 @@ The repository directory looks like this.
 
     <repo>/.cling/repository.txt          public config (Argon2id params, encrypted keys)
     <repo>/.cling/repository/refs/head    current revision id (hex)
+    <repo>/.cling/repository/conf/<name>  optional settings, e.g. the serve credentials
     <repo>/.cling/repository/objects/<aa>/<bb>/<hex-rest>   blocks
 
 Each block lives at a path derived from its id. The `objects/aa/bb/`
@@ -709,6 +719,8 @@ The workspace directory looks like this.
 
     <ws>/.cling/workspace.txt             workspace config (remote URI, path prefix)
     <ws>/.cling/workspace/refs/head       last revision merged into this workspace
+    <ws>/.cling/workspace/conf/<name>     optional settings, e.g. sync targets and the cache cap
+    <ws>/.cling/workspace/objects/<aa>/<bb>/<hex-rest>    cached revision blocks, see below
     <ws>/.cling/workspace/security/encrypted-passphrase   optional, see save-passphrase
 
 Files outside `.cling` are the user's files in their normal, unencrypted
@@ -812,6 +824,31 @@ Paths in revisions are repository-relative. The following are rejected:
 - a trailing `/`
 - Windows volume prefixes
 - length greater than 4096 bytes
+
+### Workspace block cache
+
+Reading history means reading revision blocks, and with a remote
+repository every read is a round trip. The workspace keeps a copy of
+every revision block it reads or writes under
+`.cling/workspace/objects`. Data blocks are never cached. The cached
+blocks are byte-identical to the repository's, so they are just as
+encrypted.
+
+The cache is transient. A missing or corrupt entry is fetched from the
+repository again, and deleting the directory is always safe. The head
+reference is never cached, so a warm cache cannot serve stale history.
+
+The cache is capped at 1 GB by default. Reaching the cap evicts random
+cached blocks. To change the cap, create
+`.cling/workspace/conf/object-cache`:
+
+    [cache]
+    max-bytes = "500000000"
+
+`0` removes the cap. The cache size is tracked in
+`.cling/workspace/cache/object-stats` and rebuilt when that file is
+missing. `check` verifies the cache against the repository, and
+`check --clear-workspace-cache` empties it.
 
 ### On-disk wire format
 

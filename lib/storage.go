@@ -133,23 +133,48 @@ func (e *LockExistsError) Error() string {
 		e.Name, e.Host, e.Pid, e.Owner, e.CreatedAt.Format(time.RFC3339))
 }
 
+// Options for a single block read.
+type ReadBlockOpts struct {
+	// The block holds revision data (a `Revision` or its entry chunks), which
+	// an implementation may answer from a different source.
+	//
+	// Like every hint this is advisory: an implementation is free to ignore
+	// it, a missing hint must only cost performance, and only code in lib is
+	// guaranteed to set it correctly.
+	RevisionBlockHint bool
+	// The read must be answered by the source of truth, bypassing any cache.
+	//
+	// Advisory like `RevisionBlockHint`.
+	AuthoritativeHint bool
+}
+
+// Options for a single block write.
+type WriteBlockOpts struct {
+	// See `ReadBlockOpts.RevisionBlockHint`.
+	RevisionBlockHint bool
+}
+
 // Implementations are all-or-nothing: every read returns the complete object
 // or an error, and every write stores all bytes or fails.
 type Storage interface {
 	Init(ctx context.Context, config Toml, headerComment string) error
 	Open(ctx context.Context) (Toml, error)
+
+	// HasBlock must be answered by the source of truth, never by a cache.
+	//
+	// Callers use it to decide whether a block still has to be written.
 	HasBlock(ctx context.Context, blockId BlockId) (bool, error)
 
 	// Stream all block ids present in storage. `yield` returns false to stop early.
 	ReadBlockIds(ctx context.Context, yield func(BlockId) bool) error
 
 	// Return `ErrBlockNotFound` if the block does not exist.
-	ReadBlock(ctx context.Context, blockId BlockId, buf BlockBuf) ([]byte, error)
+	ReadBlock(ctx context.Context, blockId BlockId, buf BlockBuf, opts ReadBlockOpts) ([]byte, error)
 
 	// Write a block and return whether it was written.
 	//
-	// Returns `true` if the block was already present.
-	WriteBlock(ctx context.Context, blockId BlockId, data []byte) (bool, error)
+	// Return `true` if the block was already present.
+	WriteBlock(ctx context.Context, blockId BlockId, data []byte, opts WriteBlockOpts) (bool, error)
 
 	// Return `ErrControlFileNotFound` if the control file does not exist.
 	ReadControlFile(ctx context.Context, section ControlFileSection, name string) ([]byte, error)
@@ -159,13 +184,15 @@ type Storage interface {
 	// Return `ErrControlFileNotFound` if the control file does not exist.
 	DeleteControlFile(ctx context.Context, section ControlFileSection, name string) error
 
-	// Create a lock file in `.cling/<purpose>/locks/<name>`. Returns
-	// `*LockExistsError` if the lock is already held by another acquirer.
+	// Create a lock file in `.cling/<purpose>/locks/<name>`.
+	//
+	// Return `*LockExistsError` if the lock is already held by another acquirer.
 	Lock(ctx context.Context, name string) (func() error, error)
 
-	// Forcefully drop a lock regardless of ownership. The caller is responsible
-	// for being sure the previous holder is dead. Returns `ErrLockNotFound` if
-	// there is nothing to release.
+	// Forcefully drop a lock regardless of ownership.
+	//
+	// The caller is responsible for being sure the previous holder is dead.
+	// Return `ErrLockNotFound` if there is nothing to release.
 	ForceUnlock(ctx context.Context, name string) error
 }
 
@@ -179,8 +206,9 @@ func NewFileStorage(fs FS, purpose StoragePurpose) (*FileStorage, error) {
 }
 
 // FileStorage operates on a local FS, so most operations are fast and do not
-// observe `ctx`. `ReadBlockIds` is the exception: it can walk a large tree, so
-// it honors cancellation.
+// observe `ctx`.
+//
+// `ReadBlockIds` is the exception: it can walk a large tree, so it honors cancellation.
 var _ Storage = (*FileStorage)(nil)
 
 func (s *FileStorage) Init(_ context.Context, config Toml, headerComment string) error {
@@ -249,7 +277,7 @@ func (s *FileStorage) Open(_ context.Context) (Toml, error) {
 }
 
 func (s *FileStorage) HasBlock(_ context.Context, blockId BlockId) (bool, error) {
-	p := s.blockPath(blockId)
+	p := s.BlockPath(blockId)
 	_, err := s.FS.Stat(p)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -261,7 +289,7 @@ func (s *FileStorage) HasBlock(_ context.Context, blockId BlockId) (bool, error)
 }
 
 func (s *FileStorage) ReadBlockIds(ctx context.Context, yield func(BlockId) bool) error {
-	objectsPath := filepath.Join(".cling", string(s.Purpose), "objects")
+	objectsPath := s.ObjectsDir()
 	stat, err := s.FS.Stat(objectsPath)
 	if err != nil {
 		return WrapErrorf(err, "failed to stat objects directory %s", objectsPath)
@@ -305,11 +333,11 @@ func (s *FileStorage) ReadBlockIds(ctx context.Context, yield func(BlockId) bool
 	return nil
 }
 
-func (s *FileStorage) WriteBlock(_ context.Context, blockId BlockId, data []byte) (bool, error) {
+func (s *FileStorage) WriteBlock(_ context.Context, blockId BlockId, data []byte, _ WriteBlockOpts) (bool, error) {
 	if len(data) > MaxBlockSize {
 		return false, Errorf("block %s is too large: %d", blockId, len(data))
 	}
-	targetPath := s.blockPath(blockId)
+	targetPath := s.BlockPath(blockId)
 	_, err := s.FS.Stat(targetPath)
 	if err == nil {
 		return true, nil
@@ -326,8 +354,8 @@ func (s *FileStorage) WriteBlock(_ context.Context, blockId BlockId, data []byte
 }
 
 // Return `ErrBlockNotFound` if the block does not exist.
-func (s *FileStorage) ReadBlock(_ context.Context, blockId BlockId, buf BlockBuf) ([]byte, error) {
-	path := s.blockPath(blockId)
+func (s *FileStorage) ReadBlock(_ context.Context, blockId BlockId, buf BlockBuf, _ ReadBlockOpts) ([]byte, error) {
+	path := s.BlockPath(blockId)
 	file, err := s.FS.OpenRead(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -461,9 +489,15 @@ func (b BlockBuf) Read(src io.Reader) ([]byte, error) {
 	return data[0:n], nil
 }
 
-func (s *FileStorage) blockPath(blockId BlockId) string {
+// Return the path of the block file for `blockId`, relative to `s.FS`.
+func (s *FileStorage) BlockPath(blockId BlockId) string {
 	hexPath := hex.EncodeToString(blockId[:])
-	return filepath.Join(".cling", string(s.Purpose), "objects", hexPath[:2], hexPath[2:4], hexPath[4:])
+	return filepath.Join(s.ObjectsDir(), hexPath[:2], hexPath[2:4], hexPath[4:])
+}
+
+// Return the directory holding the block files, relative to `s.FS`.
+func (s *FileStorage) ObjectsDir() string {
+	return filepath.Join(".cling", string(s.Purpose), "objects")
 }
 
 func (s *FileStorage) controlFilePath(section ControlFileSection, name string) (string, error) {

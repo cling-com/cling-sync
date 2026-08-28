@@ -638,7 +638,7 @@ func (m *Merger) restoreFromRepository( //nolint:funlen
 	}
 	defer f.Close() //nolint:errcheck
 	for _, blockId := range entry.Metadata.BlockIds {
-		data, err := m.view.Repository.ReadBlock(ctx, blockId, m.blockBuf)
+		data, err := m.view.Repository.ReadBlock(ctx, blockId, m.blockBuf, lib.ReadBlockOpts{})
 		if err != nil {
 			if mon.OnError(entry, target, err) == CpOnErrorIgnore {
 				if endErr := mon.OnEnd(entry, target); endErr != nil {

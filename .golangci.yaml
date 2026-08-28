@@ -151,6 +151,11 @@ linters:
           allow:
             - $gostd
             - "github.com/cling-com/cling-sync/lib"
+    # The Opts structs are meant to be partially initialized.
+    exhaustruct:
+      exclude:
+        - 'github\.com/cling-com/cling-sync/lib\.ReadBlockOpts'
+        - 'github\.com/cling-com/cling-sync/lib\.WriteBlockOpts'
     forbidigo:
       forbid:
         - pattern: '^os\.'

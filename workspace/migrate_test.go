@@ -28,7 +28,7 @@ func TestFixHeadAfterRewrite(t *testing.T) {
 			buf := make([]byte, chunk.MarshallSize())
 			pw := lib.NewProtobufWriter(buf)
 			assert.NoError(chunk.Marshall(pw))
-			blockId, _, err := r.WriteBlock(t.Context(), pw.Bytes(), lib.NewBlockBuf())
+			blockId, _, err := r.WriteBlock(t.Context(), pw.Bytes(), lib.NewBlockBuf(), lib.WriteBlockOpts{})
 			assert.NoError(err)
 			id, err := r.WriteRevision(t.Context(), &lib.Revision{ //nolint:exhaustruct
 				Timestamp:        lib.NewTimestampNow(),

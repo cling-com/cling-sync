@@ -199,7 +199,7 @@ func AddFileToRepository(
 		if _, err := fileHash.Write(data); err != nil {
 			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to update file hash")
 		}
-		blockId, bytesWritten, err := repository.WriteBlock(ctx, data, writeBuf)
+		blockId, bytesWritten, err := repository.WriteBlock(ctx, data, writeBuf, lib.WriteBlockOpts{})
 		if err != nil {
 			return lib.PathMetadata{}, lib.WrapErrorf(err, "failed to write block")
 		}

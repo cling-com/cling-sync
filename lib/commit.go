@@ -122,7 +122,7 @@ func (c *Commit) Commit(ctx context.Context, info *CommitInfo) (RevisionId, erro
 		if err := chunk.Marshall(pw); err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to marshall revision entry chunk")
 		}
-		blockId, _, err := c.repository.WriteBlock(ctx, pw.Bytes(), writeBuf)
+		blockId, _, err := c.repository.WriteBlock(ctx, pw.Bytes(), writeBuf, WriteBlockOpts{RevisionBlockHint: true})
 		if err != nil {
 			return RevisionId{}, WrapErrorf(err, "failed to write revision entry chunk block")
 		}

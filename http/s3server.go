@@ -341,7 +341,7 @@ func (s *S3StorageServer) handleBlock(w http.ResponseWriter, r *http.Request, id
 		w.WriteHeader(http.StatusOK)
 	case http.MethodGet:
 		buf := lib.NewBlockBuf()
-		data, err := s.Storage.ReadBlock(r.Context(), id, buf)
+		data, err := s.Storage.ReadBlock(r.Context(), id, buf, lib.ReadBlockOpts{})
 		if errors.Is(err, lib.ErrBlockNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -356,7 +356,7 @@ func (s *S3StorageServer) handleBlock(w http.ResponseWriter, r *http.Request, id
 			s.writeError(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "block too large")
 			return
 		}
-		existed, err := s.Storage.WriteBlock(r.Context(), id, body)
+		existed, err := s.Storage.WriteBlock(r.Context(), id, body, lib.WriteBlockOpts{})
 		if err != nil {
 			s.internalError(w, err)
 			return

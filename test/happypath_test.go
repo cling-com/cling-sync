@@ -392,6 +392,7 @@ func TestHappyPath(t *testing.T) {
 		check := sut.ClingSync("check", "--no-progress")
 		assert.Contains(check, "Repository is healthy")
 		assert.Contains(check, "5 revisions")
+		assert.Contains(check, "Workspace is healthy")
 	}
 
 	t.Log("Attach to a non-empty directory (attach --allow-non-empty)")
@@ -1557,6 +1558,111 @@ func runS3HappyPath(t *testing.T, uri, backupURI string, preInited bool) string 
 		assert.Contains(check, "2 revisions")
 	}
 	return finalHead
+}
+
+// The workspace keeps a transient cache of revision blocks in
+// `.cling/workspace/objects`.
+//
+// A corrupt cache entry must be repaired without the user noticing, and
+// revision metadata must stay readable from the cache alone.
+func TestWorkspaceBlockCache(t *testing.T) {
+	t.Parallel()
+	sut := NewSut(t)
+	assert := sut.assert
+
+	lsArgs := []string{"ls", "--short-file-mode", "--timestamp-format", "unix-fraction"}
+	cacheObjects := sut.Path(".cling/workspace/objects")
+	repositoryObjects := sut.Path("../repository/.cling/repository/objects")
+	cacheConfig := sut.Path(".cling/workspace/conf/object-cache")
+
+	t.Log("A cache limit smaller than any block disables caching but not correctness")
+	{
+		assert.NoError(os.MkdirAll(filepath.Dir(cacheConfig), 0o700))
+		assert.NoError(os.WriteFile(cacheConfig, []byte("[cache]\nmax-bytes = \"1\"\n"), 0o600))
+		sut.Write("a.txt", "a")
+		sut.ClingSync("merge", "--no-progress", "--message", "first commit")
+		assert.Contains(sut.ClingSync(lsArgs...), "a.txt")
+		assert.Equal(0, len(blockFiles(t, cacheObjects)), "no blocks may be cached with a 1-byte limit")
+	}
+
+	t.Log("Create more history with the default limit")
+	{
+		assert.NoError(os.Remove(cacheConfig))
+		sut.Write("dir1/b.txt", "b")
+		sut.ClingSync("merge", "--no-progress", "--message", "second commit")
+		sut.Write("a.txt", "aa")
+		sut.ClingSync("merge", "--no-progress", "--message", "third commit")
+	}
+	expectedLs := sut.ClingSync(lsArgs...)
+	expectedLog := sut.ClingSync("log", "--short")
+	cacheFiles := blockFiles(t, cacheObjects)
+	assert.Greater(len(cacheFiles), 0, "the workspace cache should hold the revision blocks")
+
+	t.Log("A corrupted cache block is repaired silently (ls)")
+	{
+		rel := cacheFiles[0]
+		path := filepath.Join(cacheObjects, rel)
+		data, err := os.ReadFile(path)
+		assert.NoError(err)
+		data[len(data)-1] ^= 0xff
+		assert.NoError(os.Chmod(path, 0o600))
+		assert.NoError(os.WriteFile(path, data, 0o600))
+
+		assert.Equal(expectedLs, sut.ClingSync(lsArgs...), "ls should not notice the corruption")
+
+		repaired, err := os.ReadFile(path)
+		assert.NoError(err)
+		original, err := os.ReadFile(filepath.Join(repositoryObjects, rel))
+		assert.NoError(err)
+		assert.Equal(original, repaired, "the cache block should have been rewritten from the repository")
+	}
+
+	t.Log("Revision metadata stays readable with all repository blocks gone (ls, log, cat)")
+	{
+		assert.NoError(os.RemoveAll(repositoryObjects))
+		assert.Equal(expectedLs, sut.ClingSync(lsArgs...), "ls should be answered from the cache")
+		assert.Equal(expectedLog, sut.ClingSync("log", "--short"), "log should be answered from the cache")
+		// Data blocks are never cached, so file contents are really gone.
+		assert.Contains(sut.ClingSyncError("cat", "a.txt"), "failed to read block",
+			"data blocks must not be served from the cache")
+	}
+
+	t.Log("Check sees the wiped repository even though the cache is warm (check)")
+	{
+		assert.Contains(sut.ClingSyncError("check", "--no-progress"), "failed to read revision",
+			"check must verify the repository, not the cache")
+	}
+
+	t.Log("Clearing the cache (check --clear-workspace-cache)")
+	{
+		sut.ClingSync("check", "--clear-workspace-cache")
+		assert.Equal(0, len(blockFiles(t, cacheObjects)))
+		assert.Contains(sut.ClingSyncError(lsArgs...), "failed to read revision",
+			"with the cache gone the wiped repository is all there is")
+	}
+}
+
+func blockFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	assert := lib.NewAssert(t)
+	files := []string{}
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		files = append(files, rel)
+		return nil
+	})
+	assert.NoError(err)
+	sort.Strings(files)
+	return files
 }
 
 // loadDotenv loads `KEY=value` lines from `.env` at the project root into

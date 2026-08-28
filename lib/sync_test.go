@@ -65,9 +65,9 @@ func TestSyncRepository(t *testing.T) {
 			if id == blockId {
 				return true
 			}
-			data, err := src.Storage.ReadBlock(t.Context(), id, buf)
+			data, err := src.Storage.ReadBlock(t.Context(), id, buf, ReadBlockOpts{})
 			assert.NoError(err)
-			_, err = dst.Storage.WriteBlock(t.Context(), id, data)
+			_, err = dst.Storage.WriteBlock(t.Context(), id, data, WriteBlockOpts{})
 			assert.NoError(err)
 			return true
 		})
@@ -133,7 +133,7 @@ func TestSyncRepository(t *testing.T) {
 		src := td.NewTestRepository(t, td.NewFS(t))
 		dst := cloneRepository(t, src)
 
-		blockId, _, err := src.WriteBlock(t.Context(), []byte("shared"), NewBlockBuf())
+		blockId, _, err := src.WriteBlock(t.Context(), []byte("shared"), NewBlockBuf(), WriteBlockOpts{})
 		assert.NoError(err)
 		entry1 := td.RevisionEntry("a.txt", RevisionEntryKindAdd)
 		entry1.Metadata.BlockIds = []BlockId{blockId}
@@ -293,7 +293,7 @@ func testEntry(t *testing.T, r *TestRepository, path, content string) (*Revision
 	t.Helper()
 	assert := NewAssert(t)
 	entry := td.RevisionEntry(path, RevisionEntryKindAdd)
-	blockId, _, err := r.WriteBlock(t.Context(), []byte(content), NewBlockBuf())
+	blockId, _, err := r.WriteBlock(t.Context(), []byte(content), NewBlockBuf(), WriteBlockOpts{})
 	assert.NoError(err)
 	entry.Metadata.BlockIds = []BlockId{blockId}
 	entry.Metadata.Size = int64(len(content))

@@ -147,20 +147,20 @@ func TestFileStorageMultiPurpose(t *testing.T) { //nolint:paralleltest
 		workspaceBlock := []byte("a workspace block")
 		blockId := td.BlockId("1")
 
-		ok, err := repo.WriteBlock(t.Context(), blockId, repoBlock)
+		ok, err := repo.WriteBlock(t.Context(), blockId, repoBlock, WriteBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
-		ok, err = workspace.WriteBlock(t.Context(), blockId, workspaceBlock)
+		ok, err = workspace.WriteBlock(t.Context(), blockId, workspaceBlock, WriteBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(false, ok)
 
 		buf := NewBlockBuf()
-		data, err := repo.ReadBlock(t.Context(), blockId, buf)
+		data, err := repo.ReadBlock(t.Context(), blockId, buf, ReadBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(repoBlock, data)
 
-		data, err = workspace.ReadBlock(t.Context(), blockId, buf)
+		data, err = workspace.ReadBlock(t.Context(), blockId, buf, ReadBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(workspaceBlock, data)
 	})
@@ -172,9 +172,7 @@ func TestControlFiles(t *testing.T) {
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		assert.NoError(sut.Init(t.Context(), nil, ""))
+		sut := td.NewFileStorage(t, StoragePurposeRepository)
 
 		has, err := sut.HasControlFile(t.Context(), ControlFileSectionRefs, "head")
 		assert.NoError(err)
@@ -202,15 +200,13 @@ func TestControlFiles(t *testing.T) {
 	t.Run("Every section is written user-only (0o600)", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		assert.NoError(sut.Init(t.Context(), nil, ""))
+		sut := td.NewFileStorage(t, StoragePurposeRepository)
 
 		// Control files may hold secrets (e.g. the saved passphrase in the security
 		// section), so they must never be group- or world-readable.
 		sections := []ControlFileSection{ControlFileSectionRefs, ControlFileSectionSecurity, ControlFileSectionConf}
 		for _, section := range sections {
-			err = sut.WriteControlFile(t.Context(), section, "head", []byte("secret"))
+			err := sut.WriteControlFile(t.Context(), section, "head", []byte("secret"))
 			assert.NoError(err)
 			path, err := sut.controlFilePath(section, "head")
 			assert.NoError(err)
@@ -241,12 +237,9 @@ func TestControlFiles(t *testing.T) {
 	t.Run("ReadControlFile enforces the MaxControlFileSize boundary", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		err = sut.Init(t.Context(), nil, "")
-		assert.NoError(err)
+		sut := td.NewFileStorage(t, StoragePurposeRepository)
 		// Write a file at the limit through the regular API and confirm it reads back.
-		err = sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", make([]byte, MaxControlFileSize))
+		err := sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", make([]byte, MaxControlFileSize))
 		assert.NoError(err)
 		data, err := sut.ReadControlFile(t.Context(), ControlFileSectionRefs, "head")
 		assert.NoError(err)
@@ -265,12 +258,9 @@ func TestControlFiles(t *testing.T) {
 	t.Run("WriteControlFile enforces the MaxControlFileSize boundary", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		err = sut.Init(t.Context(), nil, "")
-		assert.NoError(err)
+		sut := td.NewFileStorage(t, StoragePurposeRepository)
 		// Exactly MaxControlFileSize must be accepted.
-		err = sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", make([]byte, MaxControlFileSize))
+		err := sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head", make([]byte, MaxControlFileSize))
 		assert.NoError(err)
 		// One byte over must be rejected, and must not leave a half-written file.
 		err = sut.WriteControlFile(t.Context(), ControlFileSectionRefs, "head2", make([]byte, MaxControlFileSize+1))
@@ -286,10 +276,7 @@ func TestFileStorageBlocks(t *testing.T) {
 	t.Run("Happy path", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		err = sut.Init(t.Context(), nil, "")
-		assert.NoError(err)
+		sut := td.NewFileStorage(t, StoragePurposeRepository)
 
 		blockId := td.BlockId("1")
 		data := []byte("block 1 data")
@@ -298,17 +285,17 @@ func TestFileStorageBlocks(t *testing.T) {
 		assert.Equal(false, ok)
 
 		// Write the block and verify its format on disk.
-		existed, err := sut.WriteBlock(t.Context(), blockId, data)
+		existed, err := sut.WriteBlock(t.Context(), blockId, data, WriteBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(false, existed)
 
 		// Verify size and permissions.
-		stat, err := sut.FS.Stat(sut.blockPath(blockId))
+		stat, err := sut.FS.Stat(sut.BlockPath(blockId))
 		assert.NoError(err)
 		assert.Equal(int64(len(data)), stat.Size())
 		assert.Equal(fs.FileMode(0o400), stat.Mode().Perm())
 
-		f, err := sut.FS.OpenRead(sut.blockPath(blockId))
+		f, err := sut.FS.OpenRead(sut.BlockPath(blockId))
 		assert.NoError(err)
 		defer f.Close() //nolint:errcheck
 		onDisk, err := io.ReadAll(f)
@@ -323,12 +310,12 @@ func TestFileStorageBlocks(t *testing.T) {
 
 		// Read back the whole block with `ReadBlock`.
 		buf := NewBlockBuf()
-		readData, err := sut.ReadBlock(t.Context(), blockId, buf)
+		readData, err := sut.ReadBlock(t.Context(), blockId, buf, ReadBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(data, readData)
 
 		// Write the block again - it should be seen as already existing.
-		existed, err = sut.WriteBlock(t.Context(), blockId, data)
+		existed, err = sut.WriteBlock(t.Context(), blockId, data, WriteBlockOpts{})
 		assert.NoError(err)
 		assert.Equal(true, existed)
 	})
@@ -336,33 +323,27 @@ func TestFileStorageBlocks(t *testing.T) {
 	t.Run("ReadBlock not found", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		err = sut.Init(t.Context(), nil, "")
-		assert.NoError(err)
+		sut := td.NewFileStorage(t, StoragePurposeRepository)
 
 		buf := NewBlockBuf()
-		_, err = sut.ReadBlock(t.Context(), td.BlockId("1"), buf)
+		_, err := sut.ReadBlock(t.Context(), td.BlockId("1"), buf, ReadBlockOpts{})
 		assert.ErrorIs(err, ErrBlockNotFound)
 	})
 
 	t.Run("ReadBlockIds", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		err = sut.Init(t.Context(), nil, "")
-		assert.NoError(err)
+		sut := td.NewFileStorage(t, StoragePurposeRepository)
 
 		blockId1 := td.BlockId("1")
 		blockId2 := td.BlockId("2")
-		_, err = sut.WriteBlock(t.Context(), blockId2, []byte("block 2"))
+		_, err := sut.WriteBlock(t.Context(), blockId2, []byte("block 2"), WriteBlockOpts{})
 		assert.NoError(err)
-		_, err = sut.WriteBlock(t.Context(), blockId1, []byte("block 1"))
+		_, err = sut.WriteBlock(t.Context(), blockId1, []byte("block 1"), WriteBlockOpts{})
 		assert.NoError(err)
 
 		// Simulate a crash leaving behind AtomicWriteFile's temporary file.
-		f, err := sut.FS.OpenWrite(AtomicWriteTempFilename(sut.blockPath(blockId1)))
+		f, err := sut.FS.OpenWrite(AtomicWriteTempFilename(sut.BlockPath(blockId1)))
 		assert.NoError(err)
 		_, err = f.Write([]byte("temp"))
 		assert.NoError(err)
@@ -383,15 +364,12 @@ func TestFileStorageBlocks(t *testing.T) {
 	t.Run("WriteBlock: data length must not exceed limits", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
-		sut, err := NewFileStorage(td.NewFS(t), StoragePurposeRepository)
-		assert.NoError(err)
-		err = sut.Init(t.Context(), nil, "")
-		assert.NoError(err)
+		sut := td.NewFileStorage(t, StoragePurposeRepository)
 		blockId := td.BlockId("1")
 		data := make([]byte, MaxBlockSize+1)
-		_, err = sut.WriteBlock(t.Context(), blockId, data)
+		_, err := sut.WriteBlock(t.Context(), blockId, data, WriteBlockOpts{})
 		assert.Error(err, "is too large")
-		_, err = sut.FS.Stat(sut.blockPath(blockId))
+		_, err = sut.FS.Stat(sut.BlockPath(blockId))
 		assert.ErrorIs(err, fs.ErrNotExist)
 	})
 }
@@ -434,13 +412,13 @@ func TestFileStorageConcurrency(t *testing.T) {
 				lockName := "lock" + strconv.Itoa(i)
 				want := []byte("data " + strconv.Itoa(i))
 				buf := NewBlockBuf()
-				if _, err := sut.WriteBlock(t.Context(), id, want); err != nil {
+				if _, err := sut.WriteBlock(t.Context(), id, want, WriteBlockOpts{}); err != nil {
 					return err
 				}
 				if _, err := sut.HasBlock(t.Context(), id); err != nil {
 					return err
 				}
-				got, err := sut.ReadBlock(t.Context(), id, buf)
+				got, err := sut.ReadBlock(t.Context(), id, buf, ReadBlockOpts{})
 				if err != nil {
 					return err
 				}
@@ -473,10 +451,11 @@ func TestFileStorageConcurrency(t *testing.T) {
 				// Stress the write path. The atomic-write race shows up here.
 				for round := range rounds {
 					j := mrand.IntN(poolSize)
-					if _, err := sut.WriteBlock(t.Context(), poolIDs[round][j], poolData[round][j]); err != nil {
+					opts := WriteBlockOpts{}
+					if _, err := sut.WriteBlock(t.Context(), poolIDs[round][j], poolData[round][j], opts); err != nil {
 						return err
 					}
-					got, err := sut.ReadBlock(t.Context(), poolIDs[round][j], buf)
+					got, err := sut.ReadBlock(t.Context(), poolIDs[round][j], buf, ReadBlockOpts{})
 					if err != nil {
 						return err
 					}

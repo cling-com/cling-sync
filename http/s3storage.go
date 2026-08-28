@@ -158,7 +158,12 @@ func (c *S3StorageClient) HasBlock(ctx context.Context, blockId lib.BlockId) (bo
 	return false, lib.Errorf("unexpected status: %d", status)
 }
 
-func (c *S3StorageClient) ReadBlock(ctx context.Context, blockId lib.BlockId, buf lib.BlockBuf) ([]byte, error) {
+func (c *S3StorageClient) ReadBlock(
+	ctx context.Context,
+	blockId lib.BlockId,
+	buf lib.BlockBuf,
+	_ lib.ReadBlockOpts,
+) ([]byte, error) {
 	status, body, err := c.do(
 		ctx, methodGet, c.key("blocks", blockId.String()), nil, nil, buf.Bytes(),
 	)
@@ -174,7 +179,12 @@ func (c *S3StorageClient) ReadBlock(ctx context.Context, blockId lib.BlockId, bu
 	return body, nil
 }
 
-func (c *S3StorageClient) WriteBlock(ctx context.Context, blockId lib.BlockId, data []byte) (bool, error) {
+func (c *S3StorageClient) WriteBlock(
+	ctx context.Context,
+	blockId lib.BlockId,
+	data []byte,
+	_ lib.WriteBlockOpts,
+) (bool, error) {
 	if len(data) > lib.MaxBlockSize {
 		return false, lib.Errorf("block %s is too large: %d", blockId, len(data))
 	}

@@ -270,6 +270,7 @@ func (r *Repository) WriteBlock(
 	ctx context.Context,
 	data []byte,
 	buf BlockBuf,
+	opts WriteBlockOpts,
 ) (blockId BlockId, dataBytesWritten *int, err error) {
 	if len(data) > MaxBlockDataSize {
 		return BlockId{}, nil, Errorf("data size %d exceeds maximum block size %d", len(data), MaxBlockDataSize)
@@ -371,7 +372,7 @@ func (r *Repository) WriteBlock(
 		return blockId, nil, WrapErrorf(err, "failed to write block data length for %s", blockId)
 	}
 
-	exists, err := r.storage.WriteBlock(ctx, blockId, result)
+	exists, err := r.storage.WriteBlock(ctx, blockId, result, opts)
 	if err != nil {
 		return blockId, nil, WrapErrorf(err, "failed to write block %s", blockId)
 	}
@@ -381,16 +382,38 @@ func (r *Repository) WriteBlock(
 	return blockId, &payloadLen, nil
 }
 
-func (r *Repository) ReadBlock(ctx context.Context, blockId BlockId, buf BlockBuf) ([]byte, error) {
-	block, err := r.readBlockEnvelope(ctx, blockId, buf)
+func (r *Repository) ReadBlock(ctx context.Context, blockId BlockId, buf BlockBuf, opts ReadBlockOpts) ([]byte, error) {
+	data, err := r.readBlock(ctx, blockId, buf, opts)
+	if err == nil {
+		return data, nil
+	}
+	// A missing block stays missing, an authoritative read has no better
+	// source to retry against, and a canceled read must stay canceled.
+	if errors.Is(err, ErrBlockNotFound) || opts.AuthoritativeHint || ctx.Err() != nil {
+		return nil, err
+	}
+	// The failed read may have been served from a transient cache holding a
+	// corrupt copy that only decryption can detect, so retry once against the
+	// source of truth (see `ReadBlockOpts.AuthoritativeHint`).
+	opts.AuthoritativeHint = true
+	return r.readBlock(ctx, blockId, buf, opts)
+}
+
+func (r *Repository) readBlock(ctx context.Context, blockId BlockId, buf BlockBuf, opts ReadBlockOpts) ([]byte, error) {
+	block, err := r.readBlockEnvelope(ctx, blockId, buf, opts)
 	if err != nil {
 		return nil, err
 	}
 	return r.decryptBlock(block, blockId)
 }
 
-func (r *Repository) readBlockEnvelope(ctx context.Context, blockId BlockId, buf BlockBuf) (*Block, error) {
-	rawBlock, err := r.storage.ReadBlock(ctx, blockId, buf)
+func (r *Repository) readBlockEnvelope(
+	ctx context.Context,
+	blockId BlockId,
+	buf BlockBuf,
+	opts ReadBlockOpts,
+) (*Block, error) {
+	rawBlock, err := r.storage.ReadBlock(ctx, blockId, buf, opts)
 	if err != nil {
 		return nil, WrapErrorf(err, "failed to read block %s", blockId)
 	}
@@ -464,7 +487,7 @@ func (r *Repository) ReadRevision(ctx context.Context, revisionId RevisionId, bu
 	if revisionId.IsRoot() {
 		return Revision{}, ErrRootRevision
 	}
-	data, err := r.ReadBlock(ctx, BlockId(revisionId), buf)
+	data, err := r.ReadBlock(ctx, BlockId(revisionId), buf, ReadBlockOpts{RevisionBlockHint: true})
 	if err != nil {
 		return Revision{}, WrapErrorf(err, "failed to read revision %s", revisionId)
 	}
@@ -522,7 +545,7 @@ func (r *Repository) WriteRevision(ctx context.Context, revision *Revision) (Rev
 	if err := revision.Marshall(pw); err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to marshal revision")
 	}
-	blockId, _, err := r.WriteBlock(ctx, pw.Bytes(), NewBlockBuf())
+	blockId, _, err := r.WriteBlock(ctx, pw.Bytes(), NewBlockBuf(), WriteBlockOpts{RevisionBlockHint: true})
 	if err != nil {
 		return RevisionId{}, WrapErrorf(err, "failed to write revision block")
 	}

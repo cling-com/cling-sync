@@ -41,7 +41,7 @@ func Cat(ctx context.Context, view *lib.RepositoryView, w io.Writer, opts *CatOp
 			return lib.Errorf("%s is a symlink to %s", opts.Path, target)
 		}
 		for _, blockId := range entry.Metadata.BlockIds {
-			data, err := view.Repository.ReadBlock(ctx, blockId, buf)
+			data, err := view.Repository.ReadBlock(ctx, blockId, buf, lib.ReadBlockOpts{})
 			if err != nil {
 				return lib.WrapErrorf(err, "failed to read block %s", blockId)
 			}

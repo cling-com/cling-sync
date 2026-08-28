@@ -61,6 +61,20 @@ func TestCommit(t *testing.T) {
 		assert.ErrorIs(err, ErrEmptyCommit)
 	})
 
+	t.Run("RevisionEntry blocks should be written with the revision hint", func(t *testing.T) {
+		t.Parallel()
+		assert := NewAssert(t)
+		r := td.NewTestRepository(t, td.NewFS(t))
+
+		commit, err := NewCommit(t.Context(), r.Repository, td.NewFS(t))
+		assert.NoError(err)
+		assert.NoError(commit.Add(td.RevisionEntry("a.txt", RevisionEntryKindAdd)))
+		r.StorageMonitor.Reset()
+		_, err = commit.Commit(t.Context(), &CommitInfo{Author: "test author", Message: "test message"})
+		assert.NoError(err)
+		assert.Equal([]string{"HasBlock", "WriteBlock(revision)"}, r.StorageMonitor.DistinctBlockOps())
+	})
+
 	t.Run("Head changed during commit", func(t *testing.T) {
 		t.Parallel()
 		assert := NewAssert(t)
@@ -71,7 +85,7 @@ func TestCommit(t *testing.T) {
 		assert.NoError(err)
 
 		// Change the head.
-		blockId, _, err := r.WriteBlock(t.Context(), []byte{1, 2, 3}, NewBlockBuf())
+		blockId, _, err := r.WriteBlock(t.Context(), []byte{1, 2, 3}, NewBlockBuf(), WriteBlockOpts{})
 		assert.NoError(err)
 		msg := "test message"
 		author := "test author"

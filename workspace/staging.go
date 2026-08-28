@@ -13,8 +13,7 @@ import (
 )
 
 const (
-	cacheDir           = workspaceDir + "/cache"
-	cacheFinalDir      = cacheDir + "/staging"
+	cacheFinalDir      = workspaceCacheDir + "/staging"
 	cacheTempDirPrefix = ".staging-tmp-"
 )
 
@@ -326,7 +325,7 @@ func NewStagingCache(src lib.FS, useCache bool) (*StagingCache, error) {
 	if err != nil {
 		return nil, lib.WrapErrorf(err, "failed to generate random string for cache temp dir")
 	}
-	cacheTempDir := filepath.Join(cacheDir, cacheTempDirPrefix+rand)
+	cacheTempDir := filepath.Join(workspaceCacheDir, cacheTempDirPrefix+rand)
 	var cacheWriter *lib.TempWriter[*StagingEntry]
 	var cache *StagingEntryCache
 	cacheTempFS, err := src.MkSub(cacheTempDir)
@@ -431,7 +430,7 @@ func (c *StagingCache) Cleanup() error {
 	if err := c.src.RemoveAll(c.cacheTempDir); err != nil {
 		return lib.WrapErrorf(err, "failed to remove cache temp dir %s", c.cacheTempDir)
 	}
-	files, err := c.src.ReadDir(cacheDir)
+	files, err := c.src.ReadDir(workspaceCacheDir)
 	if err != nil {
 		return lib.WrapErrorf(err, "failed to find stale cache dirs")
 	}
@@ -442,7 +441,7 @@ func (c *StagingCache) Cleanup() error {
 				return lib.WrapErrorf(err, "failed to get file info for %s", f.Name())
 			}
 			if time.Since(fileInfo.ModTime()) > time.Hour*24 {
-				if err := c.src.RemoveAll(filepath.Join(cacheDir, f.Name())); err != nil {
+				if err := c.src.RemoveAll(filepath.Join(workspaceCacheDir, f.Name())); err != nil {
 					return lib.WrapErrorf(err, "failed to remove stale cache dir %s", f.Name())
 				}
 			}
