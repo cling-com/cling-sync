@@ -68,6 +68,10 @@ esac
 tools_dir="$root/tools/$tools_platform"
 export CLING_GOLANGCI_LINT="$tools_dir/golangci-lint"
 
+# Force the project's Go version for all tools.
+# This fixes golangci-lint picking up the wrong version.
+export GOTOOLCHAIN="go$(awk '/^go /{print $2}' "$root/go.mod")"
+
 # Reformat raw `go test -bench` output into an aligned table with humanized
 # units (ns/us/ms/s, B/KB/MB/GB) and comma-separated counters. Non-benchmark
 # lines are dropped so the file diffs cleanly run-to-run.

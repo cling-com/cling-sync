@@ -32,6 +32,10 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
+# Force the project's Go version for all tools.
+# This fixes golangci-lint picking up the wrong version.
+export GOTOOLCHAIN="go$(awk '/^go /{print $2}' "$root/../go.mod")"
+
 # Build the wasm binary.
 # Input:
 #   - $1 (optional): `--tinygo` to use the TinyGo compiler
