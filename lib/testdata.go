@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -220,18 +221,22 @@ func (td TestData) OpenRepository(tb testing.TB, fs FS) *TestRepository {
 // Wrap `storage` so that tests can assert which block operations were
 // performed and which storage hints they carried.
 func (td TestData) MonitorStorage(storage Storage) *TestStorageMonitor {
-	return &TestStorageMonitor{storage, []string{}}
+	return &TestStorageMonitor{Storage: storage, BlockOps: []string{}} //nolint:exhaustruct
 }
 
 type TestStorageMonitor struct {
 	Storage
+	// This implementation is used in concurrent scenarios, so it needs to be thread-safe.
+	mu sync.Mutex
 	// One entry per block operation, e.g. "ReadBlock", "WriteBlock(revision)",
 	// or "ReadBlock(revision,authoritative)".
 	BlockOps []string
 }
 
 func (m *TestStorageMonitor) HasBlock(ctx context.Context, blockId BlockId) (bool, error) {
+	m.mu.Lock()
 	m.BlockOps = append(m.BlockOps, "HasBlock")
+	m.mu.Unlock()
 	return m.Storage.HasBlock(ctx, blockId) //nolint:wrapcheck
 }
 
@@ -241,7 +246,9 @@ func (m *TestStorageMonitor) ReadBlock(
 	buf BlockBuf,
 	opts ReadBlockOpts,
 ) ([]byte, error) {
+	m.mu.Lock()
 	m.BlockOps = append(m.BlockOps, describeBlockOp("ReadBlock", opts.RevisionBlockHint, opts.AuthoritativeHint))
+	m.mu.Unlock()
 	return m.Storage.ReadBlock(ctx, blockId, buf, opts) //nolint:wrapcheck
 }
 
@@ -251,12 +258,16 @@ func (m *TestStorageMonitor) WriteBlock(
 	data []byte,
 	opts WriteBlockOpts,
 ) (bool, error) {
+	m.mu.Lock()
 	m.BlockOps = append(m.BlockOps, describeBlockOp("WriteBlock", opts.RevisionBlockHint, false))
+	m.mu.Unlock()
 	return m.Storage.WriteBlock(ctx, blockId, data, opts) //nolint:wrapcheck
 }
 
 // Return the recorded block operations deduplicated and sorted.
 func (m *TestStorageMonitor) DistinctBlockOps() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	distinct := []string{}
 	for _, op := range m.BlockOps {
 		if !slices.Contains(distinct, op) {
@@ -268,7 +279,9 @@ func (m *TestStorageMonitor) DistinctBlockOps() []string {
 }
 
 func (m *TestStorageMonitor) Reset() {
+	m.mu.Lock()
 	m.BlockOps = []string{}
+	m.mu.Unlock()
 }
 
 func describeBlockOp(op string, revisionHint bool, authoritativeHint bool) string {
